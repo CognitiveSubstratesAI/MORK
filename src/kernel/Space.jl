@@ -1009,6 +1009,33 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
     space_query_multi_i(s.btm, pat, pat_v, f; mmaps=s.mmaps)
 
 # =====================================================================
+# _pat_overlaps_exec_prefix — prefix-overlap guard for pjoin skip
+# =====================================================================
+#
+# Returns true iff pat_expr's byte buffer contains _EXEC_PREFIX as a
+# contiguous subsequence.  When false (the common case for data rules),
+# space_transform_multi_multi! skips the _exec_singleton + pjoin and
+# queries s.btm directly — saves ~12 KB per step.
+#
+# The check is O(N) in pattern length (N ≈ 10–50 bytes in practice).
+# _EXEC_PREFIX = [ExprArity(4), ExprSymbol(4), 'e','x','e','c'] — 6 bytes.
+@inline function _pat_overlaps_exec_prefix(pat_expr::MORK.Expr) :: Bool
+    buf = pat_expr.buf
+    ep  = _EXEC_PREFIX
+    ep_len = length(ep)
+    n = length(buf)
+    n < ep_len && return false
+    @inbounds for i in 1:n-ep_len+1
+        match = true
+        for j in 1:ep_len
+            buf[i+j-1] != ep[j] && (match = false; break)
+        end
+        match && return true
+    end
+    false
+end
+
+# =====================================================================
 # space_transform_multi_multi! — rewrite rule application
 # =====================================================================
 
@@ -1072,14 +1099,27 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         end
     end
 
-    # Build read_btm: s.btm + exec atom re-inserted.
-    # Mirrors upstream space.rs: `let mut read_copy = self.btm.clone(); read_copy.insert(add.span(), ())`.
-    # In Rust, PathMap::clone() is O(1) — Arc refcount bump with COW on first write.
-    # Replaced deepcopy (O(n)) with pjoin against a single-entry map: shares all trie
-    # nodes structurally via TrieNodeODRc refcounts; only the spine to add_expr is new.
-    _exec_singleton = PathMap{UnitVal}()
-    set_val_at!(_exec_singleton, add_expr.buf, UNIT_VAL)
-    read_btm = pjoin(s.btm, _exec_singleton).value  # unwrap AlgResElement
+    # Build read_btm.
+    # Prefix-gated: if the pattern's constant prefix cannot match _EXEC_PREFIX,
+    # use s.btm directly (exec atom was already removed by the driver — it couldn't
+    # match a data pattern anyway).  ReadZipperCore captures root_node as an Rc
+    # snapshot at construction; COW writes during the match closure fork s.btm's
+    # spine independently, so they are invisible to the ongoing query (same next-step
+    # semantics as the old separate-read_btm path). Self-feeding data rules are safe.
+    #
+    # If the pattern CAN match exec atoms (meta-rules with (exec ...) patterns),
+    # fall through to the pjoin path so the atom is visible in an isolated map.
+    #
+    # Saves ~12 KB/step (singleton + spine) on the overwhelmingly common data-rule path.
+    read_btm = if !_pat_overlaps_exec_prefix(pat_expr)
+        s.btm                        # fast path: no pjoin, no singleton
+    else
+        # Meta-pattern: re-insert exec atom into an isolated read_btm so the
+        # pattern can see it without the driver re-selecting it.
+        _exec_singleton = PathMap{UnitVal}()
+        set_val_at!(_exec_singleton, add_expr.buf, UNIT_VAL)
+        pjoin(s.btm, _exec_singleton).value
+    end
 
     # Pre-allocate per-template scratch buffers outside the match closure.
     # Mirrors upstream space.rs: ass/astack/buffer pre-allocated before query_multi,
