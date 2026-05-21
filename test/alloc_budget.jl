@@ -55,10 +55,12 @@ using MORK
         allocs    = @allocated space_metta_calculus!(s, typemax(Int))
         per_step  = allocs / 5
 
-        # Threshold: 500 KB/step. Dominated by space_interpret! (sink objects,
-        # binding Dicts — legitimate allocations). Guards against re-introducing
-        # collect/vcat in the driver loop (would add ~few KB/step on top).
-        THRESHOLD_C2 = 500_000
+        # Threshold: 220 KB/step (baseline measured 165 KB; ~33% headroom for
+        # JIT/measurement noise). Dominated by space_interpret! sink objects and
+        # binding Dicts — those are legitimate. This gate specifically catches
+        # re-introduction of collect/vcat in the driver loop. At 500 KB the
+        # margin was too wide (3×) to catch a few-KB regression.
+        THRESHOLD_C2 = 220_000
         @test per_step <= THRESHOLD_C2
         @info "space_metta_calculus! per step: $(round(Int, per_step)) bytes (threshold $THRESHOLD_C2)"
     end
