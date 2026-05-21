@@ -55,14 +55,46 @@ using MORK
         allocs    = @allocated space_metta_calculus!(s, typemax(Int))
         per_step  = allocs / 5
 
-        # Threshold: 220 KB/step (baseline measured 165 KB; ~33% headroom for
-        # JIT/measurement noise). Dominated by space_interpret! sink objects and
-        # binding Dicts — those are legitimate. This gate specifically catches
-        # re-introduction of collect/vcat in the driver loop. At 500 KB the
-        # margin was too wide (3×) to catch a few-KB regression.
-        THRESHOLD_C2 = 220_000
+        # Threshold: 90 KB/step (baseline measured 67 KB post-pjoin-skip; ~33%
+        # headroom for JIT/measurement noise). Catches re-introduction of the
+        # pjoin path on data rules (~+12 KB) or collect/vcat (~+few KB).
+        # Previously 220 KB against the old 165 KB baseline — retightened after
+        # the pjoin skip dropped actual to 67 KB.
+        THRESHOLD_C2 = 90_000
         @test per_step <= THRESHOLD_C2
         @info "space_metta_calculus! per step: $(round(Int, per_step)) bytes (threshold $THRESHOLD_C2)"
+    end
+
+    # ── C3: structural prefix helper returns correct values ──────────────────
+    @testset "C3: _pat_overlaps_exec_prefix — structural walk, not flat scan" begin
+        # Exec-shaped patterns must return true → pjoin branch (exec atom visible).
+        # raw"..." strings don't interpolate — $loc is a literal dollar sign + loc.
+        for pat_str in [
+            raw"(exec $loc $pat $tpl)",          # fully variable exec
+            raw"(exec 0 (, $pat) (, $tpl))",     # concrete priority
+        ]
+            e = MORK.sexpr_to_expr(pat_str)
+            @test MORK._pat_overlaps_exec_prefix(e) == true
+        end
+
+        # Data patterns must return false → fast path (no pjoin)
+        for pat_str in [
+            raw"(isa $x thing)",
+            raw"(edge $a $b)",
+            raw"($x $y)",                        # wildcard — structurally no exec prefix
+        ]
+            e = MORK.sexpr_to_expr(pat_str)
+            @test MORK._pat_overlaps_exec_prefix(e) == false
+        end
+
+        # Integration: data exec rule produces results after the optimization.
+        s = new_space()
+        space_add_all_sexpr!(s, "(isa robin bird) (isa sparrow bird)")
+        space_add_all_sexpr!(s, raw"(exec 0 (, (isa $x bird)) (, (confirmed $x)))")
+        space_metta_calculus!(s, 1000)
+        out = space_dump_all_sexpr(s)
+        @test any(occursin("confirmed robin",   l) for l in split(out, "\n"))
+        @test any(occursin("confirmed sparrow", l) for l in split(out, "\n"))
     end
 
 end

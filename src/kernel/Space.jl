@@ -1012,25 +1012,41 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
 # _pat_overlaps_exec_prefix — prefix-overlap guard for pjoin skip
 # =====================================================================
 #
-# Returns true iff pat_expr's byte buffer contains _EXEC_PREFIX as a
-# contiguous subsequence.  When false (the common case for data rules),
-# space_transform_multi_multi! skips the _exec_singleton + pjoin and
-# queries s.btm directly — saves ~12 KB per step.
+# Returns true iff any structural position in pat_expr's byte buffer starts
+# with _EXEC_PREFIX.  Uses the same structural walk as `_const_prefix` in
+# space_acquire_transform_permissions: advances by tag-correct amounts
+# (skipping symbol payloads), checking only at expression-start positions.
+# This avoids false negatives from non-structural byte coincidences that a
+# flat substring scan could misidentify.
 #
-# The check is O(N) in pattern length (N ≈ 10–50 bytes in practice).
+# Safe direction: errs toward true (falls through to pjoin) when uncertain.
 # _EXEC_PREFIX = [ExprArity(4), ExprSymbol(4), 'e','x','e','c'] — 6 bytes.
 @inline function _pat_overlaps_exec_prefix(pat_expr::MORK.Expr) :: Bool
-    buf = pat_expr.buf
-    ep  = _EXEC_PREFIX
+    buf    = pat_expr.buf
+    ep     = _EXEC_PREFIX
     ep_len = length(ep)
-    n = length(buf)
-    n < ep_len && return false
-    @inbounds for i in 1:n-ep_len+1
-        match = true
-        for j in 1:ep_len
-            buf[i+j-1] != ep[j] && (match = false; break)
+    n      = length(buf)
+    i      = 1
+    @inbounds while i <= n
+        # Check if position i starts with _EXEC_PREFIX (expression-start only)
+        if i + ep_len - 1 <= n
+            match = true
+            for j in 1:ep_len
+                buf[i+j-1] != ep[j] && (match = false; break)
+            end
+            match && return true
         end
-        match && return true
+        # Advance structurally — same logic as _const_prefix
+        t = byte_item(buf[i])
+        if t isa ExprArity
+            i += 1          # descend into expression
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)   # skip sym-header + payload bytes
+        elseif t isa ExprNewVar || t isa ExprVarRef
+            i += 1
+        else
+            i += 1
+        end
     end
     false
 end
