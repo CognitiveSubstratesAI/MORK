@@ -4146,4 +4146,7 @@ const PM = PathMap.PathMap
     # ── Wiki example programs ─────────────────────────────────────────────────
     include("integration/test_wiki_examples.jl")
 
+    # ── Allocation regression gates (Unit A + B) ──────────────────────────────
+    include("alloc_budget.jl")
+
 end

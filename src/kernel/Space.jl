@@ -755,9 +755,9 @@ end
 @inline _in_mask(mask::NTuple{4,UInt64}, b::UInt8) =
     ((mask[Int(b >> 6) + 1] >> Int(b & 0x3F)) & UInt64(1)) != UInt64(0)
 
-@inline _var_children(loc)   = filter(b -> _in_mask(SPACE_VARS,   b), collect(_coref_child_mask(loc)))
-@inline _size_children(loc)  = filter(b -> _in_mask(SPACE_SIZES,  b), collect(_coref_child_mask(loc)))
-@inline _arity_children(loc) = filter(b -> _in_mask(SPACE_ARITIES,b), collect(_coref_child_mask(loc)))
+@inline _var_children(loc)   = Iterators.filter(b -> _in_mask(SPACE_VARS,   b), _coref_child_mask(loc))
+@inline _size_children(loc)  = Iterators.filter(b -> _in_mask(SPACE_SIZES,  b), _coref_child_mask(loc))
+@inline _arity_children(loc) = Iterators.filter(b -> _in_mask(SPACE_ARITIES,b), _coref_child_mask(loc))
 
 """
     _coreferential_transition!(loc, stack, references, f)
@@ -1376,8 +1376,9 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int)) :: Int
     done      = 0
     retry     = false
     retry_cnt = _METTA_CALCULUS_MAX_RETRIES
-    # Buffer reuse — mirrors Rust's `buffer: Vec<u8>` reset to prefix each iteration
-    last_path = UInt8[]
+    # Reused scratch buffer — wires the Rust buffer: Vec<u8> reset-to-prefix pattern.
+    # Eliminates collect(zipper_path) + vcat(_EXEC_PREFIX, rel_path) each iteration.
+    path_buf = UInt8[]
 
     while done < steps
         rz    = read_zipper_at_path(s.btm, _EXEC_PREFIX)
@@ -1392,11 +1393,12 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int)) :: Int
             break  # all execs consumed
         end
 
-        rel_path  = collect(zipper_path(rz))
-        full_path = vcat(_EXEC_PREFIX, rel_path)
-        remove_val_at!(s.btm, full_path)
+        empty!(path_buf)
+        append!(path_buf, _EXEC_PREFIX)
+        append!(path_buf, zipper_path(rz))   # view → bytes copied in; no collect, no vcat
+        remove_val_at!(s.btm, path_buf)
 
-        rt  = MORK.Expr(copy(full_path))
+        rt  = MORK.Expr(copy(path_buf))      # independent copy for space_interpret!
         err = space_interpret!(s, rt)
 
         if err === nothing
@@ -1404,8 +1406,8 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int)) :: Int
             retry_cnt = _METTA_CALCULUS_MAX_RETRIES
             done += 1
         elseif is_user_perm_err(err)
-            # Re-insert and try a different exec atom next iteration
-            set_val_at!(s.btm, full_path, UNIT_VAL)
+            # Re-insert using the intact path_buf (not modified between remove and here)
+            set_val_at!(s.btm, path_buf, UNIT_VAL)
             retry = true
             if retry_cnt <= 0
                 @warn "space_metta_calculus!: retry limit exceeded — $(exec_error_message(err))"
@@ -1680,6 +1682,7 @@ function space_metta_calculus_at!(s::Space, location_sexpr::AbstractString,
         done      = 0
         retry     = false
         retry_cnt = _METTA_CALCULUS_MAX_RETRIES
+        path_buf  = UInt8[]   # reused scratch — same pattern as space_metta_calculus!
 
         while done < max_steps
             rz    = read_zipper_at_path(s.btm, prefix_bytes)
@@ -1693,11 +1696,12 @@ function space_metta_calculus_at!(s::Space, location_sexpr::AbstractString,
                 break
             end
 
-            rel_path  = collect(zipper_path(rz))
-            full_path = vcat(prefix_bytes, rel_path)
-            remove_val_at!(s.btm, full_path)
+            empty!(path_buf)
+            append!(path_buf, prefix_bytes)
+            append!(path_buf, zipper_path(rz))
+            remove_val_at!(s.btm, path_buf)
 
-            rt  = MORK.Expr(copy(full_path))
+            rt  = MORK.Expr(copy(path_buf))
             err = space_interpret!(s, rt)
 
             if err === nothing
@@ -1705,7 +1709,7 @@ function space_metta_calculus_at!(s::Space, location_sexpr::AbstractString,
                 retry_cnt = _METTA_CALCULUS_MAX_RETRIES
                 done += 1
             elseif is_user_perm_err(err)
-                set_val_at!(s.btm, full_path, UNIT_VAL)
+                set_val_at!(s.btm, path_buf, UNIT_VAL)
                 retry = true
                 retry_cnt > 0 ? (retry_cnt -= 1; sleep(0.001)) :
                     (@warn "space_metta_calculus_at!: retry limit at $location_sexpr"; break)
