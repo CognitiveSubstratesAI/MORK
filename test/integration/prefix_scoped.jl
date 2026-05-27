@@ -66,6 +66,23 @@ end
     @test _dump_prefix(s.btm, "b/") == ["(item z)"]         # region b isolated
 end
 
+@testset "prefix-scoped calculus (Stage B O-sink) — CountSink stays in region" begin
+    # An O-sink (CountSink) exec under "c/" must count only c/ atoms and write
+    # its result under "c/", via the PrefixBtm wrapper — region "d/" untouched.
+    s = new_space()
+    _addp(s.btm, "c/", "(item x)")
+    _addp(s.btm, "c/", "(item y)")
+    _addp(s.btm, "c/", "(item z)")
+    _addp(s.btm, "c/", "(exec 0 (, (item \$v)) (O (count (n \$k) \$k \$v)))")
+    _addp(s.btm, "d/", "(item p)")   # other region — must be untouched + not counted
+
+    n = space_metta_calculus_in_prefix!(s, Vector{UInt8}("c/"), 1000)
+    @test n == 1
+    c_after = _dump_prefix(s.btm, "c/")
+    @test "(n 3)" in c_after                          # counted x,y,z = 3 (only region c)
+    @test _dump_prefix(s.btm, "d/") == ["(item p)"]   # region d isolated, uncounted
+end
+
 @testset "prefix-scoped calculus — empty prefix == root calculus" begin
     # Sanity: empty prefix delegates to space_metta_calculus! (root path).
     s = new_space()

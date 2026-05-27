@@ -1158,10 +1158,14 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                                        no_sink::Bool=true,
                                        prefix::Vector{UInt8}=UInt8[]) :: Tuple{Int, Bool}
     # `prefix` (default empty = root, behaviour unchanged) scopes a prefixed-
-    # region exec: pattern reads anchor under `prefix` (space_query_multi_at)
-    # and template writes go to `prefix ++ result`.  Stage A covers the
-    # comma/comma (no_source, no_sink) form only — callers must guard
-    # I-source / O-sink under a non-empty prefix (see space_interpret!).
+    # region exec.  Reads anchor under `prefix` (space_query_multi_at); writes
+    # land under `prefix` — directly (no_sink: `prefix ++ result`) or via the
+    # PrefixBtm wrapper handed to O-sinks (no_sink=false), which redirects their
+    # btm touches into the region while leaving their internal accumulators raw.
+    # Covers comma/comma (Stage A) + comma/O O-sinks (Stage B).  I-source (`I`)
+    # under a non-empty prefix is still guarded in space_interpret! (its ASource
+    # read path doesn't thread `prefix` yet).
+    sink_btm = isempty(prefix) ? s.btm : PrefixBtm(s.btm, prefix)
     tpl_args = ExprEnv[]
     ee_tpl = ExprEnv(UInt8(0), tpl_v, UInt32(0), tpl_expr)
     ee_args!(ee_tpl, tpl_args)
@@ -1262,12 +1266,12 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                 result_expr = MORK.Expr(out_bufs[k][1:oz.loc-1]) # copy needed: sink stores ref
                 if ps[k] !== nothing
                     # Accumulating sink: apply but don't finalize yet
-                    sink_apply!(ps[k], bindings, result_expr.buf, s.btm)
+                    sink_apply!(ps[k], bindings, result_expr.buf, sink_btm)
                 else
                     # Immediate sink: create fresh, apply, finalize
                     sink = asink_new(result_expr)
-                    sink_apply!(sink, bindings, result_expr.buf, s.btm)
-                    changed = sink_finalize!(sink, s.btm)
+                    sink_apply!(sink, bindings, result_expr.buf, sink_btm)
+                    changed = sink_finalize!(sink, sink_btm)
                     changed && (any_new[] = true)
                 end
             end
@@ -1279,7 +1283,7 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     if !no_sink && persistent_sinks !== nothing
         for sink in persistent_sinks::Vector
             sink === nothing && continue
-            changed = sink_finalize!(sink, s.btm)
+            changed = sink_finalize!(sink, sink_btm)
             changed && (any_new[] = true)
         end
     end
@@ -1475,14 +1479,15 @@ function space_interpret!(s::Space, rt::MORK.Expr;
 
     comma = UInt8(',');  i_src = UInt8('I');  o_snk = UInt8('O')
 
-    # Prefix-scoped exec (Stage A) only supports the comma/comma form: its read
-    # (space_query_multi_at) and write (prefixed set_val_at!) are region-correct.
-    # I-source and O-sink writes route through ASource / sink machinery that does
-    # not yet thread `prefix` — guard them rather than silently mis-scope across
-    # regions.  Lifting this guard is Stage B (thread prefix into sinks/sources).
-    if !isempty(prefix) && !(pat_functor == comma && tpl_functor == comma)
-        return _exec_err_other("prefix-scoped exec supports only (,)/(,) in Stage A; " *
-                               "got pat=$(Char(pat_functor)) tpl=$(Char(tpl_functor)) (I-source/O-sink under a prefix is Stage B)")
+    # Prefix-scoped exec covers comma source with comma OR O-sink templates:
+    #   - comma/comma: read via space_query_multi_at, write `prefix ++ result`.
+    #   - comma/O    : O-sinks write through the PrefixBtm wrapper (Stage B).
+    # I-source (`I`) under a prefix is still guarded — its ASource read path
+    # (space_query_multi_i) doesn't thread `prefix` yet, so it would read across
+    # regions.  Guard rather than silently mis-scope.
+    if !isempty(prefix) && pat_functor == i_src
+        return _exec_err_other("prefix-scoped exec does not yet support I-source patterns; " *
+                               "got pat=$(Char(pat_functor)) tpl=$(Char(tpl_functor)) (I-source under a prefix is future work)")
     end
 
     if pat_functor == comma && tpl_functor == comma
@@ -1492,7 +1497,7 @@ function space_interpret!(s::Space, rt::MORK.Expr;
                                       no_source=false, no_sink=true)
     elseif pat_functor == comma && tpl_functor == o_snk
         space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
-                                      no_source=true, no_sink=false)
+                                      no_source=true, no_sink=false, prefix=prefix)
     elseif pat_functor == i_src && tpl_functor == o_snk
         space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
                                       no_source=false, no_sink=false)

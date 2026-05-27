@@ -36,6 +36,50 @@ function sink_apply! end
 function sink_finalize! end
 
 # =====================================================================
+# PrefixBtm — byte-region scoping wrapper for prefixed multi-space exec
+# =====================================================================
+#
+# PRIMUS-original (the byte-prefix multi-space model is not upstream — upstream
+# scopes exec by thread-id).  Sinks write/read the destination map `btm` via
+# absolute paths (PRIMUS's intentional direct-`s.btm` adaptation of upstream's
+# writer-zipper sink interface).  For a prefixed-region exec, every such btm
+# touch must land under the region's `prefix`.
+#
+# Rather than thread `prefix` into all ~14 sinks' touch points, we wrap the
+# destination as `PrefixBtm(inner, prefix)` and overload the five PathMap ops
+# the sinks call on it to prepend `prefix`.  Sinks keep writing relative paths;
+# the wrapper redirects them into the region.  INTERNAL accumulators
+# (`s.head`, `s.unique`, `by_template[..][3]`, …) are raw `PathMap`s, never the
+# `btm` arg, so they are untouched — exactly the read/write split each sink uses.
+#
+# Empty prefix is never wrapped (callers pass the bare `PathMap`), so the root
+# path is byte-identical and zero-overhead.
+struct PrefixBtm
+    inner  ::PathMap{UnitVal}
+    prefix ::Vector{UInt8}
+end
+
+const SinkBtm = Union{PathMap{UnitVal}, PrefixBtm}
+
+@inline _pp(p::PrefixBtm, path::AbstractVector{UInt8}) = vcat(p.prefix, path)
+
+# Extend (not shadow) the PathMap ops with a PrefixBtm method.  These arrive in
+# MORK via `using PathMap` (for calls); to ADD a method we must `import` them so
+# the unqualified definition extends PathMap's function instead of defining a
+# new MORK-local one that would hide `set_val_at!(::PathMap, …)` from every
+# other caller.  (Module-qualifying as `PathMap.set_val_at!` fails — in MORK's
+# scope `PathMap` is the exported TYPE, not the module.)  Mirrors the existing
+# `import PathMap: ez_reset!` pattern in MORK.jl.
+import PathMap: set_val_at!, get_val_at, remove_val_at!, read_zipper, write_zipper
+
+set_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}, v) = set_val_at!(p.inner, _pp(p, path), v)
+get_val_at(p::PrefixBtm, path::AbstractVector{UInt8})     = get_val_at(p.inner, _pp(p, path))
+remove_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}) = remove_val_at!(p.inner, _pp(p, path))
+# Zippers root at the prefix node so descend/iterate stay anchor-relative.
+read_zipper(p::PrefixBtm)  = read_zipper_at_path(p.inner, p.prefix)
+write_zipper(p::PrefixBtm) = write_zipper_at_path(p.inner, p.prefix)
+
+# =====================================================================
 # Helper: compute the constant prefix of an expression
 # =====================================================================
 
@@ -83,11 +127,11 @@ end
 CompatSink(e::MORK.Expr) = CompatSink(e, false)
 
 function sink_apply!(s::CompatSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     set_val_at!(btm, path, UNIT_VAL) === nothing && (s.changed = true)
 end
 
-sink_finalize!(s::CompatSink, ::PathMap{UnitVal}) :: Bool = s.changed
+sink_finalize!(s::CompatSink, ::SinkBtm) :: Bool = s.changed
 
 # =====================================================================
 # AddSink — [2] + <expr>: insert after skipping [2]+ prefix
@@ -107,12 +151,12 @@ end
 AddSink(e::MORK.Expr) = AddSink(e, false)
 
 function sink_apply!(s::AddSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     length(path) > 3 || return
     set_val_at!(btm, path[4:end], UNIT_VAL) === nothing && (s.changed = true)
 end
 
-sink_finalize!(s::AddSink, ::PathMap{UnitVal}) :: Bool = s.changed
+sink_finalize!(s::AddSink, ::SinkBtm) :: Bool = s.changed
 
 # =====================================================================
 # RemoveSink — [2] - <expr>: collect paths to remove, apply in finalize
@@ -134,12 +178,12 @@ end
 RemoveSink(e::MORK.Expr) = RemoveSink(e, PathMap{UnitVal}())
 
 function sink_apply!(s::RemoveSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     length(path) > 3 || return
     set_val_at!(s.remove, path[4:end], UNIT_VAL)
 end
 
-function sink_finalize!(s::RemoveSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::RemoveSink, btm::SinkBtm) :: Bool
     # Subtract collected paths from btm using per-path removal.
     changed = false
     rz = read_zipper(s.remove)
@@ -195,7 +239,7 @@ function HeadSink(e::MORK.Expr)
 end
 
 function sink_apply!(s::HeadSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     length(path) <= s.skip && return
     mpath = path[s.skip+1:end]
     if s.count == s.max
@@ -219,7 +263,7 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar,ExprEnv},
     end
 end
 
-function sink_finalize!(s::HeadSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::HeadSink, btm::SinkBtm) :: Bool
     root = s.head.root
     root === nothing && return false   # empty head — nothing to join
     wz = write_zipper(btm)
@@ -258,7 +302,7 @@ CountSink(e::MORK.Expr) =
     CountSink(e, Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}[])
 
 function sink_apply!(s::CountSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     # path = bound expression: (count <template> <count-var> <source>)
     length(path) < 7 && return
     args = ExprEnv[]
@@ -287,7 +331,7 @@ function sink_apply!(s::CountSink, bindings::Dict{ExprVar,ExprEnv},
     set_val_at!(s.by_template[entry][3], src_bytes, UNIT_VAL)
 end
 
-function sink_finalize!(s::CountSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::CountSink, btm::SinkBtm) :: Bool
     changed = false
     for (tpl_bytes, var_bytes, sources) in s.by_template
         cnt      = val_count(sources)
@@ -337,11 +381,11 @@ end
 SumSink(e::MORK.Expr) = SumSink(e, PathMap{UnitVal}())
 
 function sink_apply!(s::SumSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     set_val_at!(s.unique, path, UNIT_VAL)
 end
 
-function sink_finalize!(s::SumSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::SumSink, btm::SinkBtm) :: Bool
     total = Int64(0)
     rz    = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
@@ -382,7 +426,7 @@ end
 AndSink(e::MORK.Expr) = AndSink(e, true)
 
 function sink_apply!(s::AndSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::PathMap{UnitVal})
+                     path::Vector{UInt8}, btm::SinkBtm)
     # Check if path ends in a "false" symbol
     if !isempty(path)
         p    = collect(path)
@@ -394,7 +438,7 @@ function sink_apply!(s::AndSink, bindings::Dict{ExprVar,ExprEnv},
     end
 end
 
-function sink_finalize!(s::AndSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::AndSink, btm::SinkBtm) :: Bool
     key = s.result ? Vector{UInt8}("true") : Vector{UInt8}("false")
     key_enc = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(key))))], key)
     old = get_val_at(btm, key_enc)
@@ -410,9 +454,9 @@ struct WASMSink <: AbstractSink; expr::MORK.Expr; end
 struct Z3Sink   <: AbstractSink; expr::MORK.Expr; end
 
 for T in (WASMSink, Z3Sink)
-    @eval sink_apply!(::$T, ::Dict, ::Vector{UInt8}, ::PathMap{UnitVal}) =
+    @eval sink_apply!(::$T, ::Dict, ::Vector{UInt8}, ::SinkBtm) =
         error($(string(T)) * " requires external runtime (wasmtime/Z3)")
-    @eval sink_finalize!(::$T, ::PathMap{UnitVal}) =
+    @eval sink_finalize!(::$T, ::SinkBtm) =
         error($(string(T)) * " requires external runtime (wasmtime/Z3)")
 end
 
@@ -446,12 +490,12 @@ function ACTSink(e::MORK.Expr)
     ACTSink(e, PathMap{UnitVal}(), name, skip)
 end
 
-function sink_apply!(s::ACTSink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
+function sink_apply!(s::ACTSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return
     set_val_at!(s.tmp, path[s.skip+1:end], UNIT_VAL)
 end
 
-function sink_finalize!(s::ACTSink, ::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::ACTSink, ::SinkBtm) :: Bool
     isempty(s.tmp) && return false
     tree = act_from_zipper(s.tmp, _ -> UInt64(0))
     filepath = joinpath(ACT_PATH[], s.name * ".act")
@@ -476,7 +520,7 @@ end
 
 USink(e::MORK.Expr) = USink(e, nothing, false)
 
-function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
+function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > 3 || return
     s.conflict && return
     # Skip [2] U header (3 bytes: arity + sym_header + 'U')
@@ -504,7 +548,7 @@ function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
     end
 end
 
-function sink_finalize!(s::USink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::USink, btm::SinkBtm) :: Bool
     s.conflict && return false
     s.buf === nothing && return false
     buf = s.buf::Vector{UInt8}
@@ -588,7 +632,7 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     (s1, s2)
 end
 
-function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
+function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > 4 || return
     # Skip [2] AU header: arity(1) + sym_header(1) + 'A'(1) + 'U'(1) = 4 bytes
     expr_bytes = path[5:end]
@@ -604,7 +648,7 @@ function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
     end
 end
 
-function sink_finalize!(s::AUSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::AUSink, btm::SinkBtm) :: Bool
     s.buf === nothing && return false
     buf  = s.buf::Vector{UInt8}
     last = s.last
@@ -640,7 +684,7 @@ function HashSink(e::MORK.Expr)
     HashSink(e, PathMap{UnitVal}(), skip)
 end
 
-function sink_apply!(s::HashSink, ::Dict, path::Vector{UInt8}, ::PathMap{UnitVal})
+function sink_apply!(s::HashSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return
     set_val_at!(s.unique, path[s.skip+1:end], UNIT_VAL)
 end
@@ -658,7 +702,7 @@ function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc}) :: UInt64
     h
 end
 
-function sink_finalize!(s::HashSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::HashSink, btm::SinkBtm) :: Bool
     isempty(s.unique) && return false
     changed = false
 
@@ -852,7 +896,7 @@ function _expr_end_offset(buf::Vector{UInt8}, off::Int) :: Int
     off + 1
 end
 
-function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::PathMap{UnitVal})
+function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::SinkBtm)
     buf = s.expr.buf
     length(buf) < 2 || byte_item(buf[1]) isa ExprArity || return
 
@@ -929,7 +973,7 @@ function _pure_copy_subst!(buf::Vector{UInt8}, from::Int, to::Int,
     push!(out, buf[from])
 end
 
-sink_finalize!(s::PureSink, ::PathMap{UnitVal}) = (c = s.changed; s.changed = false; c)
+sink_finalize!(s::PureSink, ::SinkBtm) = (c = s.changed; s.changed = false; c)
 
 # Float reduction sinks
 # Mirrors FloatReductionSink<Sum/Min/Max/Prod> in sinks.rs.
@@ -976,7 +1020,7 @@ function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     push!(s.by_key[idx][2], fval)
 end
 
-function sink_finalize!(s::FloatReductionSink, btm::PathMap{UnitVal}) :: Bool
+function sink_finalize!(s::FloatReductionSink, btm::SinkBtm) :: Bool
     isempty(s.by_key) && return false
     changed = false
     op = s.op
