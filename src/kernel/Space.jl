@@ -1155,7 +1155,13 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                                        tpl_expr::MORK.Expr, tpl_v::UInt8,
                                        add_expr::MORK.Expr;
                                        no_source::Bool=true,
-                                       no_sink::Bool=true) :: Tuple{Int, Bool}
+                                       no_sink::Bool=true,
+                                       prefix::Vector{UInt8}=UInt8[]) :: Tuple{Int, Bool}
+    # `prefix` (default empty = root, behaviour unchanged) scopes a prefixed-
+    # region exec: pattern reads anchor under `prefix` (space_query_multi_at)
+    # and template writes go to `prefix ++ result`.  Stage A covers the
+    # comma/comma (no_source, no_sink) form only — callers must guard
+    # I-source / O-sink under a non-empty prefix (see space_interpret!).
     tpl_args = ExprEnv[]
     ee_tpl = ExprEnv(UInt8(0), tpl_v, UInt32(0), tpl_expr)
     ee_args!(ee_tpl, tpl_args)
@@ -1220,7 +1226,10 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     end
 
     # space_query_multi_i uses s.mmaps for ACT file caching (I-pattern)
-    query_fn = no_source ? space_query_multi :
+    # no_source path uses space_query_multi_at so a non-empty `prefix` anchors
+    # the pattern read to the prefix-subtrie (delegates to space_query_multi
+    # when prefix is empty — the root path is byte-identical to before).
+    query_fn = no_source ? ((btm, pat, v, f) -> space_query_multi_at(btm, prefix, pat, v, f)) :
                            (btm, pat, v, f) -> space_query_multi_i(btm, pat, v, f; mmaps=s.mmaps)
     touched  = query_fn(read_btm, pat_expr, pat_v, (bindings, loc_expr) -> begin
         if no_sink
@@ -1232,8 +1241,12 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                 expr_apply(UInt8(0), ee.v, UInt8(0), ez, bindings, oz,
                            tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
                 result_view = @view out_bufs[k][1:oz.loc-1]   # zero-copy view (no slice alloc)
-                old = get_val_at(s.btm, result_view)
-                set_val_at!(s.btm, result_view, UNIT_VAL)
+                # Prefixed-region write: outputs land under `prefix` so a
+                # prefix-scoped exec stays inside its region.  Empty prefix →
+                # write the bare result view (zero-copy, unchanged root path).
+                wpath = isempty(prefix) ? result_view : vcat(prefix, result_view)
+                old = get_val_at(s.btm, wpath)
+                set_val_at!(s.btm, wpath, UNIT_VAL)
                 old === nothing && (any_new[] = true)
             end
         else
@@ -1291,9 +1304,10 @@ space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, tpl_expr::MORK.Expr,
 Mirrors `transform_multi_multi_` (the most common, fastest path).
 Uses ProductZipper trie query + direct set_val_at! (no sink object overhead).
 """
-space_transform_comma_comma!(s::Space, pat::MORK.Expr, tpl::MORK.Expr, add::MORK.Expr) =
+space_transform_comma_comma!(s::Space, pat::MORK.Expr, tpl::MORK.Expr, add::MORK.Expr;
+                             prefix::Vector{UInt8}=UInt8[]) =
     space_transform_multi_multi!(s, pat, UInt8(0), tpl, UInt8(0), add;
-                                  no_source=true, no_sink=true)
+                                  no_source=true, no_sink=true, prefix=prefix)
 
 # (`I`, `,`) — external ASource + direct write
 """
@@ -1372,7 +1386,8 @@ Returns `nothing` on success, an `ExecError` on any format violation
 or permission conflict. `UserPermissionErr` → caller should re-insert
 and retry; all other errors → halt.
 """
-function space_interpret!(s::Space, rt::MORK.Expr) :: Union{Nothing, ExecError}
+function space_interpret!(s::Space, rt::MORK.Expr;
+                          prefix::Vector{UInt8}=UInt8[]) :: Union{Nothing, ExecError}
     buf  = rt.buf
     # Safe serialisation — expr_serialize throws on reserved bytes; fall back to hex.
     dbg  = () -> try expr_serialize(buf) catch; bytes2hex(buf) end
@@ -1460,8 +1475,18 @@ function space_interpret!(s::Space, rt::MORK.Expr) :: Union{Nothing, ExecError}
 
     comma = UInt8(',');  i_src = UInt8('I');  o_snk = UInt8('O')
 
+    # Prefix-scoped exec (Stage A) only supports the comma/comma form: its read
+    # (space_query_multi_at) and write (prefixed set_val_at!) are region-correct.
+    # I-source and O-sink writes route through ASource / sink machinery that does
+    # not yet thread `prefix` — guard them rather than silently mis-scope across
+    # regions.  Lifting this guard is Stage B (thread prefix into sinks/sources).
+    if !isempty(prefix) && !(pat_functor == comma && tpl_functor == comma)
+        return _exec_err_other("prefix-scoped exec supports only (,)/(,) in Stage A; " *
+                               "got pat=$(Char(pat_functor)) tpl=$(Char(tpl_functor)) (I-source/O-sink under a prefix is Stage B)")
+    end
+
     if pat_functor == comma && tpl_functor == comma
-        space_transform_comma_comma!(s, pat_expr, tpl_expr, rt)
+        space_transform_comma_comma!(s, pat_expr, tpl_expr, rt; prefix=prefix)
     elseif pat_functor == i_src && tpl_functor == comma
         space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
                                       no_source=false, no_sink=true)
@@ -1888,7 +1913,8 @@ function space_metta_calculus_in_prefix!(s::Space, space_prefix::Vector{UInt8},
     isempty(space_prefix) && return space_metta_calculus!(s, max_steps)
     try
         anchor = vcat(space_prefix, _EXEC_PREFIX)
-        _space_metta_calculus_inner!(s, anchor, max_steps, "<space-prefix>")
+        _space_metta_calculus_inner!(s, anchor, max_steps, "<space-prefix>";
+                                     space_prefix=space_prefix)
     catch e
         @warn "space_metta_calculus_in_prefix!: $e"
         0
@@ -1899,11 +1925,21 @@ end
 # from `space_metta_calculus_at!` so both the string-form (which builds an
 # `(exec (loc $) $ $)` prefix) and the byte-form (raw anchor) share one loop.
 function _space_metta_calculus_inner!(s::Space, prefix_bytes::Vector{UInt8},
-                                       max_steps::Int, loc_label::AbstractString) :: Int
+                                       max_steps::Int, loc_label::AbstractString;
+                                       space_prefix::Vector{UInt8}=UInt8[]) :: Int
+    # `space_prefix` (default empty) is the byte-region anchor for a prefixed
+    # multi-space.  The exec atom lives in the trie at the FULL path
+    # `prefix_bytes ++ rel` (where prefix_bytes = space_prefix ++ _EXEC_PREFIX),
+    # so we walk + remove + re-insert at that full path.  But the EXEC EXPRESSION
+    # handed to space_interpret! must omit `space_prefix` — it has to start with
+    # the exec arity tag (_EXEC_PREFIX ++ body), not the raw region bytes, or the
+    # decoder rejects them as reserved.  `prefix=space_prefix` then scopes the
+    # exec's reads + writes back into the region.
     done      = 0
     retry     = false
     retry_cnt = _METTA_CALCULUS_MAX_RETRIES
     path_buf  = UInt8[]   # reused scratch — same pattern as space_metta_calculus!
+    sp_len    = length(space_prefix)
 
     while done < max_steps
         rz    = read_zipper_at_path(s.btm, prefix_bytes)
@@ -1922,8 +1958,10 @@ function _space_metta_calculus_inner!(s::Space, prefix_bytes::Vector{UInt8},
         append!(path_buf, zipper_path(rz))
         remove_val_at!(s.btm, path_buf)
 
-        rt  = MORK.Expr(copy(path_buf))
-        err = space_interpret!(s, rt)
+        # Exec expr omits the space_prefix region bytes (must begin with the
+        # exec arity tag).  sp_len==0 → full path_buf (root, unchanged).
+        rt  = MORK.Expr(path_buf[sp_len+1:end])
+        err = space_interpret!(s, rt; prefix=space_prefix)
 
         if err === nothing
             retry     = false
