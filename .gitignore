@@ -61,3 +61,10 @@ coverage/
 *.cert
 *.p12
 secrets.toml
+
+# Transient runtime artifacts (resource-store / exec dumps, hash-named) +
+# local dev REPL harness — never part of the published kernel.
+0000*-0000000000000000-*
+repl/
+server.log
+server.pid
