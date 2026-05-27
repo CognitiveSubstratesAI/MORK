@@ -368,6 +368,50 @@ end
 space_query_multi(btm::PathMap{UnitVal}, pat_expr::MORK.Expr, effect::Function) =
     space_query_multi(btm, pat_expr, UInt8(0), effect)
 
+"""
+    space_query_multi_at(btm, prefix, pat_expr, [pat_v], effect) → Int
+
+Prefix-anchored variant of `space_query_multi`.  All factor zippers anchor
+at `prefix` (rather than root), so the query operates on the subtrie under
+`prefix`.  The combined path passed to `effect` is the FULL path including
+`prefix` — callers that want path bytes relative to the prefix should strip
+the leading `length(prefix)` bytes themselves.
+
+Use case: Core's "spaces as prefixes" model (Stage 1 of single-node
+convergence) where `common:/`, `app/games:/`, etc. are sibling byte-regions
+in one shared trie.  Routing a query under one space's prefix limits its
+results to that space without scanning the whole trie.
+
+Upstream parity note: upstream MORK has commented-out experiments at this
+shape (kernel/src/space.rs:1883, 2117) but no shipped public API.  This
+function is the Julia kernel filling that gap — follows the existing `_at!`
+pattern from `space_metta_calculus_at!`.
+"""
+function space_query_multi_at(btm::PathMap{UnitVal}, prefix::Vector{UInt8},
+                               pat_expr::MORK.Expr, pat_v::UInt8, effect::Function) :: Int
+    isempty(prefix) && return space_query_multi(btm, pat_expr, pat_v, effect)
+
+    pat_tag = byte_item(pat_expr.buf[1])
+    pat_tag isa ExprArity || error("pat_expr must be an Arity node")
+    n_factors = Int(pat_tag.arity)
+    n_factors > 0 || error("pat_expr arity must be > 0")
+
+    if n_factors == 1
+        effect(Dict{ExprVar,ExprEnv}(), pat_expr.buf)
+        return 1
+    end
+
+    _bindings_scratch = Dict{ExprVar, ExprEnv}()
+    _pairs_scratch    = Tuple{ExprEnv, ExprEnv}[]
+
+    _space_query_multi_inner!(btm, pat_expr, pat_v, n_factors, effect,
+                               _bindings_scratch, _pairs_scratch; prefix=prefix)
+end
+
+space_query_multi_at(btm::PathMap{UnitVal}, prefix::Vector{UInt8},
+                      pat_expr::MORK.Expr, effect::Function) =
+    space_query_multi_at(btm, prefix, pat_expr, UInt8(0), effect)
+
 # =====================================================================
 # space_query_multi_i — I-pattern query using ASource dispatch
 # Mirrors Space::query_multi_i (no_source=false path) in space.rs.
@@ -579,13 +623,18 @@ space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr, effect::Function
 
 # Internal hot path — takes pre-allocated scratch buffers so the
 # per-unify-attempt Dict allocation is eliminated.
+#
+# `prefix` kwarg (default empty = root) anchors all factor zippers at the
+# given byte-prefix.  Empty prefix preserves the original root-anchored
+# behavior — no overhead for the common case.
 function _space_query_multi_inner!(btm::PathMap{UnitVal},
                                     pat_expr::MORK.Expr,
                                     pat_v::UInt8,
                                     n_factors::Int,
                                     effect::Function,
                                     bindings_scratch::Dict{ExprVar, ExprEnv},
-                                    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}}) :: Int
+                                    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}};
+                                    prefix::Vector{UInt8} = UInt8[]) :: Int
     # Rule of 64: warn if pattern exceeds practical source limit.
     # ProductZipper with N>2 factors iterates N^M paths (M=trie depth) and
     # becomes intractable beyond 2 secondary factors in practice.
@@ -602,26 +651,38 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # still freshly allocated (ProductZipper mutates it as its cursor).
     # Pooled zippers are reinitialized from btm before use and returned after
     # ProductZipper is constructed (constructor only reads root_node/root_val/alloc).
-    pool       = _zipper_pool_get!()
     n_secondaries = n_factors - 2
-    secondaries_pooled = Vector{Any}(undef, n_secondaries)
-    try
-        primary   = read_zipper_at_path(btm, UInt8[])
+    # Build the product zipper.  Two anchoring regimes:
+    #   • empty prefix (root query, the hot path): pooled secondary zippers,
+    #     unchanged from the original implementation.
+    #   • non-empty prefix: the anchored ProductZipper(btm, prefix, k) which
+    #     roots ALL k = n_factors-1 factors at the prefix-subtrie node (a true
+    #     O(subtrie) view).  This replaces the old read_zipper_at_path(btm,
+    #     prefix) approach, whose anchor the base ProductZipper discarded —
+    #     producing absolute paths whose raw prefix bytes crashed expr decode.
+    prz = if isempty(prefix)
+        pool = _zipper_pool_get!()
+        secondaries_pooled = Vector{Any}(undef, n_secondaries)
+        primary = read_zipper_at_path(btm, prefix)
         for i in 1:n_secondaries
             z = _pool_checkout!(pool)
             if z === nothing
-                z = read_zipper_at_path(btm, UInt8[])
+                z = read_zipper_at_path(btm, prefix)
             else
                 _reinit_zipper_from_btm!(z, btm)
             end
             secondaries_pooled[i] = z
         end
-        prz = ProductZipper(primary, secondaries_pooled)
-        # Return secondaries to pool immediately — ProductZipper extracted root refs
+        p = ProductZipper(primary, secondaries_pooled)
         for i in 1:n_secondaries
-            _pool_return!(pool, secondaries_pooled[i])
+            _pool_return!(pool, secondaries_pooled[i])   # ProductZipper extracted root refs
         end
+        p
+    else
+        ProductZipper(btm, prefix, n_factors - 1)
+    end
 
+    try
         while pz_to_next_val!(prz)
             pz_focus_factor(prz) != pz_factor_count(prz) - 1 && continue
 
@@ -1512,11 +1573,12 @@ end
 # Mirrors Space::token_bfs in space.rs (line 1750)
 # =====================================================================
 
-function space_token_bfs(s::Space, token::Vector{UInt8}, pattern::MORK.Expr) :: Vector{Tuple{Vector{UInt8}, MORK.Expr}}
+function space_token_bfs(s::Space, token::Vector{UInt8}, pattern::MORK.Expr) :: Vector{Tuple{Vector{UInt8}, MORK.Expr, Int}}
     rz  = read_zipper_at_path(s.btm, token)
     zipper_descend_until!(rz)
-    res = Tuple{Vector{UInt8}, MORK.Expr}[]
+    res = Tuple{Vector{UInt8}, MORK.Expr, Int}[]
     cm  = zipper_child_mask(rz)
+    # General case: visit all subtries below the branch.
     for b in cm
         zipper_descend_to_byte!(rz, b)
         # Get representative expression for this byte position:
@@ -1532,6 +1594,7 @@ function space_token_bfs(s::Space, token::Vector{UInt8}, pattern::MORK.Expr) :: 
             copy(rzc.prefix_buf)
         end
         e = MORK.Expr(origin)
+        expr_path_len = length(origin)   # used for child_count branch (dbf9d50)
         # expr_unifiable: attempt unification, return true if succeeds
         pairs = Tuple{ExprEnv,ExprEnv}[
             (ExprEnv(UInt8(0), UInt8(0), UInt32(0), e),
@@ -1539,9 +1602,48 @@ function space_token_bfs(s::Space, token::Vector{UInt8}, pattern::MORK.Expr) :: 
         ]
         scratch = Dict{ExprVar,ExprEnv}()
         if _expr_unify_inplace!(pairs, scratch) === true
-            push!(res, (copy(rz.prefix_buf[1:rz.origin_path_len + length(zipper_path(rz))]), e))
+            # Port of upstream MORK dbf9d50: compute child_count so the client
+            # can decide whether further exploration from this token is fruitful.
+            # Walk: descend_until + count children of the resulting node, then
+            # ascend back to where we were so the outer loop's next iteration
+            # sees the same state.
+            path_len_before = length(zipper_path(rz))
+            zipper_descend_until!(rz)
+            cur_path_total  = rz.origin_path_len + length(zipper_path(rz))
+            child_count = if expr_path_len > cur_path_total
+                # The matched expr extends beyond where descend_until landed —
+                # there's a true branching node below us; count its children.
+                sum(1 for _ in zipper_child_mask(rz); init=0)
+            else
+                # descend_until reached the end of the matched expr — there's
+                # exactly one concrete atom below.
+                1
+            end
+            zipper_ascend!(rz, length(zipper_path(rz)) - path_len_before)
+            push!(res, (copy(rz.prefix_buf[1:rz.origin_path_len + length(zipper_path(rz))]), e, child_count))
         end
         zipper_ascend_byte!(rz)
+    end
+    # Port of upstream MORK b95e2f7: special case for a single concrete atom.
+    # When the general loop produces no results AND the focus token is non-empty,
+    # there may be exactly one atom below the pattern that the child-mask
+    # iteration missed (e.g. the subtrie is a single concrete value, not a
+    # branching node).  Fork the zipper, advance to that value, check
+    # unification, and emit with an EMPTY token — no further exploration from
+    # this point is fruitful.  child_count = 0 (matches upstream).
+    if isempty(res) && length(zipper_path(rz)) > 0
+        rzc = deepcopy(rz)
+        if zipper_to_next_val!(rzc)
+            e = MORK.Expr(copy(rzc.prefix_buf))
+            pairs = Tuple{ExprEnv,ExprEnv}[
+                (ExprEnv(UInt8(0), UInt8(0), UInt32(0), e),
+                 ExprEnv(UInt8(1), UInt8(0), UInt32(0), pattern))
+            ]
+            scratch = Dict{ExprVar,ExprEnv}()
+            if _expr_unify_inplace!(pairs, scratch) === true
+                push!(res, (UInt8[], e, 0))
+            end
+        end
     end
     res
 end
@@ -1729,56 +1831,115 @@ end
 function space_metta_calculus_at!(s::Space, location_sexpr::AbstractString,
                                    max_steps::Int=typemax(Int)) :: Int
     # Build the exec prefix for this location: (exec (<location> $) $ $)
-    # Mirrors metta_calculus_impl: prefix_e = format!("(exec ({} $) $ $)", thread_id)
+    # Mirrors upstream metta_calculus_impl (kernel/src/space.rs:1035):
+    # prefix_e = format!("(exec ({} $) $ $)", thread_id)
     prefix_str = "(exec ($location_sexpr \$) \$ \$)"
     try
         prefix_expr  = sexpr_to_expr(prefix_str)
         prefix_bytes = _derive_prefix(prefix_expr)
-
-        done      = 0
-        retry     = false
-        retry_cnt = _METTA_CALCULUS_MAX_RETRIES
-        path_buf  = UInt8[]   # reused scratch — same pattern as space_metta_calculus!
-
-        while done < max_steps
-            rz    = read_zipper_at_path(s.btm, prefix_bytes)
-            found = zipper_to_next_val!(rz)
-            if !found
-                if retry && retry_cnt > 0
-                    retry_cnt -= 1
-                    sleep(0.001)
-                    continue
-                end
-                break
-            end
-
-            empty!(path_buf)
-            append!(path_buf, prefix_bytes)
-            append!(path_buf, zipper_path(rz))
-            remove_val_at!(s.btm, path_buf)
-
-            rt  = MORK.Expr(copy(path_buf))
-            err = space_interpret!(s, rt)
-
-            if err === nothing
-                retry     = false
-                retry_cnt = _METTA_CALCULUS_MAX_RETRIES
-                done += 1
-            elseif is_user_perm_err(err)
-                set_val_at!(s.btm, path_buf, UNIT_VAL)
-                retry = true
-                retry_cnt > 0 ? (retry_cnt -= 1; sleep(0.001)) :
-                    (@warn "space_metta_calculus_at!: retry limit at $location_sexpr"; break)
-            else
-                @warn "space_metta_calculus_at!: $(exec_error_message(err))"
-                break
-            end
-        end
-        done
+        return _space_metta_calculus_inner!(s, prefix_bytes, max_steps, location_sexpr)
     catch e
         @warn "space_metta_calculus_at!: $e"
         0
     end
+end
+
+"""
+    space_metta_calculus_at!(s::Space, anchor_bytes::Vector{UInt8}, max_steps) :: Int
+
+Raw-bytes variant — Julia-specific extension (no upstream Rust equivalent;
+upstream's `metta_calculus_impl` only takes `thread_id_sexpr_str: &str`).
+Unlike the `AbstractString` overload (which wraps the location in
+`(exec (loc \$) \$ \$)` and derives a prefix from that), this variant takes
+a pre-computed byte-anchor and walks the calculus directly under it.
+
+For the "run all exec atoms in a named space" use case (Stage 1 multi-space),
+prefer `space_metta_calculus_in_prefix!` which composes the space prefix
+with `_EXEC_PREFIX` internally — that's a cleaner abstraction than
+hand-composing bytes.
+"""
+function space_metta_calculus_at!(s::Space, anchor_bytes::Vector{UInt8},
+                                   max_steps::Int=typemax(Int)) :: Int
+    try
+        _space_metta_calculus_inner!(s, anchor_bytes, max_steps, "<bytes>")
+    catch e
+        @warn "space_metta_calculus_at! (bytes): $e"
+        0
+    end
+end
+
+"""
+    space_metta_calculus_in_prefix!(s, space_prefix, max_steps) :: Int
+
+Run the exec-atom calculus for atoms stored under `space_prefix ++
+_EXEC_PREFIX` — the canonical entry point for "run this space's exec
+atoms" in Core's prefix-region multi-space model (Stage 1).
+
+`space_prefix == UInt8[]` makes this equivalent to `space_metta_calculus!`
+(whole-trie exec processing).  For named spaces with non-empty prefix,
+this scopes execution to that space's region only — exec atoms in OTHER
+named-space prefixes are NOT touched.
+
+Keeps `_EXEC_PREFIX` private (an internal MORK constant) by composing it
+inside the kernel rather than requiring callers to import or reproduce it.
+"""
+function space_metta_calculus_in_prefix!(s::Space, space_prefix::Vector{UInt8},
+                                          max_steps::Int=typemax(Int)) :: Int
+    isempty(space_prefix) && return space_metta_calculus!(s, max_steps)
+    try
+        anchor = vcat(space_prefix, _EXEC_PREFIX)
+        _space_metta_calculus_inner!(s, anchor, max_steps, "<space-prefix>")
+    catch e
+        @warn "space_metta_calculus_in_prefix!: $e"
+        0
+    end
+end
+
+# Internal: walks exec atoms under `prefix_bytes`, executes each.  Extracted
+# from `space_metta_calculus_at!` so both the string-form (which builds an
+# `(exec (loc $) $ $)` prefix) and the byte-form (raw anchor) share one loop.
+function _space_metta_calculus_inner!(s::Space, prefix_bytes::Vector{UInt8},
+                                       max_steps::Int, loc_label::AbstractString) :: Int
+    done      = 0
+    retry     = false
+    retry_cnt = _METTA_CALCULUS_MAX_RETRIES
+    path_buf  = UInt8[]   # reused scratch — same pattern as space_metta_calculus!
+
+    while done < max_steps
+        rz    = read_zipper_at_path(s.btm, prefix_bytes)
+        found = zipper_to_next_val!(rz)
+        if !found
+            if retry && retry_cnt > 0
+                retry_cnt -= 1
+                sleep(0.001)
+                continue
+            end
+            break
+        end
+
+        empty!(path_buf)
+        append!(path_buf, prefix_bytes)
+        append!(path_buf, zipper_path(rz))
+        remove_val_at!(s.btm, path_buf)
+
+        rt  = MORK.Expr(copy(path_buf))
+        err = space_interpret!(s, rt)
+
+        if err === nothing
+            retry     = false
+            retry_cnt = _METTA_CALCULUS_MAX_RETRIES
+            done += 1
+        elseif is_user_perm_err(err)
+            set_val_at!(s.btm, path_buf, UNIT_VAL)
+            retry = true
+            retry_cnt > 0 ? (retry_cnt -= 1; sleep(0.001)) :
+                (@warn "space_metta_calculus_at!: retry limit at $loc_label"; break)
+        else
+            @warn "space_metta_calculus_at!: $(exec_error_message(err))"
+            break
+        end
+    end
+    done
 end
 
 # =====================================================================
@@ -1891,6 +2052,7 @@ export ExecError, is_user_perm_err, exec_error_message
 export space_interpret!, space_metta_calculus!, _METTA_CALCULUS_MAX_RETRIES
 export _grounded_call_no_args, _grounded_call_with_bindings, _grounded_decode_args, _grounded_encode_results
 export space_sexpr_to_expr, space_metta_calculus_at!, space_acquire_transform_permissions
+export space_metta_calculus_in_prefix!, space_query_multi_at
 
 # Precompile hot-path method specializations so JIT fires at package load,
 # not on first user call. Mirrors upstream's statically-compiled hot paths.

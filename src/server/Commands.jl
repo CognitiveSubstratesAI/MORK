@@ -259,15 +259,17 @@ function cmd_explore(ss::ServerSpace, args::Vector{String}, props::Dict{String,S
         end
 
         # Mirrors do_bfs JSON output: [{"token":[bytes], "cnt":N, "expr":"..."}]
+        # cnt is the downstream child count from token_bfs_impl (upstream dbf9d50)
+        # — lets the client decide whether further exploration is fruitful.
         io = IOBuffer()
         write(io, "[")
         first = true
-        for (new_tok, e) in result_pairs
+        for (new_tok, e, cnt) in result_pairs
             first || write(io, ",\n")
             first = false
             tok_bytes = join(string.(new_tok), ", ")
             expr_str  = expr_serialize(e.buf)
-            write(io, "{\"token\": [$tok_bytes], \"cnt\": 1, \"expr\": $(JSON3.write(expr_str))}")
+            write(io, "{\"token\": [$tok_bytes], \"cnt\": $cnt, \"expr\": $(JSON3.write(expr_str))}")
         end
         write(io, "]")
         work_ok(take!(io))
