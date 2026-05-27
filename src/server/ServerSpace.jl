@@ -129,15 +129,87 @@ function sm_get_status(sm::StatusMap, path::Vector{UInt8}) :: StatusRecord
     end
 end
 
-function sm_try_set_user_status!(sm::StatusMap, path::Vector{UInt8}, status::StatusRecord) :: Bool
+# ─────────────────────────────────────────────────────────────────────────────
+# Stream notification — snapshot-under-lock + notify-outside-lock.
+#
+# Port of upstream MORK 205dd91 (server-branch, "Fixing deadlock caused by
+# lock being held too long").
+#
+# Upstream Rust (server/src/status_map.rs::try_set_user_status, lines 313-321)
+# scopes the write-lock-guard in a `{ ... }` block so it's dropped before
+# `send_new_status(path)` is called.  That fix is necessary because Rust's
+# RwLock is not reentrant — holding user_status's lock while send_new_status
+# tries to acquire it deadlocks.
+#
+# In Julia we use ONE ReentrantLock for the whole StatusMap (user_status +
+# readers + writers + streams), so the specific reentrant-deadlock isn't
+# possible.  But two other issues remain:
+#   1. Julia's `put!(ch, val)` is BLOCKING (Rust's `try_send` is not).  A
+#      slow reader or full channel blocks the notification thread; if the
+#      lock is held during put!, every other task waiting on sm.lock starves.
+#   2. Even without starvation, holding sm.lock through N channel sends
+#      serializes all StatusMap operations on those sends — same lock-held-
+#      too-long shape, just less catastrophic.
+#
+# Fix: mutate state under lock, snapshot (streams ⊕ composed status) under
+# the same lock, release the lock, then run put! per channel OUTSIDE the
+# lock.  Garbage-collect dead channels via a brief lock re-acquire.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# CALLED UNDER LOCK.  Returns (chs_copy, status) or nothing if no streams.
+function _sm_snapshot_streams(sm::StatusMap, path::Vector{UInt8})
+    chs = get(sm.streams, path, nothing)
+    (chs === nothing || isempty(chs)) && return nothing
+    # Compose status inline (no re-entry into the lock — composing is cheap).
+    # Mirrors sm_get_status: PATH_FORBIDDEN_TEMPORARY if writer held,
+    # PATH_READ_ONLY_TEMPORARY if reader(s) held, else stored user_status.
+    st = if path in sm.writers
+        StatusRecord(PATH_FORBIDDEN_TEMPORARY)
+    elseif get(sm.readers, path, 0) > 0
+        StatusRecord(PATH_READ_ONLY_TEMPORARY)
+    else
+        get(sm.user_status, path, StatusRecord())
+    end
+    (copy(chs), st)
+end
+
+# CALLED OUTSIDE LOCK.  put! per channel; collect dead; one brief lock
+# re-acquire to GC them.  Safe for put! to block — sm.lock is free for
+# other tasks while we wait on the channel.
+function _sm_notify_streams_outside_lock!(sm::StatusMap, path::Vector{UInt8}, snapshot)
+    snapshot === nothing && return
+    chs_copy, status = snapshot
+    dead = Set{Channel{StatusRecord}}()
+    for ch in chs_copy
+        try
+            put!(ch, status)
+        catch
+            push!(dead, ch)
+        end
+    end
+    isempty(dead) && return
     lock(sm.lock) do
+        live = get(sm.streams, path, nothing)
+        if live !== nothing
+            filter!(ch -> !(ch in dead), live)
+            isempty(live) && delete!(sm.streams, path)
+        end
+    end
+end
+
+function sm_try_set_user_status!(sm::StatusMap, path::Vector{UInt8}, status::StatusRecord) :: Bool
+    ok_and_snap = lock(sm.lock) do
         existing = get(sm.user_status, path, StatusRecord())
         # Cannot overwrite blocking statuses
-        (status_blocks_writer(existing) || status_blocks_reader(existing)) && return false
+        if status_blocks_writer(existing) || status_blocks_reader(existing)
+            return (false, nothing)
+        end
         sm.user_status[path] = status
-        _sm_notify_streams!(sm, path)
-        true
+        (true, _sm_snapshot_streams(sm, path))
     end
+    ok, snap = ok_and_snap
+    ok && _sm_notify_streams_outside_lock!(sm, path, snap)
+    ok
 end
 
 function sm_clear_user_status!(sm::StatusMap, path::Vector{UInt8})
@@ -147,45 +219,51 @@ function sm_clear_user_status!(sm::StatusMap, path::Vector{UInt8})
 end
 
 function sm_get_read_permission(sm::StatusMap, path::Vector{UInt8}) :: Union{ReadPermission, Nothing}
-    lock(sm.lock) do
+    perm_and_snap = lock(sm.lock) do
         user_st = get(sm.user_status, path, StatusRecord())
-        status_blocks_reader(user_st) && return nothing
-        path in sm.writers && return nothing
+        status_blocks_reader(user_st) && return (nothing, nothing)
+        path in sm.writers              && return (nothing, nothing)
         sm.readers[path] = get(sm.readers, path, 0) + 1
-        _sm_notify_streams!(sm, path)
-        ReadPermission(path, sm, false)
+        (ReadPermission(path, sm, false), _sm_snapshot_streams(sm, path))
     end
+    perm, snap = perm_and_snap
+    perm !== nothing && _sm_notify_streams_outside_lock!(sm, path, snap)
+    perm
 end
 
 function sm_release_read!(sm::StatusMap, perm::ReadPermission)
     perm.released && return
     perm.released = true
-    lock(sm.lock) do
+    snap = lock(sm.lock) do
         n = get(sm.readers, perm.path, 0)
         n > 1 ? (sm.readers[perm.path] = n - 1) : delete!(sm.readers, perm.path)
-        _sm_notify_streams!(sm, perm.path)
+        _sm_snapshot_streams(sm, perm.path)
     end
+    _sm_notify_streams_outside_lock!(sm, perm.path, snap)
 end
 
 function sm_get_write_permission(sm::StatusMap, path::Vector{UInt8}) :: Union{WritePermission, Nothing}
-    lock(sm.lock) do
+    perm_and_snap = lock(sm.lock) do
         user_st = get(sm.user_status, path, StatusRecord())
-        status_blocks_writer(user_st) && return nothing
-        (haskey(sm.readers, path) || path in sm.writers) && return nothing
+        status_blocks_writer(user_st)                          && return (nothing, nothing)
+        (haskey(sm.readers, path) || path in sm.writers)       && return (nothing, nothing)
         delete!(sm.user_status, path)   # clear user status on write acquisition
         push!(sm.writers, path)
-        _sm_notify_streams!(sm, path)
-        WritePermission(path, sm, false)
+        (WritePermission(path, sm, false), _sm_snapshot_streams(sm, path))
     end
+    perm, snap = perm_and_snap
+    perm !== nothing && _sm_notify_streams_outside_lock!(sm, path, snap)
+    perm
 end
 
 function sm_release_write!(sm::StatusMap, perm::WritePermission)
     perm.released && return
     perm.released = true
-    lock(sm.lock) do
+    snap = lock(sm.lock) do
         delete!(sm.writers, perm.path)
-        _sm_notify_streams!(sm, perm.path)
+        _sm_snapshot_streams(sm, perm.path)
     end
+    _sm_notify_streams_outside_lock!(sm, perm.path, snap)
 end
 
 # Add a status stream channel for a path
@@ -195,15 +273,15 @@ function sm_add_stream!(sm::StatusMap, path::Vector{UInt8}, ch::Channel{StatusRe
     end
 end
 
-# Notify all streams watching a path (called while lock is held)
+# Legacy single-call entry point — kept for external callers (tests etc.).
+# Internally now routes through snapshot-under-lock + notify-outside-lock so
+# callers get the corrected semantics whether they enter via this function
+# or one of the mutator paths.
 function _sm_notify_streams!(sm::StatusMap, path::Vector{UInt8})
-    chs = get(sm.streams, path, nothing)
-    chs === nothing && return
-    status = sm_get_status(sm, path)  # NOTE: called while lock held, re-entrant ok
-    filter!(sm.streams[path]) do ch
-        try; put!(ch, status); true; catch; false; end
+    snap = lock(sm.lock) do
+        _sm_snapshot_streams(sm, path)
     end
-    isempty(sm.streams[path]) && delete!(sm.streams, path)
+    _sm_notify_streams_outside_lock!(sm, path, snap)
 end
 
 function sm_shutdown!(sm::StatusMap)
