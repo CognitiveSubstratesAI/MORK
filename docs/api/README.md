@@ -2,6 +2,23 @@
 
 Complete index of exported symbols from `MORK.jl`.
 
+For prose guides see `docs/guide/`:
+
+- [expressions.md](../guide/expressions.md) — byte-encoding layout
+- [space_rules.md](../guide/space_rules.md) — writing rules + the calculus
+- [sinks.md](../guide/sinks.md) — output combinators (`+`, `-`, `fsum`, `count`, ...)
+- [server.md](../guide/server.md) — HTTP server surface
+- [zipper_queries.md](../guide/zipper_queries.md) — direct PathMap zipper-algebra
+  queries (use when you want reads / traversals over an existing trie
+  without the rule engine; works polymorphically over `.act` mmap'd snapshots)
+
+The trie substrate lives in a separate package:
+[**PathMap.jl**](https://github.com/sivaji1012/PathMap) — byte-keyed,
+prefix-compressed, structurally-shared trie with first-class zipper
+algebra and `.act` mmap serialization.  See its
+[`docs/guide/`](https://github.com/sivaji1012/PathMap/tree/main/docs/guide)
+for the substrate API.
+
 ---
 
 ## Space — Core Container
