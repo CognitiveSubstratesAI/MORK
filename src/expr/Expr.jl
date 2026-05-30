@@ -451,12 +451,43 @@ function expr_parse_str(s::AbstractString) :: MORK.Expr
     MORK.Expr(out)
 end
 
+# _derive_prefix — constant prefix of expr up to first NewVar / VarRef.
+# Used by `space_metta_calculus_at!` in Space.jl and by HTTP command
+# handlers in MorkServer. Originally lived in mork/server/src/commands.rs;
+# moved here on 2026-05-30 because it's a pure-Expr byte utility (no
+# server state, no HTTP) and the kernel's `space_metta_calculus_at!`
+# calls it directly. Keeping it in MorkServer would have made the
+# kernel depend on the server layer.
+#
+# Examples: "a" → full; "(isa)" → full; "(isa $x $y)" → [Arity3, "isa"];
+# "$x" → []. Mirrors upstream `derive_prefix_from_expr_slice` +
+# `till_constant_to_full` (upstream 83d1276).
+function _derive_prefix(expr::Expr) :: Vector{UInt8}
+    buf = expr.buf
+    n   = length(buf)
+    i = 1
+    while i <= n
+        b   = buf[i]
+        tag = byte_item(b)
+        if tag isa ExprNewVar || tag isa ExprVarRef
+            break
+        elseif tag isa ExprSymbol
+            i += 1 + Int(tag.size)
+        elseif tag isa ExprArity
+            i += 1
+        else
+            break
+        end
+    end
+    buf[1:i-1]
+end
+
 # =====================================================================
 # Exports
 # =====================================================================
 
 export ExprTag, ExprNewVar, ExprVarRef, ExprSymbol, ExprArity
-export item_byte, byte_item
+export item_byte, byte_item, _derive_prefix
 export Expr, expr_tag_at, expr_span, expr_serialize
 export ExprZipper, ez_tag, ez_item, ez_next!, ez_span, ez_symbol
 export ez_ensure!, ez_write_new_var!, ez_write_var_ref!, ez_write_arity!
