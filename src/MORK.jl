@@ -6,8 +6,6 @@
 module MORK
 
 using Base64
-using HTTP: HTTP
-using JSON3
 using PathMap
 
 # ── Phase 2: Expression layer (mork/expr/) ────────────────────────────────────
@@ -50,20 +48,14 @@ include("kernel/Space.jl")
 # Kernel: top-level entry points. Ports mork/kernel/src/main.rs.
 include("kernel/Main.jl")
 
-# ── Server layer (mork/server/) ────────────────────────────────────────────────
-
-# ServerSpace + StatusMap — path-level permission tracking.
-# Ports mork/server/src/server_space.rs + status_map.rs.
-include("server/ResourceStore.jl")
-include("server/ServerSpace.jl")
-
-# Command handlers (count, explore, import, export, transform, upload, ...).
-# Ports mork/server/src/commands.rs.
-include("server/Commands.jl")
-
-# HTTP server entry point.
-# Ports mork/server/src/main.rs.
-include("server/Server.jl")
+# ── Server layer ──────────────────────────────────────────────────────────────
+#
+# Lives in the separate MorkServer package (sivaji1012/MorkServer) so kernel
+# consumers (Core, MorkSupercompiler, etc.) don't pull HTTP + JSON3 transitive
+# deps for code they never use. Same split as upstream Rust's kernel/ crate vs
+# server/ crate. Files previously included from `src/server/` moved to
+# `packages/MorkServer/src/` on 2026-05-30 (this commit). Pkg-add MorkServer
+# explicitly if you need the HTTP layer.
 
 # ── MorkL VM (experiments/morkl_interpreter/) ─────────────────────────────────
 
@@ -89,7 +81,6 @@ export ez_reset!
 version() = v"0.1.0"
 
 export version
-export HTTP
 # Grounding mechanism (Phase 2) — re-exported from kernel/Sources.jl
 export GROUNDED_REGISTRY, register_grounded!, is_grounded
 
