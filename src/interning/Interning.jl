@@ -389,43 +389,40 @@ function get_sym_or_insert!(wp::WritePermit, bytes::AbstractVector{UInt8}) :: Mo
     existing !== nothing && return existing
 
     index = wp.index    # 1-based permission bucket
-
-    # Compute Pearson hash for to_symbol bucket
     hash_bucket = Int(bounded_pearson_hash(bytes)) % MAX_WRITER_THREADS + 1
     sym_lk, sym_pm = m.to_symbol[hash_bucket]
-
     perm = m.permissions[index]
 
-    # Allocate new symbol ID: fetch-add on next_symbol
-    raw_id = Threads.atomic_add!(perm.next_symbol, UInt64(1))
-    id_bytes = ntuple(i -> UInt8((raw_id >> ((i-1)*8)) & 0xFF), 8)   # little-endian (then we flip below)
-    # Symbol is stored big-endian in PathMap as key; byte layout:
-    #   bytes[1..2] = 0 (reserved), bytes[3] = perm_idx (1-based), bytes[4..8] = counter
-    new_sym_bytes = ntuple(8) do i
-        if i <= 2;  UInt8(0)
-        elseif i == 3; UInt8(index)
-        else; UInt8((raw_id >> ((8-i)*8)) & 0xFF)   # big-endian counter in bytes 4..8
-        end
-    end
-    new_sym = MorkSymbol(new_sym_bytes)
-
-    # Write bytes into slab
-    tb_raw = _slab_append!(perm.slab, bytes)
-    tb = ThinBytes(UInt8(index), tb_raw.offset, tb_raw.len)
-
-    # Insert into to_bytes[permission_idx]
-    bytes_lk, bytes_pm = m.to_bytes[index]
-    lock(bytes_lk) do
-        set_val_at!(bytes_pm, sym_as_be_bytes(new_sym), tb)
-    end
-
-    # Insert into to_symbol[hash_bucket]
+    # ALL side-effects (id allocation, slab append, to_bytes write, to_symbol write)
+    # happen INSIDE the to_symbol lock, AFTER the double-check — so a race-loser
+    # (existing2 found) returns immediately with NO side-effects, leaving no orphan
+    # to_bytes entry / wasted id / dead slab bytes (audit I-2; this leaked 192 orphans
+    # under a 4-thread / 8-task / 300-word stress before the fix).
+    # Upstream eagerly slab-writes then reverts on loss (handle.rs:41-111); doing it
+    # lazily inside the lock is the simpler Julia equivalent — no revert needed.
+    # Lock order is always to_symbol → to_bytes (get_sym/get_bytes each take one only),
+    # so no deadlock; perm.slab is exclusive to this permit, safe to append in-scope.
     lock(sym_lk) do
-        # Double-check: another thread may have won the race
         existing2 = get_val_at(sym_pm, bytes)
-        if existing2 !== nothing
-            return existing2
+        existing2 !== nothing && return existing2
+
+        raw_id = Threads.atomic_add!(perm.next_symbol, UInt64(1))
+        # Symbol stored big-endian: bytes[1..2]=0, bytes[3]=perm_idx, bytes[4..8]=counter.
+        new_sym_bytes = ntuple(8) do i
+            if i <= 2;  UInt8(0)
+            elseif i == 3; UInt8(index)
+            else; UInt8((raw_id >> ((8-i)*8)) & 0xFF)
+            end
         end
+        new_sym = MorkSymbol(new_sym_bytes)
+
+        tb_raw = _slab_append!(perm.slab, bytes)
+        tb = ThinBytes(UInt8(index), tb_raw.offset, tb_raw.len)
+        bytes_lk, bytes_pm = m.to_bytes[index]
+        lock(bytes_lk) do
+            set_val_at!(bytes_pm, sym_as_be_bytes(new_sym), tb)
+        end
+
         set_val_at!(sym_pm, bytes, new_sym)
         new_sym
     end

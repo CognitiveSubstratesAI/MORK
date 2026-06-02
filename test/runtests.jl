@@ -3579,6 +3579,35 @@ const PM = PathMap.PathMap
             @test released === nothing         # released despite the exception
         end
 
+        @testset "intern write path — no orphan to_bytes under concurrency (audit I-2)" begin
+            # Pre-fix, a race-loser had already allocated an id + written to_bytes before
+            # the to_symbol double-check, leaking an orphan to_bytes entry (192 orphans
+            # in a 4-thread/8-task/300-word stress). Fixed: all side-effects moved inside
+            # the to_symbol lock, winner-only. Needs >1 thread to exercise the race —
+            # single-threaded has no parallelism so it would pass vacuously.
+            if Threads.nthreads() < 2
+                @test_skip "needs julia --threads>1 to exercise the intern race"
+            else
+                h = SharedMappingHandle()
+                for k in 1:100
+                    wb = Vector{UInt8}("iw_$(k)")
+                    ready = Threads.Atomic{Int}(0); ts = Vector{Task}(undef, 8)
+                    for t in 1:8
+                        ts[t] = Threads.@spawn begin
+                            Threads.atomic_add!(ready, 1); while ready[] < 8; yield(); end
+                            with_write_permit(h) do wp; get_sym_or_insert!(wp, wb); end
+                        end
+                    end
+                    foreach(fetch, ts)
+                end
+                inner = h.inner
+                tb   = sum(val_count(inner.to_bytes[i][2])  for i in 1:length(inner.to_bytes))
+                tsym = sum(val_count(inner.to_symbol[i][2]) for i in 1:length(inner.to_symbol))
+                @test tsym == 100      # one symbol per distinct word
+                @test tb == tsym       # NO orphan to_bytes entries (was tb > tsym pre-fix)
+            end
+        end
+
         @testset "multiple distinct symbols" begin
             h  = SharedMappingHandle()
             wp = try_acquire_permission(h)
