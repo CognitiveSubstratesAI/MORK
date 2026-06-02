@@ -4223,4 +4223,31 @@ const PM = PathMap.PathMap
         @test MORK._read_i128(MORK.pure_apply("sum_i128", [a, a])) == Int128(2)^63
     end
 
+    @testset "expr_span ≡ _expr_end_offset at all offsets (E-1 retracted; S-1 drift guard)" begin
+        # E-1 flagged expr_span's depth-walk as "suspect"; a differential check vs the
+        # canonical recursive _expr_end_offset shows EQUIVALENCE at every item offset,
+        # including nested/compound positions — so it is NOT a live bug. This pins the
+        # two impls so they cannot silently drift apart (S-1: 3 competing span impls).
+        A(n)  = item_byte(ExprArity(UInt8(n)))
+        Sy(s) = vcat(item_byte(ExprSymbol(UInt8(length(s)))), Vector{UInt8}(codeunits(s)))
+        NV()  = item_byte(ExprNewVar()); VR(i) = item_byte(ExprVarRef(UInt8(i)))
+        function starts!(buf, off, acc)
+            off > length(buf) && return off
+            push!(acc, off); t = byte_item(buf[off])
+            if t isa ExprSymbol; return off + 1 + Int(t.size)
+            elseif t isa ExprArity; cur = off + 1; for _ in 1:Int(t.arity); cur = starts!(buf, cur, acc); end; return cur
+            else; return off + 1; end
+        end
+        bufs = [vcat(A(2), Sy("a"), Sy("b")), vcat(A(2), Sy("a"), A(2), Sy("b"), Sy("c")),
+                vcat(A(3), Sy("a"), NV(), Sy("b")), vcat(A(2), Sy("a"), A(0)),
+                vcat(A(2), A(2), Sy("a"), Sy("b"), A(3), Sy("c"), Sy("d"), Sy("e")),
+                vcat(A(1), A(1), A(1), Sy("z")), vcat(A(3), Sy("f"), A(2), Sy("g"), NV(), VR(2))]
+        for buf in bufs
+            e = MORK.Expr(buf); acc = Int[]; starts!(buf, 1, acc)
+            for off in acc
+                @test off + length(MORK.expr_span(e, off)) == MORK._expr_end_offset(buf, off)
+            end
+        end
+    end
+
 end
