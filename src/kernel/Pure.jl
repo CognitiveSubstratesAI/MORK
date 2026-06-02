@@ -31,6 +31,8 @@ _be_bytes(x::Int8)    = [reinterpret(UInt8, x)]
 _be_bytes(x::Int16)   = collect(reinterpret(UInt8, [hton(x)]))
 _be_bytes(x::Int32)   = collect(reinterpret(UInt8, [hton(x)]))
 _be_bytes(x::Int64)   = collect(reinterpret(UInt8, [hton(x)]))
+_be_bytes(x::UInt128) = collect(reinterpret(UInt8, [hton(x)]))   # 16 BE bytes
+_be_bytes(x::Int128)  = collect(reinterpret(UInt8, [hton(x)]))   # 16 BE bytes
 _be_bytes(x::Float32) = collect(reinterpret(UInt8, [hton(x)]))
 _be_bytes(x::Float64) = collect(reinterpret(UInt8, [hton(x)]))
 _be_bytes(x::AbstractVector{UInt8}) = collect(x)  # passthrough for string ops
@@ -43,6 +45,10 @@ _read_i8(b)  = reinterpret(Int8, b[1])
 _read_i16(b) = ntoh(only(reinterpret(Int16, b[1:2])))
 _read_i32(b) = ntoh(only(reinterpret(Int32, b[1:4])))
 _read_i64(b) = ntoh(only(reinterpret(Int64, b[1:8])))
+# 128-bit: Rust `consume::<u128/i128>()` reads 16 BE bytes — Julia has native
+# UInt128/Int128, so no truncation needed (the i128 ops below used _read_i64 → bug).
+_read_u128(b) = ntoh(only(reinterpret(UInt128, b[1:16])))
+_read_i128(b) = ntoh(only(reinterpret(Int128, b[1:16])))
 _read_f32(b) = ntoh(only(reinterpret(Float32, b[1:4])))
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b)= UInt32(_read_u64(b))   # shift amounts stored as u64
@@ -394,15 +400,15 @@ const PURE_OPS = Dict{String, Function}(
     "i32_one" => (_) -> Int32(1),
     "i64_one" => (_) -> Int64(1),
 
-    # ── i128 ─────────────────────────────────────────────────────────
-    "abs_i128"     => (a) -> abs(_read_i64(a[1])),
-    "neg_i128"     => (a) -> -_read_i64(a[1]),
-    "signum_i128"  => (a) -> Int64(sign(_read_i64(a[1]))),
-    "min_i128"     => (a) -> min(_read_i64(a[1]), _read_i64(a[2])),
-    "max_i128"     => (a) -> max(_read_i64(a[1]), _read_i64(a[2])),
-    "clamp_i128"   => (a) -> clamp(_read_i64(a[1]), _read_i64(a[2]), _read_i64(a[3])),
-    "sum_i128"     => (a) -> reduce((x,y) -> x + _read_i64(y), a[2:end]; init=_read_i64(a[1])),
-    "product_i128" => (a) -> reduce((x,y) -> x * _read_i64(y), a[2:end]; init=_read_i64(a[1])),
+    # ── i128 (native Int128 — were truncating to Int64 via _read_i64, audit P-1) ──
+    "abs_i128"     => (a) -> abs(_read_i128(a[1])),
+    "neg_i128"     => (a) -> -_read_i128(a[1]),
+    "signum_i128"  => (a) -> Int128(sign(_read_i128(a[1]))),
+    "min_i128"     => (a) -> min(_read_i128(a[1]), _read_i128(a[2])),
+    "max_i128"     => (a) -> max(_read_i128(a[1]), _read_i128(a[2])),
+    "clamp_i128"   => (a) -> clamp(_read_i128(a[1]), _read_i128(a[2]), _read_i128(a[3])),
+    "sum_i128"     => (a) -> reduce((x,y) -> x + _read_i128(y), a[2:end]; init=_read_i128(a[1])),
+    "product_i128" => (a) -> reduce((x,y) -> x * _read_i128(y), a[2:end]; init=_read_i128(a[1])),
     "mod_i128"     => (a) -> rem(_read_i64(a[1]), _read_i64(a[2])),
     "pow_i128"     => (a) -> _read_i64(a[1]) ^ Int(_read_i64(a[2])),
     "i128_one"     => (_) -> Int64(1),

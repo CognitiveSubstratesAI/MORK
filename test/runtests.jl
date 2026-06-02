@@ -4191,4 +4191,17 @@ const PM = PathMap.PathMap
         @test get_val_at(out, full) === nothing                  # original layer gone
     end
 
+    @testset "Pure i128 ops — no truncation to 64-bit (audit P-1)" begin
+        # The i128 ops used _read_i64 (8 bytes) + Int64 math → values beyond Int64
+        # range were truncated. Fixed to native Int128 via _read_i128/_be_bytes(Int128).
+        v   = Int128(2)^100 + 7
+        arg = collect(reinterpret(UInt8, [hton(v)]))   # 16 BE bytes
+        res = MORK.pure_apply("abs_i128", [arg])
+        @test length(res) == 16
+        @test MORK._read_i128(res) == v                # full value, not high-8-byte truncation
+        # overflow case: 2^62 + 2^62 = 2^63 overflows Int64 but fits Int128
+        a = collect(reinterpret(UInt8, [hton(Int128(2)^62)]))
+        @test MORK._read_i128(MORK.pure_apply("sum_i128", [a, a])) == Int128(2)^63
+    end
+
 end
