@@ -264,7 +264,10 @@ Mirrors `SharedMapping::get_bytes`.
 """
 function get_bytes(m::SharedMapping, sym::MorkSymbol) :: Union{Nothing, SubArray{UInt8}}
     pidx = Int(sym_perm_idx(sym))
-    pidx < 1 || pidx > MAX_WRITER_THREADS && return nothing
+    # NB: parens required — `A || B && return` parses as `A || (B && return)` in
+    # Julia (&& binds tighter), so a pidx<1 symbol (e.g. all-zero/De-Bruijn) fell
+    # through to `to_bytes[pidx]` → BoundsError instead of returning nothing.
+    (pidx < 1 || pidx > MAX_WRITER_THREADS) && return nothing
     lk, pm = m.to_bytes[pidx]
     tb = lock(lk) do
         get_val_at(pm, sym_as_be_bytes(sym))

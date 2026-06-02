@@ -3551,6 +3551,15 @@ const PM = PathMap.PathMap
             @test collect(bytes) == Vector{UInt8}("mork")
         end
 
+        @testset "get_bytes out-of-range perm_idx → nothing (precedence-bug regression)" begin
+            # Regression: `pidx < 1 || pidx > MAX_WRITER_THREADS && return nothing`
+            # misparsed as `pidx < 1 || (pidx > MAX && return)` (Julia binds && over
+            # ||), so a perm_idx-0 symbol fell through to to_bytes[0] → BoundsError.
+            # Fixed by parenthesizing the ||. MorkSymbol() is all-zero ⇒ perm_idx 0.
+            h = SharedMappingHandle()
+            @test get_bytes(h, MorkSymbol()) === nothing
+        end
+
         @testset "multiple distinct symbols" begin
             h  = SharedMappingHandle()
             wp = try_acquire_permission(h)
