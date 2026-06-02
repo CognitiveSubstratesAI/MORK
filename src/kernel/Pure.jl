@@ -53,6 +53,24 @@ _read_f32(b) = ntoh(only(reinterpret(Float32, b[1:4])))
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b)= UInt32(_read_u64(b))   # shift amounts stored as u64
 
+# General 3-input bitwise LUT (x86 vpternlog) — the result bit for each bit position
+# is bit ((x<<2)|(y<<1)|z) of the selector `s`. Computed via the 8 minterms, which is
+# equivalent to (and replaces) the upstream 256-case `match s` table
+# (main:kernel/src/pure.rs `ternary_table`), verified against s = 0,1,2,4,6.
+# (The *_ternarylogic ops previously ignored x, y, AND the selector — they just
+# rebuilt z — audit P-2.)
+function _ternarylogic(x::T, y::T, z::T, s::UInt8) :: T where {T <: Base.BitUnsigned}
+    r = zero(T)
+    for j in 0:7
+        ((s >> j) & 0x1) == 0x1 || continue
+        mx = ((j >> 2) & 1) != 0 ? x : ~x
+        my = ((j >> 1) & 1) != 0 ? y : ~y
+        mz = ( j       & 1) != 0 ? z : ~z
+        r |= mx & my & mz
+    end
+    r
+end
+
 # =====================================================================
 # pure_apply — main entry point
 # =====================================================================
@@ -579,31 +597,16 @@ const PURE_OPS = Dict{String, Function}(
     "u128_count_zeros"  => (a) -> UInt64(count_zeros(_read_u64(a[1]))),
     "u128_count_ones"   => (a) -> UInt64(count_ones(_read_u64(a[1]))),
     "u128_parity"       => (a) -> UInt64(count_ones(_read_u64(a[1])) & 1),
-    "u128_ones"         => (_) -> ~UInt64(0),
-    "u128_zeros"        => (_) -> UInt64(0),
-    "u128_ternarylogic" => (a) -> begin
-        x = _read_u64(a[1]); y = _read_u64(a[2]); z = _read_u64(a[3])
-        UInt64(mapreduce(i -> ((z>>i&1)==1 ? UInt64(1) : UInt64(0)) << i, |, 0:63))
-    end,
+    "u128_ones"         => (_) -> ~UInt128(0),
+    "u128_zeros"        => (_) -> UInt128(0),
+    "u128_ternarylogic" => (a) -> _ternarylogic(_read_u128(a[1]), _read_u128(a[2]), _read_u128(a[3]), _read_u8(a[4])),
 
-    # ── u32 eq + ternary logic variants ──────────────────────────────
+    # ── u32 eq + ternary logic (P-2: now reads the selector + all 3 inputs) ──
     "u32_eq"          => (a) -> UInt32(_read_u32(a[1]) == _read_u32(a[2]) ? 1 : 0),
-    "u32_ternarylogic"=> (a) -> begin
-        x = _read_u32(a[1]); y = _read_u32(a[2]); z = _read_u32(a[3])
-        mapreduce(i -> ((z>>i&1)==1 ? UInt32(1) : UInt32(0)) << i, |, 0:31)
-    end,
-    "u16_ternarylogic"=> (a) -> begin
-        x = _read_u16(a[1]); y = _read_u16(a[2]); z = _read_u16(a[3])
-        mapreduce(i -> ((z>>i&1)==1 ? UInt16(1) : UInt16(0)) << i, |, 0:15)
-    end,
-    "u64_ternarylogic"=> (a) -> begin
-        x = _read_u64(a[1]); y = _read_u64(a[2]); z = _read_u64(a[3])
-        mapreduce(i -> ((z>>i&1)==1 ? UInt64(1) : UInt64(0)) << i, |, 0:63)
-    end,
-    "u8_ternarylogic" => (a) -> begin
-        x = _read_u8(a[1]); y = _read_u8(a[2]); z = _read_u8(a[3])
-        mapreduce(i -> ((z>>i&1)==1 ? UInt8(1) : UInt8(0)) << i, |, 0:7)
-    end,
+    "u32_ternarylogic"=> (a) -> _ternarylogic(_read_u32(a[1]), _read_u32(a[2]), _read_u32(a[3]), _read_u8(a[4])),
+    "u16_ternarylogic"=> (a) -> _ternarylogic(_read_u16(a[1]), _read_u16(a[2]), _read_u16(a[3]), _read_u8(a[4])),
+    "u64_ternarylogic"=> (a) -> _ternarylogic(_read_u64(a[1]), _read_u64(a[2]), _read_u64(a[3]), _read_u8(a[4])),
+    "u8_ternarylogic" => (a) -> _ternarylogic(_read_u8(a[1]),  _read_u8(a[2]),  _read_u8(a[3]),  _read_u8(a[4])),
 
     # ── symbol ops ───────────────────────────────────────────────────
     "reverse_symbol"  => (a) -> reverse(a[1]),

@@ -4223,6 +4223,24 @@ const PM = PathMap.PathMap
         @test MORK._read_i128(MORK.pure_apply("sum_i128", [a, a])) == Int128(2)^63
     end
 
+    @testset "Pure ternarylogic — honors selector + full width (audit P-2)" begin
+        # The *_ternarylogic ops ignored x, y, AND the selector (they rebuilt z) — and
+        # u128_ternarylogic truncated to u64. Fixed via the general vpternlog
+        # _ternarylogic (8-minterm LUT ≡ upstream 256-case ternary_table).
+        x = UInt8(0b11001010); y = UInt8(0b10110100); z = UInt8(0b01101001)
+        tl(s) = only(MORK.pure_apply("u8_ternarylogic",
+                     [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z), MORK._be_bytes(UInt8(s))]))
+        @test tl(0xF0) == x            # selector 0xF0 ⇒ identity on x
+        @test tl(0xCC) == y            # 0xCC ⇒ y
+        @test tl(0xAA) == z            # 0xAA ⇒ z
+        @test tl(0xFE) == (x | y | z)  # OR
+        @test tl(0x80) == (x & y & z)  # AND
+        # u128 path: full width + selector honored (was truncating to u64, ignoring s)
+        vx = UInt128(2)^100
+        @test MORK._read_u128(MORK.pure_apply("u128_ternarylogic",
+            [MORK._be_bytes(vx), MORK._be_bytes(UInt128(0)), MORK._be_bytes(UInt128(0)), MORK._be_bytes(0xF0)])) == vx
+    end
+
     @testset "expr_span ≡ _expr_end_offset at all offsets (E-1 retracted; S-1 drift guard)" begin
         # E-1 flagged expr_span's depth-walk as "suspect"; a differential check vs the
         # canonical recursive _expr_end_offset shows EQUIVALENCE at every item offset,
