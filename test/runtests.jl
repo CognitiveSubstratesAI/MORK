@@ -3989,6 +3989,22 @@ const PM = PathMap.PathMap
             @test sink_finalize!(sink, btm) == false   # conflict → nothing written
         end
 
+        @testset "HeadSink — finalize joins head map into btm (regression: was MethodError)" begin
+            # Regression for the COW-audit finding: sink_finalize! called
+            # wz_join_into!(wz, root) where root::TrieNodeODRc, but wz_join_into!
+            # only accepts an AbstractNodeRef → MethodError. Fixed to use the
+            # map-level wz_join_map_into!(wz, s.head). Populate the collected-head
+            # map directly (skip/max are irrelevant to finalize).
+            btm   = new_space().btm
+            e_buf = vcat(item_byte(ExprArity(UInt8(3))), _sym("head"), _sym("2"), _sym("x"))
+            sink  = HeadSink(MORK.Expr(e_buf))
+            set_val_at!(sink.head, b"alpha", UNIT_VAL)
+            set_val_at!(sink.head, b"beta",  UNIT_VAL)
+            @test sink_finalize!(sink, btm) == true          # no MethodError; join happened
+            @test get_val_at(btm, b"alpha") === UNIT_VAL     # head map joined into btm
+            @test get_val_at(btm, b"beta")  === UNIT_VAL
+        end
+
         @testset "AUSink — identical terms → same term written" begin
             btm  = new_space().btm
             e_buf = vcat(_au_hdr(), _sym("foo"))

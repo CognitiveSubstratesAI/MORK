@@ -9,8 +9,13 @@ JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 PathMap = "a8b3d4e5-f012-4567-89ab-cdef01234567"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 PropCheck = "ca382230-33be-11e9-0059-d981d03070e4"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
+
+[sources]
+# TEMP dev-link for Stage-1 prefix-query validation — revert before publishing.
+PathMap = {path = "../PathMap"}
 
 [compat]
 JET = "0.11.3"

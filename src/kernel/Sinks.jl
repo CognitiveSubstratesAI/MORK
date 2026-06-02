@@ -264,10 +264,13 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar,ExprEnv},
 end
 
 function sink_finalize!(s::HeadSink, btm::SinkBtm) :: Bool
-    root = s.head.root
-    root === nothing && return false   # empty head — nothing to join
+    s.head.root === nothing && return false   # empty head — nothing to join
     wz = write_zipper(btm)
-    status = wz_join_into!(wz, root)
+    # wz_join_into! takes an AbstractNodeRef, not a TrieNodeODRc — passing the bare
+    # root threw MethodError. wz_join_map_into! is the map-level join API: it reads
+    # map.root itself and is COW-safe (copy()s on identity arms). Mirrors Rust
+    # HeadSink finalize `wz.join_into(&self.head.read_zipper())` (sinks.rs:426).
+    status = wz_join_map_into!(wz, s.head)
     status != ALG_STATUS_IDENTITY
 end
 
