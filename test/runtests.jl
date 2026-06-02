@@ -4177,4 +4177,18 @@ const PM = PathMap.PathMap
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
+    @testset "MorkL OP_DROP_HEAD — strips first length-prefixed layer (regression: was no-op)" begin
+        # Audit M-1: OP_DROP_HEAD was an IDENTITY NO-OP — the "skip b bytes" logic was a
+        # comment inside an empty if-body, so it returned the input unmodified. Fixed via
+        # _morkl_drop_head, porting Op::DropHead (experiments/morkl_interpreter/lib.rs:385):
+        # for each length-byte child b>0, descend [b], drop_head(b), ascend; then
+        # drop_head(1) at root. Path = (len2 "ab")(len1 "c") → strip first layer → (len1 "c").
+        m = PM{UnitVal}()
+        full = UInt8[0x02, 0x61, 0x62, 0x01, 0x63]
+        set_val_at!(m, full, UNIT_VAL)
+        out = MORK._morkl_drop_head(m)
+        @test get_val_at(out, UInt8[0x01, 0x63]) === UNIT_VAL   # first layer stripped
+        @test get_val_at(out, full) === nothing                  # original layer gone
+    end
+
 end

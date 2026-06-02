@@ -188,6 +188,26 @@ end
 
 _is_length_byte(b::UInt8) :: Bool = (b & 0b11000000) == 0
 
+# OP_DROP_HEAD — strip the first length-byte-prefixed layer from every path.
+# Ports Op::DropHead (experiments/morkl_interpreter/src/lib.rs:385): for each
+# length-byte child b>0 at the root, descend to [b], drop_head(b) the subtrie
+# below it, ascend; then drop_head(1) at the root. drop_head(n) == join_k_path_into(n).
+# (The previous inline impl was an IDENTITY NO-OP — the "skip b bytes" was a comment
+# in an empty if-body, so it returned a copy of the input unmodified. Audit M-1.)
+function _morkl_drop_head(space::PathMap{UnitVal}) :: PathMap{UnitVal}
+    out  = deepcopy(space)
+    wz   = write_zipper(out)
+    mask = wz_child_mask(wz)
+    for b in iter(mask)
+        (!_is_length_byte(b) || b == 0) && continue
+        wz_descend_to!(wz, UInt8[b])
+        wz_join_k_path_into!(wz, Int(b))   # drop_head(b)
+        wz_ascend!(wz, 1)
+    end
+    wz_join_k_path_into!(wz, 1)            # drop_head(1) at the root
+    out
+end
+
 function _descend_leading!(rz::ReadZipperCore, prefix_first_byte::UInt8)
     zipper_reset!(rz)
     zipper_descend_to!(rz, UInt8[prefix_first_byte])
@@ -420,17 +440,7 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                 space_reg[pc_ref[]+1] = m
 
             elseif op == OP_DROP_HEAD
-                # Remove the first length-byte-prefixed layer of paths
-                out = deepcopy(space_reg[r0+1])
-                rz  = read_zipper(out)
-                while zipper_descend_first_byte!(rz)
-                    b = zipper_path(rz)[end]
-                    if _is_length_byte(b) && b > 0
-                        # skip `b` bytes of path
-                    end
-                    zipper_ascend_byte!(rz)
-                end
-                space_reg[pc_ref[]+1] = out
+                space_reg[pc_ref[]+1] = _morkl_drop_head(space_reg[r0+1])
 
             elseif op == OP_EXTRACT_PATH_REF
                 path = if !isempty(sub_stack)
