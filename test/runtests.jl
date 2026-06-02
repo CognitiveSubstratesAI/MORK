@@ -4270,6 +4270,34 @@ const PM = PathMap.PathMap
             [MORK._be_bytes(vx), MORK._be_bytes(UInt128(0)), MORK._be_bytes(UInt128(0)), MORK._be_bytes(0xF0)])) == vx
     end
 
+    @testset "Pure u128 bitwise — full 128-bit width + nary folds (audit P-1/P-3)" begin
+        # The whole u128_* family (except ones/zeros/ternarylogic) read _read_u64 and
+        # computed in 64 bits — silently wrong for values ≥ 2^64. and/or/parity were
+        # also coded as binary, but pure.rs:477-479 makes them N-ary folds. Fixed to
+        # _read_u128 + UInt128 math, matching the u64 sibling family.
+        b128(x) = MORK._be_bytes(UInt128(x))
+        u128(b) = MORK._read_u128(b)
+        u64r(b) = ntoh(only(reinterpret(UInt64, b[1:8])))
+        allones = ~UInt128(0)
+        hi      = UInt128(0x0102030405060708090a0b0c0d0e0f10)
+        # population counts span all 128 bits (was capped at 64)
+        @test u64r(MORK.pure_apply("u128_count_ones",   [b128(allones)]))   == 128
+        @test u64r(MORK.pure_apply("u128_count_zeros",  [b128(0)]))         == 128
+        @test u64r(MORK.pure_apply("u128_leading_zeros",[b128(0)]))         == 128
+        @test u64r(MORK.pure_apply("u128_leading_ones", [b128(allones)]))   == 128
+        # N-ary folds over >2 args
+        @test u128(MORK.pure_apply("u128_and", [b128(allones), b128(allones), b128(hi)])) == hi
+        @test u128(MORK.pure_apply("u128_or",  [b128(0), b128(hi), b128(0)]))             == hi
+        @test u128(MORK.pure_apply("u128_parity", [b128(hi), b128(hi), b128(hi)]))        == hi  # x^x^x
+        # binary bit ops touch the high 64 bits
+        @test u128(MORK.pure_apply("u128_not",          [b128(hi)]))               == ~hi
+        @test u128(MORK.pure_apply("u128_nand",         [b128(allones), b128(hi)])) == ~(allones & hi)
+        @test u128(MORK.pure_apply("u128_andn",         [b128(allones), b128(hi)])) == (allones & ~hi)
+        @test u128(MORK.pure_apply("u128_swap_bytes",   [b128(hi)]))               == bswap(hi)
+        @test u128(MORK.pure_apply("u128_reverse_bits", [b128(hi)]))               == bitreverse(hi)
+        @test u128(MORK.pure_apply("u128_shl", [b128(1), MORK._be_bytes(UInt64(100))])) == (UInt128(1) << 100)
+    end
+
     @testset "expr_span ≡ _expr_end_offset at all offsets (E-1 retracted; S-1 drift guard)" begin
         # E-1 flagged expr_span's depth-walk as "suspect"; a differential check vs the
         # canonical recursive _expr_end_offset shows EQUIVALENCE at every item offset,
