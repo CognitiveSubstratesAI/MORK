@@ -3560,6 +3560,25 @@ const PM = PathMap.PathMap
             @test get_bytes(h, MorkSymbol()) === nothing
         end
 
+        @testset "with_write_permit releases the bucket on exception (audit I-3)" begin
+            # Raw try_acquire_permission + throw + (no release reached) permanently
+            # LEAKS the bucket (task-local slot stays set; thread_id CAS stays claimed).
+            # with_write_permit's try/finally always releases. Separate tasks isolate
+            # the task-local storage.
+            leaked_raw = fetch(Threads.@spawn begin
+                h = SharedMappingHandle()
+                try; try_acquire_permission(h); error("boom"); catch; end
+                get(task_local_storage(), :mork_thread_idx, nothing)
+            end)
+            @test leaked_raw !== nothing      # confirms the leak the fix prevents
+            released = fetch(Threads.@spawn begin
+                h = SharedMappingHandle()
+                try; with_write_permit(h) do _; error("boom"); end; catch; end
+                get(task_local_storage(), :mork_thread_idx, nothing)
+            end)
+            @test released === nothing         # released despite the exception
+        end
+
         @testset "multiple distinct symbols" begin
             h  = SharedMappingHandle()
             wp = try_acquire_permission(h)

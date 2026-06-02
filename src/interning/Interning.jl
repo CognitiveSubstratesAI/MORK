@@ -350,6 +350,26 @@ function release_permission!(wp::WritePermit)
     wp.active = false
 end
 
+"""
+    with_write_permit(f, h::SharedMappingHandle)
+
+Acquire a write permit, run `f(permit)`, and ALWAYS release it — even if `f` throws.
+This is the exception-safe (RAII-equivalent) form, mirroring Rust's `WritePermit`
+`Drop`. Prefer it over the raw `try_acquire_permission`/`release_permission!` pair,
+which permanently LEAKS the bucket on exception (the thread_id CAS stays claimed, so
+no task can ever reacquire it, and the task-local slot index is never cleared).
+Returns `f`'s result, or `nothing` if no permit was available.
+"""
+function with_write_permit(f, h::SharedMappingHandle)
+    wp = try_acquire_permission(h)
+    wp === nothing && return nothing
+    try
+        return f(wp)
+    finally
+        release_permission!(wp)
+    end
+end
+
 # =====================================================================
 # get_sym_or_insert! — main write path
 # =====================================================================
@@ -424,5 +444,5 @@ export ThinBytes, SlabChain
 export ThreadPermission
 export bounded_pearson_hash
 export SharedMapping, SharedMappingHandle
-export WritePermit, try_acquire_permission, release_permission!
+export WritePermit, try_acquire_permission, release_permission!, with_write_permit
 export get_sym, get_bytes, get_sym_or_insert!
