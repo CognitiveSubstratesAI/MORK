@@ -1,10 +1,18 @@
 using Test
 using MORK
 using PathMap
+using Aqua
 # PathMap module and PathMap type share the same name — alias the type
 const PM = PathMap.PathMap
 
 @testset "MORK" begin
+    @testset "Aqua quality" begin
+        # deps_compat check_extras=false: [extras] are dev/test tools; runtime [deps]
+        # (Base64, PathMap, PrecompileTools) carry [compat]. PathMap is dev-linked via
+        # [sources] so deps_compat skips it.
+        Aqua.test_all(MORK; deps_compat = (check_extras = false,))
+    end
+
     @testset "Phase 0 skeleton" begin
         @test MORK.version() == v"0.1.0"
     end

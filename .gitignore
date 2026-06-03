@@ -68,3 +68,5 @@ secrets.toml
 repl/
 server.log
 server.pid
+docs/build/
+docs/Manifest.toml

@@ -1,8 +1,11 @@
 # MORK.jl
 
-[![CI](https://github.com/sivaji1012/MORK/actions/workflows/ci.yml/badge.svg)](https://github.com/sivaji1012/MORK/actions/workflows/ci.yml)
-[![Julia 1.10+](https://img.shields.io/badge/Julia-1.10%2B-blue)](https://julialang.org)
-[![v0.1.0](https://img.shields.io/badge/version-v0.1.0-orange)](https://github.com/sivaji1012/MORK/releases/tag/v0.1.0)
+[![CI](https://github.com/CognitiveSubstratesAI/MORK/actions/workflows/CI.yml/badge.svg)](https://github.com/CognitiveSubstratesAI/MORK/actions/workflows/CI.yml)
+[![Docs (stable)](https://img.shields.io/badge/docs-stable-blue.svg)](https://cognitivesubstratesai.github.io/MORK/stable/)
+[![Docs (dev)](https://img.shields.io/badge/docs-dev-blue.svg)](https://cognitivesubstratesai.github.io/MORK/dev/)
+[![Code Style: Blue](https://img.shields.io/badge/code%20style-blue-4495d1.svg)](https://github.com/invenia/BlueStyle)
+[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![Julia 1.12+](https://img.shields.io/badge/Julia-1.12%2B-blue)](https://julialang.org)
 
 A Julia implementation of the MORK knowledge-graph engine —
 the high-performance, trie-native substrate for
