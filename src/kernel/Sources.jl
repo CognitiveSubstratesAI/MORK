@@ -357,7 +357,8 @@ function _grounded_decode_args(expr::MORK.Expr)::Vector{String}
         s = try
             expr_serialize(Vector{UInt8}(span))
         catch
-            ; bytes2hex(Vector{UInt8}(span));
+            ;
+            bytes2hex(Vector{UInt8}(span));
         end
         push!(result, s)
     end

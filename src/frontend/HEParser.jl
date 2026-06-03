@@ -205,7 +205,8 @@ function he_node_as_atom(
                 ;
                 return constr(text)
             catch e
-                ; return "byte range = ($(node.src_range)) | $e";
+                ;
+                return "byte range = ($(node.src_range)) | $e";
             end
         else
             return he_atom_sym(text)

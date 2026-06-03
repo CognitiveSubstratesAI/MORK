@@ -101,7 +101,8 @@ function _sink_prefix(e::MORK.Expr)::Vector{UInt8}
         tag = try
             byte_item(b)
         catch
-            ; break
+            ;
+            break
         end
         if tag isa ExprNewVar || tag isa ExprVarRef
             break
@@ -752,7 +753,9 @@ function sink_finalize!(s::HashSink, btm::SinkBtm)::Bool
             tag = try
                 byte_item(path[i])
             catch
-                ; i -= 1; continue
+                ;
+                i -= 1;
+                continue
             end
             tag isa ExprSymbol || (i -= 1; continue)
             sz = Int(tag.size)
@@ -882,7 +885,8 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
             result_mork = try
                 f(arg_results)
             catch
-                ; return nothing
+                ;
+                return nothing
             end
             return result_mork isa Vector{UInt8} ? result_mork : nothing
         end
@@ -912,7 +916,8 @@ function _pure_strip_header(mork_expr::Vector{UInt8})::Vector{UInt8}
     tag = try
         byte_item(mork_expr[1])
     catch
-        ; return mork_expr
+        ;
+        return mork_expr
     end
     tag isa ExprSymbol ? mork_expr[2:end] : mork_expr
 end

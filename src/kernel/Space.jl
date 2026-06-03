@@ -34,7 +34,8 @@ function _build_space_mask(predicate::Function)
         tag = try
             byte_item(b)
         catch
-            ; continue
+            ;
+            continue
         end   # skip reserved bytes
         if predicate(tag)
             bucket = Int((b & 0xC0) >> 6) + 1
@@ -520,7 +521,8 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         result = try
             _expr_unify_inplace!(pairs_scratch, bindings_scratch)
         catch
-            ; nothing
+            ;
+            nothing
         end
         if result !== true
             empty!(bindings_scratch)
@@ -565,7 +567,9 @@ function _grounded_call_no_args(src::GroundedSource)::Vector{Vector{UInt8}}
     raw = try
         f(args)
     catch e
-        ; @warn "GroundedSource $(src.name): $e"; nothing
+        ;
+        @warn "GroundedSource $(src.name): $e";
+        nothing
     end
     _grounded_encode_results(raw)
 end
@@ -590,7 +594,9 @@ function _grounded_call_with_bindings(src::GroundedSource,
     raw = try
         f(bound_args)
     catch e
-        ; @warn "GroundedSource $(src.name): $e"; nothing
+        ;
+        @warn "GroundedSource $(src.name): $e";
+        nothing
     end
     _grounded_encode_results(raw)
 end
@@ -1445,7 +1451,8 @@ function space_interpret!(s::Space, rt::MORK.Expr;
     dbg = () -> try
         expr_serialize(buf)
     catch
-        ; bytes2hex(buf)
+        ;
+        bytes2hex(buf)
     end
 
     # ── Overall shape: arity-4 + "exec" keyword ───────────────────────

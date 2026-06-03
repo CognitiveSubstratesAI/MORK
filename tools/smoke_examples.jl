@@ -5,7 +5,8 @@
 # Run from CLI:        julia --project=. tools/smoke_examples.jl
 
 try
-    ; using Revise;
+    ;
+    using Revise;
 catch
     ;
 end

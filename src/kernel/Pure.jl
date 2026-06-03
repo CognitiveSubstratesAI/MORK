@@ -643,7 +643,8 @@ const PURE_OPS = Dict{String, Function}(
         tag = try
             byte_item(buf[1])
         catch
-            ; nothing
+            ;
+            nothing
         end
         if tag isa ExprArity
             result = UInt8[]
@@ -653,7 +654,8 @@ const PURE_OPS = Dict{String, Function}(
                 st = try
                     byte_item(buf[off])
                 catch
-                    ; break
+                    ;
+                    break
                 end
                 st isa ExprSymbol || break
                 n = Int(st.size)

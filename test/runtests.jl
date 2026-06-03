@@ -10,7 +10,7 @@ const PM = PathMap.PathMap
         # deps_compat check_extras=false: [extras] are dev/test tools; runtime [deps]
         # (Base64, PathMap, PrecompileTools) carry [compat]. PathMap is dev-linked via
         # [sources] so deps_compat skips it.
-        Aqua.test_all(MORK; deps_compat = (check_extras = false,))
+        Aqua.test_all(MORK; deps_compat=(check_extras=false,))
     end
 
     @testset "Phase 0 skeleton" begin
@@ -3663,7 +3663,9 @@ const PM = PathMap.PathMap
             leaked_raw = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
                 try
-                    ; try_acquire_permission(h); error("boom");
+                    ;
+                    try_acquire_permission(h);
+                    error("boom");
                 catch
                     ;
                 end
@@ -3673,7 +3675,8 @@ const PM = PathMap.PathMap
             released = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
                 try
-                    ; with_write_permit(h) do _
+                    ;
+                    with_write_permit(h) do _
                         ;
                         error("boom");
                     end;
