@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Space Rules · MORK.jl</title><meta name="title" content="Space Rules · MORK.jl"/><meta property="og:title" content="Space Rules · MORK.jl"/><meta property="twitter:title" content="Space Rules · MORK.jl"/><meta name="description" content="Documentation for MORK.jl."/><meta property="og:description" content="Documentation for MORK.jl."/><meta property="twitter:description" content="Documentation for MORK.jl."/><meta property="og:url" content="https://cognitivesubstratesai.github.io/MORK/stable/guide/space_rules/"/><meta property="twitter:url" content="https://cognitivesubstratesai.github.io/MORK/stable/guide/space_rules/"/><link rel="canonical" href="https://cognitivesubstratesai.github.io/MORK/stable/guide/space_rules/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">MORK.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../expressions/">Expressions</a></li><li><a class="tocitem" href="../zipper_queries/">Zipper Queries</a></li><li class="is-active"><a class="tocitem" href>Space Rules</a><ul class="internal"><li><a class="tocitem" href="#Creating-and-Populating-a-Space"><span>Creating and Populating a Space</span></a></li><li><a class="tocitem" href="#Atom-Format-—-S-Expressions"><span>Atom Format — S-Expressions</span></a></li><li><a class="tocitem" href="#Writing-Rules"><span>Writing Rules</span></a></li><li><a class="tocitem" href="#Running-the-Calculus"><span>Running the Calculus</span></a></li><li><a class="tocitem" href="#Querying-the-Space"><span>Querying the Space</span></a></li><li><a class="tocitem" href="#Rule-Priority"><span>Rule Priority</span></a></li><li><a class="tocitem" href="#Space-Snapshots"><span>Space Snapshots</span></a></li><li><a class="tocitem" href="#Complete-Example-—-Transitive-Closure"><span>Complete Example — Transitive Closure</span></a></li></ul></li><li><a class="tocitem" href="../sinks/">Sinks</a></li><li><a class="tocitem" href="../server/">Server</a></li></ul></li><li><a class="tocitem" href="../../api/README/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Space Rules</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Space Rules</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/CognitiveSubstratesAI/MORK" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/CognitiveSubstratesAI/MORK/blob/main/docs/src/guide/space_rules.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Space-and-Rules-Guide"><a class="docs-heading-anchor" href="#Space-and-Rules-Guide">Space &amp; Rules Guide</a><a id="Space-and-Rules-Guide-1"></a><a class="docs-heading-anchor-permalink" href="#Space-and-Rules-Guide" title="Permalink"></a></h1><p>A <strong>Space</strong> is MORK&#39;s central computation unit — a mutable collection of atoms (s-expressions) together with rewrite rules that drive computation.</p><hr/><h2 id="Creating-and-Populating-a-Space"><a class="docs-heading-anchor" href="#Creating-and-Populating-a-Space">Creating and Populating a Space</a><a id="Creating-and-Populating-a-Space-1"></a><a class="docs-heading-anchor-permalink" href="#Creating-and-Populating-a-Space" title="Permalink"></a></h2><pre><code class="language-julia hljs">using MORK
+
+s = new_space()
+
+# Add atoms from multi-line s-expression text
+space_add_all_sexpr!(s, &quot;&quot;&quot;
+    (person alice 30)
+    (person bob   25)
+    (person carol 35)
+&quot;&quot;&quot;)
+
+# Add a single atom
+space_add_sexpr!(s, &quot;(person dave 28)&quot;)</code></pre><p>All atoms are immediately indexed.  Duplicate insertion is idempotent.</p><hr/><h2 id="Atom-Format-—-S-Expressions"><a class="docs-heading-anchor" href="#Atom-Format-—-S-Expressions">Atom Format — S-Expressions</a><a id="Atom-Format-—-S-Expressions-1"></a><a class="docs-heading-anchor-permalink" href="#Atom-Format-—-S-Expressions" title="Permalink"></a></h2><p>MORK atoms are <strong>s-expressions</strong>: symbols, variables, and nested expressions.</p><table><tr><th style="text-align: right">Syntax</th><th style="text-align: right">Meaning</th><th style="text-align: right">Example</th></tr><tr><td style="text-align: right"><code>word</code></td><td style="text-align: right">Symbol</td><td style="text-align: right"><code>alice</code>, <code>isa</code>, <code>+</code></td></tr><tr><td style="text-align: right"><code>$name</code></td><td style="text-align: right">Variable (in patterns)</td><td style="text-align: right"><code>$x</code>, <code>$person</code></td></tr><tr><td style="text-align: right"><code>42</code>, <code>3.14</code></td><td style="text-align: right">Numeric literals</td><td style="text-align: right"><code>42</code>, <code>3.14</code></td></tr><tr><td style="text-align: right"><code>(f a b)</code></td><td style="text-align: right">Compound expression</td><td style="text-align: right"><code>(isa alice human)</code></td></tr></table><hr/><h2 id="Writing-Rules"><a class="docs-heading-anchor" href="#Writing-Rules">Writing Rules</a><a id="Writing-Rules-1"></a><a class="docs-heading-anchor-permalink" href="#Writing-Rules" title="Permalink"></a></h2><p>Rules are atoms with the special <code>exec</code> head:</p><pre><code class="nohighlight hljs">(exec PRIORITY MATCH OUTPUT)</code></pre><table><tr><th style="text-align: right">Field</th><th style="text-align: right">Description</th></tr><tr><td style="text-align: right"><code>PRIORITY</code></td><td style="text-align: right">Integer or tuple — rules fire in ascending order</td></tr><tr><td style="text-align: right"><code>MATCH</code></td><td style="text-align: right"><code>,</code> (comma) combinator listing source patterns</td></tr><tr><td style="text-align: right"><code>OUTPUT</code></td><td style="text-align: right"><code>O</code> combinator listing output atoms or sink operations</td></tr></table><h3 id="Simple-Rule"><a class="docs-heading-anchor" href="#Simple-Rule">Simple Rule</a><a id="Simple-Rule-1"></a><a class="docs-heading-anchor-permalink" href="#Simple-Rule" title="Permalink"></a></h3><pre><code class="language-julia hljs">space_add_all_sexpr!(s, &quot;&quot;&quot;
+    ;; For every person atom, create a greeting
+    (exec 0
+        (, (person \$name \$age))
+        (O (greeting \$name))
+    )
+&quot;&quot;&quot;)</code></pre><h3 id="Multi-Pattern-Match"><a class="docs-heading-anchor" href="#Multi-Pattern-Match">Multi-Pattern Match</a><a id="Multi-Pattern-Match-1"></a><a class="docs-heading-anchor-permalink" href="#Multi-Pattern-Match" title="Permalink"></a></h3><p>The <code>,</code> combinator requires <strong>all</strong> patterns to match simultaneously (conjunction over the space).  Variables are unified across patterns:</p><pre><code class="language-julia hljs">space_add_all_sexpr!(s, &quot;&quot;&quot;
+    ;; Find siblings: same parent, different child
+    (exec 0
+        (, (parent \$p \$a) (parent \$p \$b))
+        (O (siblings \$a \$b))
+    )
+&quot;&quot;&quot;)</code></pre><h3 id="Multiple-Outputs"><a class="docs-heading-anchor" href="#Multiple-Outputs">Multiple Outputs</a><a id="Multiple-Outputs-1"></a><a class="docs-heading-anchor-permalink" href="#Multiple-Outputs" title="Permalink"></a></h3><pre><code class="language-julia hljs">space_add_all_sexpr!(s, &quot;&quot;&quot;
+    (exec 0
+        (, (temperature \$t))
+        (O
+            (celsius    \$t)                ;; keep original
+            (fahrenheit (* \$t 1.8) + 32)  ;; add derived fact
+        )
+    )
+&quot;&quot;&quot;)</code></pre><hr/><h2 id="Running-the-Calculus"><a class="docs-heading-anchor" href="#Running-the-Calculus">Running the Calculus</a><a id="Running-the-Calculus-1"></a><a class="docs-heading-anchor-permalink" href="#Running-the-Calculus" title="Permalink"></a></h2><pre><code class="language-julia hljs">max_steps = 100_000
+steps = space_metta_calculus!(s, max_steps)
+
+if steps &lt; max_steps
+    println(&quot;Converged in $steps steps&quot;)
+else
+    println(&quot;Hit step cap — may not be at fixed point&quot;)
+end</code></pre><p>The calculus repeatedly applies all enabled rules until no rule fires (fixed point) or the step cap is reached.</p><p><strong>Step cap guidance:</strong> For small examples, <code>1_000</code> is sufficient. For production spaces with many rules, <code>100_000</code> or more may be needed. Never use <code>typemax(Int)</code> — always set an explicit cap.</p><hr/><h2 id="Querying-the-Space"><a class="docs-heading-anchor" href="#Querying-the-Space">Querying the Space</a><a id="Querying-the-Space-1"></a><a class="docs-heading-anchor-permalink" href="#Querying-the-Space" title="Permalink"></a></h2><pre><code class="language-julia hljs"># Check atom existence
+space_has_sexpr(s, &quot;(greeting alice)&quot;)   # true/false
+
+# Count atoms
+space_atom_count(s)
+
+# Dump all atoms (for debugging)
+println(space_dump_all_sexpr(s))
+
+# Pattern query — returns list of binding sets
+bindings = space_query_sexpr(s, &quot;(greeting \$name)&quot;)
+for b in bindings
+    println(b)   # Dict{Symbol, Expr} of variable → value
+end</code></pre><h3 id="Multi-Pattern-Query"><a class="docs-heading-anchor" href="#Multi-Pattern-Query">Multi-Pattern Query</a><a id="Multi-Pattern-Query-1"></a><a class="docs-heading-anchor-permalink" href="#Multi-Pattern-Query" title="Permalink"></a></h3><pre><code class="language-julia hljs">results = space_query_multi_i(s, [
+    &quot;(person \$x \$age)&quot;,
+    &quot;(greeting \$x)&quot;
+])</code></pre><hr/><h2 id="Rule-Priority"><a class="docs-heading-anchor" href="#Rule-Priority">Rule Priority</a><a id="Rule-Priority-1"></a><a class="docs-heading-anchor-permalink" href="#Rule-Priority" title="Permalink"></a></h2><p>Rules fire in ascending priority order.  Lower priority numbers fire first.  When multiple rules have the same priority, they all fire in the same pass.</p><pre><code class="language-julia hljs">space_add_all_sexpr!(s, &quot;&quot;&quot;
+    ;; Phase 1: collect data
+    (exec 0 (, (raw \$x))    (O (processed \$x)))
+    ;; Phase 2: aggregate (fires after phase 1 has stabilised)
+    (exec 1 (, (processed \$x)) (O (done \$x)))
+&quot;&quot;&quot;)</code></pre><p>For fine-grained ordering within a priority level, use tuple priorities:</p><pre><code class="language-julia hljs"># (1) fires before (2) which fires before (3)
+(exec (0 1) ...)
+(exec (0 2) ...)
+(exec (0 3) ...)</code></pre><hr/><h2 id="Space-Snapshots"><a class="docs-heading-anchor" href="#Space-Snapshots">Space Snapshots</a><a id="Space-Snapshots-1"></a><a class="docs-heading-anchor-permalink" href="#Space-Snapshots" title="Permalink"></a></h2><p>Save and restore space state:</p><pre><code class="language-julia hljs">snapshot = space_backup(s)
+space_metta_calculus!(s, 10_000)
+# If results are undesirable:
+space_restore!(s, snapshot)</code></pre><hr/><h2 id="Complete-Example-—-Transitive-Closure"><a class="docs-heading-anchor" href="#Complete-Example-—-Transitive-Closure">Complete Example — Transitive Closure</a><a id="Complete-Example-—-Transitive-Closure-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-Example-—-Transitive-Closure" title="Permalink"></a></h2><pre><code class="language-julia hljs">s = new_space()
+space_add_all_sexpr!(s, &quot;&quot;&quot;
+    (edge a b)
+    (edge b c)
+    (edge c d)
+
+    ;; Direct edges are reachable
+    (exec 0
+        (, (edge \$x \$y))
+        (O (reachable \$x \$y))
+    )
+
+    ;; Transitive: if x reaches y and y reaches z, then x reaches z
+    (exec 1
+        (, (reachable \$x \$y) (reachable \$y \$z))
+        (O (reachable \$x \$z))
+    )
+&quot;&quot;&quot;)
+
+space_metta_calculus!(s, 10_000)
+println(space_dump_all_sexpr(s))
+# =&gt; (reachable a b), (reachable a c), (reachable a d),
+#    (reachable b c), (reachable b d), (reachable c d), ...</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../zipper_queries/">« Zipper Queries</a><a class="docs-footer-nextpage" href="../sinks/">Sinks »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 3 June 2026 14:43">Wednesday 3 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
