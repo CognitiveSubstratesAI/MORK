@@ -4,7 +4,9 @@ using MORK, Test
 
 @testset "sink_float_reduce" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (exec (1)
     (, (n \$x))
     (O
@@ -22,7 +24,8 @@ using MORK, Test
 (n 9.6)
 (n 5.4)
 (n 61.0)
-    """)
+    """
+    )
     steps = space_metta_calculus!(s, 100_000)
     @test steps < 100_000
     result = space_dump_all_sexpr(s)

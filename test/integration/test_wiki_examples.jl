@@ -9,7 +9,7 @@ using Test, MORK
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-function run_mm2(sexpr::AbstractString; steps=typemax(Int)) :: Set{String}
+function run_mm2(sexpr::AbstractString; steps=typemax(Int))::Set{String}
     s = new_space()
     space_add_all_sexpr!(s, sexpr)
     space_metta_calculus!(s, steps)
@@ -33,7 +33,7 @@ has(out, pat) = any(s -> occursin(pat, s), out)
     out = run_mm2(prog; steps=100)
 
     # Rule 0: triangle → edges
-    @test has(out, "(edge paris london)")   || has(out, "(edge london paris)")
+    @test has(out, "(edge paris london)") || has(out, "(edge london paris)")
     @test has(out, "(edge brussels paris)") || has(out, "(edge paris brussels)")
 
     # Rule 1: transitive edges should be derived
@@ -145,10 +145,12 @@ end
 
 @testset "specialize_io: comma_comma produces same result as unified" begin
     facts = "(edge 0 1) (edge 1 2)"
-    prog  = raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (path $x $z)))"
+    prog = raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (path $x $z)))"
 
     # via metta_calculus (uses space_interpret! → comma_comma dispatch)
-    s = new_space(); space_add_all_sexpr!(s, facts); space_add_all_sexpr!(s, prog)
+    s = new_space();
+    space_add_all_sexpr!(s, facts);
+    space_add_all_sexpr!(s, prog)
     space_metta_calculus!(s, typemax(Int))
     out = space_dump_all_sexpr(s)
     @test count(l -> occursin("path", l), split(out, "\n")) == 1  # (path 0 2)

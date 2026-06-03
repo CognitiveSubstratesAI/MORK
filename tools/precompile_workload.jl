@@ -5,7 +5,9 @@ using MORK
 
 # Single source — ground lookup
 let s = new_space()
-    space_add_all_sexpr!(s, "(exec 0 (, (Something specific)) (, MATCHED))\n(Something specific)\n")
+    space_add_all_sexpr!(
+        s, "(exec 0 (, (Something specific)) (, MATCHED))\n(Something specific)\n"
+    )
     space_metta_calculus!(s, 100)
     space_dump_all_sexpr(s)
 end

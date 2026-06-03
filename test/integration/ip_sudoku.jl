@@ -5,7 +5,9 @@ using MORK, Test
 
 @testset "ip_sudoku (4x4 constraint propagation, no-assert)" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (dim 2)
 (pos 0) (pos 1) (pos 2) (pos 3)
 (val 1) (val 2) (val 3) (val 4)
@@ -52,7 +54,8 @@ using MORK, Test
 (exec 1000 (, (cell \$co \$tv))
         (O (pure (readout \$co \$v) \$v
              (i8_to_string \$tv))))
-""")
+"""
+    )
 
     steps = space_metta_calculus!(s, 100)
     println("  steps=$steps  count=$(space_val_count(s))")

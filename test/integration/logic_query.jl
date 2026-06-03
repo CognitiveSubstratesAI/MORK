@@ -4,9 +4,12 @@ using MORK, Test
 
 @testset "logic_query — equational logic produces 63 atoms (45 symmetric pairs)" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (exec 0 (, (axiom (= \$lhs \$rhs)) (axiom (= \$rhs \$lhs))) (, (reversed \$lhs \$rhs)))
-    """)
+    """
+    )
     # Load axioms tagged under (axiom ...)
     axioms = """
 (= (L \$x \$y \$z) (R \$x \$y \$z))

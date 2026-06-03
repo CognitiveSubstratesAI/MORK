@@ -3,7 +3,9 @@ using MORK, Test
 
 @testset "pattern_mining_lensy (lens-based structural extraction)" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (data (Outer (Inner "capybara")))
 (data (Outer (Inner "piranha")))
 
@@ -28,7 +30,8 @@ using MORK, Test
 
 (exec 4 (, (peel0 (Inner \$x) \$q \$y))
         (O (count (found Inner \$y \$c) \$c \$x)))
-""")
+"""
+    )
 
     space_metta_calculus!(s)
 
@@ -40,5 +43,7 @@ using MORK, Test
     @test contains(res, "(rest (Outer (Inner \"capybara\")))")
     @test contains(res, "(found_capybara (Outer (Inner \"capybara\")))")
     # CountSink now accumulates across all matches → count=2 matches upstream assert
-    @test contains(res, "found Inner (Outer") && any(contains(l, "2") for l in filter(l->contains(l,"found Inner"), split(res,"\n")))
+    @test contains(res, "found Inner (Outer") && any(
+        contains(l, "2") for l in filter(l->contains(l, "found Inner"), split(res, "\n"))
+    )
 end

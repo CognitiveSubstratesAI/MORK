@@ -38,7 +38,7 @@ Returns `(h_final, final_value, j_end)` where `j_end` is the 0-based offset just
 past the last consumed byte.  Mirrors the return of `traverseh!` in mork_expr.
 """
 function expr_traverseh(h0, x::MORK.Expr, j0::Int,
-                        new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb)
+    new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb)
     h = h0
     # Lazy stack: only allocated on the first Arity node with arity > 0.
     # Leaf-only and single-symbol expressions (the common case in unification)
@@ -47,7 +47,7 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
     j = j0
 
     while true
-        b   = x.buf[j + 1]    # j is 0-based; buf is 1-based
+        b = x.buf[j + 1]    # j is 0-based; buf is 1-based
         tag = byte_item(b)
 
         local value
@@ -58,8 +58,8 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
             j += 1
             h, value = var_ref_cb(h, j - 1, tag.idx)
         elseif tag isa ExprSymbol
-            s  = Int(tag.size)
-            sl = view(x.buf, j+2 : j+1+s)
+            s = Int(tag.size)
+            sl = view(x.buf, (j + 2):(j + 1 + s))
             h, value = symbol_cb(h, j, sl)
             j += s + 1
         elseif tag isa ExprArity
@@ -98,8 +98,20 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
 end
 
 # Convenience: traverse over the sub-expression of an ExprEnv
-function _ee_traverseh(h0, ee::ExprEnv, new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb)
-    expr_traverseh(h0, ee.base, Int(ee.offset), new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb)
+function _ee_traverseh(
+    h0, ee::ExprEnv, new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb
+)
+    expr_traverseh(
+        h0,
+        ee.base,
+        Int(ee.offset),
+        new_var_cb,
+        var_ref_cb,
+        symbol_cb,
+        zero_cb,
+        add_cb,
+        finalize_cb
+    )
 end
 
 # =====================================================================
@@ -115,7 +127,7 @@ Mirrors `ExprEnv::args` in mork_expr.
 """
 function ee_args!(ee::ExprEnv, dest::Vector{ExprEnv})
     tag = byte_item(ee.base.buf[Int(ee.offset) + 1])
-    tag isa ExprArity || return
+    tag isa ExprArity || return nothing
     k = Int(tag.arity)
     env = ExprEnv(ee.n, ee.v, ee.offset + UInt32(1), ee.base)
     for _ in 1:k
@@ -123,12 +135,12 @@ function ee_args!(ee::ExprEnv, dest::Vector{ExprEnv})
         # Measure byte span + new-var count using traverseh
         (new_var_count, _, j_end) = _ee_traverseh(
             UInt8(0), env,
-            (h, o)       -> (h + UInt8(1), nothing),  # new_var: count it
-            (h, o, r)    -> (h, nothing),              # var_ref: noop
-            (h, o, sl)   -> (h, nothing),              # symbol:  noop
-            (h, o, a)    -> (h, nothing),              # zero:    noop
+            (h, o) -> (h + UInt8(1), nothing),  # new_var: count it
+            (h, o, r) -> (h, nothing),              # var_ref: noop
+            (h, o, sl) -> (h, nothing),              # symbol:  noop
+            (h, o, a) -> (h, nothing),              # zero:    noop
             (h, o, x, y) -> (h, nothing),              # add:     noop
-            (h, o, acc)  -> (h, acc))                  # finalize: identity
+            (h, o, acc) -> (h, acc))                  # finalize: identity
         push!(dest, ExprEnv(ee.n, env.v, env.offset, ee.base))
         span = j_end - start_j    # number of bytes this sub-expression occupies
         env = ExprEnv(env.n, env.v + new_var_count, env.offset + UInt32(span), env.base)
@@ -151,11 +163,11 @@ Reason for unification failure.  Mirrors `UnificationFailure` in mork_expr.
 end
 
 struct UnificationFailure
-    kind    ::UnificationFailureKind
-    lhs     ::ExprEnv
-    rhs     ::ExprEnv
-    var     ::ExprVar
-    iters   ::Int
+    kind::UnificationFailureKind
+    lhs::ExprEnv
+    rhs::ExprEnv
+    var::ExprVar
+    iters::Int
 end
 
 const _EMPTY_EE = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(UInt8[]))
@@ -163,9 +175,9 @@ const _EMPTY_EE = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(UInt8[]))
 UnificationFailure(::Val{:occurs}, var::ExprVar, rhs::ExprEnv) =
     UnificationFailure(UNIF_OCCURS, _EMPTY_EE, rhs, var, 0)
 UnificationFailure(::Val{:difference}, lhs::ExprEnv, rhs::ExprEnv) =
-    UnificationFailure(UNIF_DIFFERENCE, lhs, rhs, (UInt8(0),UInt8(0)), 0)
+    UnificationFailure(UNIF_DIFFERENCE, lhs, rhs, (UInt8(0), UInt8(0)), 0)
 UnificationFailure(::Val{:max_iter}, n::Int) =
-    UnificationFailure(UNIF_MAX_ITER, _EMPTY_EE, _EMPTY_EE, (UInt8(0),UInt8(0)), n)
+    UnificationFailure(UNIF_MAX_ITER, _EMPTY_EE, _EMPTY_EE, (UInt8(0), UInt8(0)), n)
 
 # =====================================================================
 # expr_unify — Robinson unification
@@ -184,7 +196,7 @@ Used by `_space_query_multi_inner!` to eliminate per-call Dict allocation.
 Public callers use `expr_unify` which allocates a fresh Dict.
 """
 function _expr_unify_inplace!(pairs::Vector{Tuple{ExprEnv, ExprEnv}},
-                               bindings::Dict{ExprVar, ExprEnv}) :: Union{Bool, UnificationFailure}
+    bindings::Dict{ExprVar, ExprEnv})::Union{Bool, UnificationFailure}
     empty!(bindings)
     result = _expr_unify_core!(pairs, bindings)
     result isa UnificationFailure ? result : true
@@ -197,24 +209,26 @@ Unify pairs of `ExprEnv`s. Returns a fresh bindings map on success or a failure.
 Public API — always allocates a new Dict; safe to retain the result.
 Mirrors `unify` in mork_expr.
 """
-function expr_unify(stack::Vector{Tuple{ExprEnv, ExprEnv}}) :: Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
+function expr_unify(
+    stack::Vector{Tuple{ExprEnv, ExprEnv}}
+)::Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
     bindings = Dict{ExprVar, ExprEnv}()
-    result   = _expr_unify_core!(stack, bindings)
+    result = _expr_unify_core!(stack, bindings)
     result isa UnificationFailure ? result : bindings
 end
 
 # Shared implementation: fills `bindings` (which must already be empty/cleared).
 # Returns `bindings` on success or `UnificationFailure`.
 function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
-                            bindings::Dict{ExprVar, ExprEnv}) :: Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
-    iters    = 0
+    bindings::Dict{ExprVar, ExprEnv})::Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
+    iters = 0
     # encountered: deduplicates structural child pairs to break cyclic chains.
     # Mirrors the `encountered` HashSet<(ExprEnv,ExprEnv)> in the Rust `unify`.
     # Key = (base_id1, offset1, n1, v1, base_id2, offset2, n2, v2)
-    encountered = Set{NTuple{8,UInt64}}()
+    encountered = Set{NTuple{8, UInt64}}()
 
     # deref: follow chain of bindings
-    function _deref(t::ExprEnv) :: ExprEnv
+    function _deref(t::ExprEnv)::ExprEnv
         while true
             vo = ee_var_opt(t)
             vo === nothing && return t
@@ -226,22 +240,29 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
 
     # occurs check: does var xvar appear in expression e?
     # h = (new_var_counter::UInt8, found::Bool)
-    function _occurs_check(xvar::ExprVar, e::ExprEnv) :: Bool
+    function _occurs_check(xvar::ExprVar, e::ExprEnv)::Bool
         xvar[1] != e.n && return false
         (_, found, _) = _ee_traverseh(
             (UInt8(e.v), false), e,
-            (h, o)       -> begin (cnt, f) = h; eq = (cnt == xvar[2]); ((cnt + UInt8(1), f || eq), f || eq) end,
-            (h, o, r)    -> begin b = h[2] || r == xvar[2]; ((h[1], b), b) end,
-            (h, o, sl)   -> (h, false),
-            (h, o, a)    -> (h, false),
+            (h, o) -> begin
+                (cnt, f) = h;
+                eq = (cnt == xvar[2]);
+                ((cnt + UInt8(1), f || eq), f || eq)
+            end,
+            (h, o, r) -> begin
+                b = h[2] || r == xvar[2];
+                ((h[1], b), b)
+            end,
+            (h, o, sl) -> (h, false),
+            (h, o, a) -> (h, false),
             (h, o, x, y) -> (h, x || y),
-            (h, o, acc)  -> (h, acc))
+            (h, o, acc) -> (h, acc))
         # found may be nothing for leaf-only expressions — treat as false
         found === nothing ? false : (found isa Tuple ? found[2] : found)::Bool
     end
 
     # is_unbound: follow variable chain, true if ultimately unbound
-    function _is_unbound(v::ExprVar) :: Bool
+    function _is_unbound(v::ExprVar)::Bool
         vv = v
         while true
             bound = get(bindings, vv, nothing)
@@ -266,18 +287,24 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
         if vx === nothing && vy === nothing
             # Both ground — must match structurally
             # Push pairs of children
-            b1  = dt1.base.buf[Int(dt1.offset) + 1]
-            b2  = dt2.base.buf[Int(dt2.offset) + 1]
+            b1 = dt1.base.buf[Int(dt1.offset) + 1]
+            b2 = dt2.base.buf[Int(dt2.offset) + 1]
             tag1, tag2 = byte_item(b1), byte_item(b2)
             if typeof(tag1) != typeof(tag2)
                 return UnificationFailure(Val(:difference), dt1, dt2)
             end
             if tag1 isa ExprSymbol
                 tag2 = tag2::ExprSymbol
-                s1 = Int(tag1.size); s2 = Int(tag2.size)
-                if s1 != s2; return UnificationFailure(Val(:difference), dt1, dt2); end
-                o1 = Int(dt1.offset); o2 = Int(dt2.offset)
-                if dt1.base.buf[o1+2:o1+1+s1] != dt2.base.buf[o2+2:o2+1+s2]
+                s1 = Int(tag1.size);
+                s2 = Int(tag2.size)
+                if s1 != s2
+                    ;
+                    return UnificationFailure(Val(:difference), dt1, dt2);
+                end
+                o1 = Int(dt1.offset);
+                o2 = Int(dt2.offset)
+                if dt1.base.buf[(o1 + 2):(o1 + 1 + s1)] !=
+                    dt2.base.buf[(o2 + 2):(o2 + 1 + s2)]
                     return UnificationFailure(Val(:difference), dt1, dt2)
                 end
             elseif tag1 isa ExprArity
@@ -286,20 +313,25 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
                     return UnificationFailure(Val(:difference), dt1, dt2)
                 end
                 # push child pairs with deduplication (mirrors Rust encountered set)
-                children1 = ExprEnv[]; ee_args!(dt1, children1)
-                children2 = ExprEnv[]; ee_args!(dt2, children2)
+                children1 = ExprEnv[];
+                ee_args!(dt1, children1)
+                children2 = ExprEnv[];
+                ee_args!(dt2, children2)
                 for i in length(children1):-1:1
-                    c1 = children1[i]; c2 = children2[i]
-                    v1 = ee_var_opt(c1); v2 = ee_var_opt(c2)
+                    c1 = children1[i];
+                    c2 = children2[i]
+                    v1 = ee_var_opt(c1);
+                    v2 = ee_var_opt(c2)
                     # Always push unbound-variable pairs (mirrors Rust special case)
-                    if v1 !== nothing && v2 !== nothing && _is_unbound(v1) && _is_unbound(v2)
+                    if v1 !== nothing && v2 !== nothing && _is_unbound(v1) &&
+                        _is_unbound(v2)
                         push!(stack, (c1, c2))
                     else
                         # Deduplicate: skip pair already in encountered
                         key = (UInt64(objectid(c1.base.buf)), UInt64(c1.offset),
-                               UInt64(c1.n), UInt64(c1.v),
-                               UInt64(objectid(c2.base.buf)), UInt64(c2.offset),
-                               UInt64(c2.n), UInt64(c2.v))
+                            UInt64(c1.n), UInt64(c1.v),
+                            UInt64(objectid(c2.base.buf)), UInt64(c2.offset),
+                            UInt64(c2.n), UInt64(c2.v))
                         if key ∉ encountered
                             push!(encountered, key)
                             push!(stack, (c1, c2))
@@ -329,11 +361,11 @@ end
 # MORK "Rule of 64" design boundaries (from upstream expr/src/lib.rs)
 # These are not arbitrary — they fall directly from the 6-bit fields in the
 # byte tag encoding (Arity/VarRef/SymbolSize all capped at 63).
-const MAX_EXPR_ARITY   = 63   # max children per expression node
-const MAX_SYMBOL_SIZE  = 63   # max bytes in a symbol name
-const MAX_VAR_REFS     = 63   # max variable back-references per expression
-const MAX_SOURCES      = 63   # max sources in a multi-source pattern
-const APPLY_DEPTH      = 64   # max recursion depth in expr_apply
+const MAX_EXPR_ARITY = 63   # max children per expression node
+const MAX_SYMBOL_SIZE = 63   # max bytes in a symbol name
+const MAX_VAR_REFS = 63   # max variable back-references per expression
+const MAX_SOURCES = 63   # max sources in a multi-source pattern
+const APPLY_DEPTH = 64   # max recursion depth in expr_apply
 
 """
     expr_apply(n, original_intros, new_intros, ez, bindings, oz, cycled, stack, assignments)
@@ -343,12 +375,12 @@ Apply variable bindings to the expression at `ez`, writing the result to `oz`.
 Mirrors `apply` in mork_expr.
 """
 function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
-                    ez::ExprZipper,
-                    bindings::Dict{ExprVar, ExprEnv},
-                    oz::ExprZipper,
-                    cycled::Dict{ExprVar, UInt8},
-                    stack::Vector{ExprVar},
-                    assignments::Vector{ExprVar}) :: Tuple{UInt8, UInt8}
+    ez::ExprZipper,
+    bindings::Dict{ExprVar, ExprEnv},
+    oz::ExprZipper,
+    cycled::Dict{ExprVar, UInt8},
+    stack::Vector{ExprVar},
+    assignments::Vector{ExprVar})::Tuple{UInt8, UInt8}
 
     length(stack) > APPLY_DEPTH && error("expr_apply depth > $APPLY_DEPTH: n=$n")
 
@@ -382,7 +414,17 @@ function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
                     push!(stack, key)
                     sub_span = expr_span(bound.base, Int(bound.offset) + 1)
                     sub_ez = ExprZipper(MORK.Expr(Vector{UInt8}(sub_span)), 1)
-                    _, new_intros = expr_apply(bound.n, bound.v, new_intros, sub_ez, bindings, oz, cycled, stack, assignments)
+                    _, new_intros = expr_apply(
+                        bound.n,
+                        bound.v,
+                        new_intros,
+                        sub_ez,
+                        bindings,
+                        oz,
+                        cycled,
+                        stack,
+                        assignments
+                    )
                     pop!(stack)
                 end
                 original_intros += UInt8(1)
@@ -413,7 +455,17 @@ function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
                     push!(stack, key)
                     sub_span = expr_span(bound.base, Int(bound.offset) + 1)
                     sub_ez = ExprZipper(MORK.Expr(Vector{UInt8}(sub_span)), 1)
-                    _, new_intros = expr_apply(bound.n, bound.v, new_intros, sub_ez, bindings, oz, cycled, stack, assignments)
+                    _, new_intros = expr_apply(
+                        bound.n,
+                        bound.v,
+                        new_intros,
+                        sub_ez,
+                        bindings,
+                        oz,
+                        cycled,
+                        stack,
+                        assignments
+                    )
                     pop!(stack)
                 end
             end
@@ -421,7 +473,7 @@ function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
 
         elseif tag isa ExprSymbol
             n_sym = Int(tag.size)
-            sym_bytes = view(ez.root.buf, ez.loc+1 : ez.loc+n_sym)
+            sym_bytes = view(ez.root.buf, (ez.loc + 1):(ez.loc + n_sym))
             ez_write_symbol!(oz, sym_bytes)
             ez.loc += 1 + n_sym
             _check = ez.loc <= length(ez.root)
@@ -446,7 +498,7 @@ end
 # Convenience wrapper
 function expr_apply(ez::ExprZipper, bindings::Dict{ExprVar, ExprEnv}, oz::ExprZipper)
     expr_apply(UInt8(0), UInt8(0), UInt8(0), ez, bindings, oz,
-               Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
+        Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
 end
 
 # =====================================================================
@@ -454,13 +506,13 @@ end
 # =====================================================================
 
 """Show the expression in ExprEnv with variable labels like <n,idx>."""
-function ee_show(ee::ExprEnv) :: String
+function ee_show(ee::ExprEnv)::String
     io = IOBuffer()
     _ee_show_impl(io, ee.base, Int(ee.offset), Int(ee.v), Int(ee.n))
     String(take!(io))
 end
 
-function _ee_show_impl(io::IO, x::MORK.Expr, off::Int, var_cnt::Int, n::Int) :: Int
+function _ee_show_impl(io::IO, x::MORK.Expr, off::Int, var_cnt::Int, n::Int)::Int
     b = x.buf[off + 1]
     tag = byte_item(b)
     if tag isa ExprNewVar
@@ -471,7 +523,7 @@ function _ee_show_impl(io::IO, x::MORK.Expr, off::Int, var_cnt::Int, n::Int) :: 
         return var_cnt
     elseif tag isa ExprSymbol
         s = Int(tag.size)
-        write(io, x.buf[off+2 : off+1+s])
+        write(io, x.buf[(off + 2):(off + 1 + s)])
         return var_cnt
     elseif tag isa ExprArity
         a = Int(tag.arity)
@@ -483,8 +535,8 @@ function _ee_show_impl(io::IO, x::MORK.Expr, off::Int, var_cnt::Int, n::Int) :: 
             # advance off2 by the span of the child
             (_, _, j_end) = expr_traverseh(
                 0, x, off2,
-                (h,o) -> h, (h,o,r) -> h, (h,o,sl) -> h,
-                (h,o,a2) -> h, (h,o,x2,y) -> h, (h,o,acc) -> acc)
+                (h, o) -> h, (h, o, r) -> h, (h, o, sl) -> h,
+                (h, o, a2) -> h, (h, o, x2, y) -> h, (h, o, acc) -> acc)
             off2 = j_end
         end
         print(io, ")")

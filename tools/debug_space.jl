@@ -7,7 +7,8 @@
 # Prerequisites (install once):
 #   using Pkg; Pkg.add(["Debugger", "Cthulhu", "ProfileView"])
 
-println("""
+println(
+    """
 MORK Debugging Tools
 ====================
 
@@ -86,4 +87,5 @@ MORK Debugging Tools
 
   # Even more detail:
   @code_typed space_metta_calculus!(s, 10)
-""")
+"""
+)

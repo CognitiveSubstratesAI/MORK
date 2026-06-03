@@ -5,7 +5,9 @@ using MORK, Test
 
 @testset "process_calculus_reverse — petri net 2+2=4" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (exec (IC 0 1 (S (S (S (S (S (S (S (S (S (S Z)))))))))))
              (, (exec (IC \$x \$y (S \$c)) \$sp \$st) ((exec \$x) \$p \$t))
              (, (exec (IC \$y \$x \$c) \$sp \$st) (exec (R \$x) \$p \$t)))
@@ -19,7 +21,8 @@ using MORK, Test
                                     (? (PN \$x \$y) \$z (! \$ret (S \$z))))))
 (petri (? (add \$ret) (Z \$y) (! \$ret \$y)))
 (petri (! (add result) ((S (S Z)) (S (S Z)))))
-    """)
+    """
+    )
     steps = space_metta_calculus!(s, 100_000)
     @test steps < 1_000_000_000
     result = space_dump_all_sexpr(s)

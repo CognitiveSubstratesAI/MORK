@@ -17,7 +17,9 @@ using MORK
 println("=== Hexlife: Conway's Game of Life on hexagonal grid ===\n")
 
 s = new_space()
-space_add_all_sexpr!(s, raw"""
+space_add_all_sexpr!(
+    s,
+    raw"""
 ; Hexagonal neighbour pairs (axial coordinates using Peano naturals)
 (neighbors ($q $r (S $s)) ($q (S $r) $s))
 (neighbors ($q $r (S $s)) ((S $q) $r $s))
@@ -58,11 +60,15 @@ space_add_all_sexpr!(s, raw"""
 ; Phase 4: clean up counting atoms
 (exec 4 (, (anbs  $co $c)) (O (- (anbs  $co $c))))
 (exec 4 (, (adnbs $co $c)) (O (- (adnbs $co $c))))
-""")
+"""
+)
 
 println("Initial alive cells:")
 initial = filter(l -> startswith(l, "(alive"), split(space_dump_all_sexpr(s), "\n"))
-for c in initial; println("  $c"); end
+for c in initial
+    ;
+    println("  $c");
+end
 
 # Hexlife converges in O(alive_cells) steps — numbered execs (0-4) are not self-referential
 hl_elapsed = @elapsed steps = space_metta_calculus!(s, 9999)
@@ -71,5 +77,8 @@ alive_after = filter(l -> startswith(l, "(alive"), split(result, "\n"))
 
 println("\nAfter $steps steps ($(round(hl_elapsed*1000, digits=1)) ms):")
 println("Alive cells: $(length(alive_after))")
-for c in alive_after; println("  $c"); end
+for c in alive_after
+    ;
+    println("  $c");
+end
 println("\nDone!")

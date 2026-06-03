@@ -22,7 +22,9 @@ s = new_space()
 
 # ── Kripke structure: traffic light ──────────────────────────────────────────
 # s0=red, s1=red+amber, s2=green, s3=amber; cycle s0→s1→s2→s3→s0
-space_add_all_sexpr!(s, raw"""
+space_add_all_sexpr!(
+    s,
+    raw"""
 (trans s0 s1) (trans s1 s2) (trans s2 s3) (trans s3 s0)
 (label s0 red) (label s1 red) (label s1 amber)
 (label s2 green) (label s3 amber)
@@ -34,7 +36,8 @@ space_add_all_sexpr!(s, raw"""
 ; exec 1: EX p — uses (sat $p $t) from exec 0
 (exec 1 (, (trans $s $t) (sat $p $t) (to_check (EX $p) $s))
         (, (sat (EX $p) $s)))
-""")
+"""
+)
 
 # Add ALL queries before running — exec 0 fires first, then exec 1 can use results
 for state in ("s0", "s1", "s2", "s3"), prop in ("red", "green", "amber")
@@ -51,7 +54,7 @@ println("Atomic propositions (exec 0 results):")
 for q in ("(sat red s0)", "(sat amber s1)", "(sat green s2)", "(sat amber s3)")
     println("  $q : $(occursin(q, result) ? "✓ SAT" : "✗")")
 end
-@assert occursin("(sat red s0)", result)   "s0 should be red"
+@assert occursin("(sat red s0)", result) "s0 should be red"
 @assert occursin("(sat green s2)", result) "s2 should be green"
 @assert !occursin("(sat green s0)", result) "s0 should NOT be green"
 
@@ -61,8 +64,10 @@ for state in ("s0", "s1", "s2", "s3")
     # Only s1→s2(green) means s1 satisfies EX(green)
     println("  EX(green) at $state: $(found ? "✓ SAT" : "✗ not SAT")")
 end
-@assert occursin("(sat (EX green) s1)", result)  "s1 satisfies EX(green): s1→s2"
+@assert occursin("(sat (EX green) s1)", result) "s1 satisfies EX(green): s1→s2"
 @assert !occursin("(sat (EX green) s0)", result) "s0 does NOT satisfy EX(green): s0→s1 not green"
 
 println("\nSteps: $ctl_steps  PASS")
-println("\nNote: full EF/EU/AF/AU via iterative fixpoint — see upstream ctl() in kernel/src/main.rs")
+println(
+    "\nNote: full EF/EU/AF/AU via iterative fixpoint — see upstream ctl() in kernel/src/main.rs"
+)

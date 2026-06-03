@@ -19,7 +19,9 @@ using MORK
 
 println("=== bc0: prove C from A via A→B→C (zealous backward chaining) ===")
 s = new_space()
-space_add_all_sexpr!(s, raw"""
+space_add_all_sexpr!(
+    s,
+    raw"""
 ((step base) (, (goal (: $proof $conclusion)) (kb (: $proof $conclusion)))
              (, (ev (: $proof $conclusion))))
 ((step abs)  (, (goal (: $proof $conclusion)))
@@ -33,12 +35,15 @@ space_add_all_sexpr!(s, raw"""
 (kb (: a A)) (kb (: ab (R A B))) (kb (: bc (R B C)))
 (kb (: MP (-> (R $p $q) (-> $p $q))))
 (goal (: $proof C))
-""")
+"""
+)
 bc_elapsed = @elapsed bc_steps = space_metta_calculus!(s, 50)
 result = space_dump_all_sexpr(s)
 evs = filter(l -> startswith(l, "(ev"), split(result, "\n"))
 
-println("Steps: $bc_steps  Time: $(round(bc_elapsed, digits=2))s  Evidence atoms: $(length(evs))")
+println(
+    "Steps: $bc_steps  Time: $(round(bc_elapsed, digits=2))s  Evidence atoms: $(length(evs))"
+)
 println("\nKey proofs found:")
 for e in filter(e -> occursin("(@ (@ MP", e), evs)
     println("  $e")

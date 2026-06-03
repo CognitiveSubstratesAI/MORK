@@ -20,31 +20,40 @@ using MORK
 # ── P1: Directed graph reachability ──────────────────────────────────────────
 println("=== P1: Directed graph reachability ===")
 s1 = new_space()
-space_add_all_sexpr!(s1, raw"""
+space_add_all_sexpr!(
+    s1,
+    raw"""
 (edge a b) (edge b c) (edge c d) (edge a d) (edge b e)
 ; Direct reachability
 (exec 0 (, (edge $x $y)) (, (reach $x $y)))
 ; Two-hop transitivity
 (exec 0 (, (edge $x $y) (edge $y $z)) (, (reach $x $z)))
-""")
+"""
+)
 p1_steps = space_metta_calculus!(s1, 999)
 reach1 = sort(filter(l -> startswith(l, "(reach"), split(space_dump_all_sexpr(s1), "\n")))
 println("Steps: $p1_steps  Reachable pairs: $(length(reach1))")
-for r in reach1; println("  $r"); end
+for r in reach1
+    ;
+    println("  $r");
+end
 @assert length(reach1) >= 5 "P1: expected at least 5 reachable pairs"
 println("PASS\n")
 
 # ── P2: Undirected reachability via symmetric closure ─────────────────────────
 println("=== P2: Undirected graph — connected components ===")
 s2 = new_space()
-space_add_all_sexpr!(s2, raw"""
+space_add_all_sexpr!(
+    s2,
+    raw"""
 (edge 1 2) (edge 2 3) (edge 4 3) (edge 5 6)
 ; Symmetric closure — one exec fires, creates all sym edges at once
 (exec 0 (, (edge $x $y)) (, (sym $x $y) (sym $y $x)))
 ; 2-hop connectivity (sufficient for this small graph)
 (exec 1 (, (sym $x $y)) (, (conn $x $y)))
 (exec 1 (, (sym $x $y) (sym $y $z)) (, (conn $x $z)))
-""")
+"""
+)
 p2_steps = space_metta_calculus!(s2, 999)
 conn2 = sort(filter(l -> startswith(l, "(conn"), split(space_dump_all_sexpr(s2), "\n")))
 println("Steps: $p2_steps  Connected pairs: $(length(conn2))")

@@ -7,7 +7,9 @@ using MORK, Test
     # Use a 2-leaf tree so the test is fast and avoids depth limitations
     space_add_all_sexpr!(s, "(tree-example (branch (leaf 1) (leaf 2)))")
 
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 T
 (tree-to-space (ctx (branch \$left \$right) \$path) (ctx \$left  (cons \$path L)))
 (tree-to-space (ctx (branch \$left \$right) \$path) (ctx \$right (cons \$path R)))
@@ -17,7 +19,8 @@ T
   (, (exec 0 (, (lookup \$x \$px \$tx)) (, (exec (0 \$x) \$px \$tx)))
      (lookup \$p (, (lookup \$t \$px \$tx)) (, (exec (0 \$t) \$px \$tx)))
      (lookup \$y (, T) (, \$cy))))
-""")
+"""
+    )
 
     space_metta_calculus!(s)
 

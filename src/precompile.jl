@@ -15,12 +15,15 @@ using PrecompileTools
 
     # ── Calculus: simple rule ─────────────────────────────────────────
     s2 = new_space()
-    space_add_all_sexpr!(s2, """
-        (fact a)
-        (fact b)
-        (exec 0 (, (fact \$x)) (O (processed \$x)))
-        (exec 1 (, (fact \$x)) (O (- (fact \$x))))
-    """)
+    space_add_all_sexpr!(
+        s2,
+        """
+    (fact a)
+    (fact b)
+    (exec 0 (, (fact \$x)) (O (processed \$x)))
+    (exec 1 (, (fact \$x)) (O (- (fact \$x))))
+"""
+    )
     space_metta_calculus!(s2, 1_000)
     space_dump_all_sexpr(s2)
 
@@ -31,19 +34,22 @@ using PrecompileTools
 
     # ── Calculus: float reduction sinks ──────────────────────────────
     s4 = new_space()
-    space_add_all_sexpr!(s4, """
-        (n 1.0)
-        (n 2.0)
-        (n 3.0)
-        (exec 0
-            (, (n \$x))
-            (O
-                (fsum  (total \$c) \$c \$x)
-                (fmax  (peak  \$c) \$c \$x)
-            )
+    space_add_all_sexpr!(
+        s4,
+        """
+    (n 1.0)
+    (n 2.0)
+    (n 3.0)
+    (exec 0
+        (, (n \$x))
+        (O
+            (fsum  (total \$c) \$c \$x)
+            (fmax  (peak  \$c) \$c \$x)
         )
-        (exec 1 (, (n \$x)) (O (- (n \$x))))
-    """)
+    )
+    (exec 1 (, (n \$x)) (O (- (n \$x))))
+"""
+    )
     space_metta_calculus!(s4, 10_000)
 
     # ── Expression conversion ─────────────────────────────────────────

@@ -11,13 +11,13 @@
 
 using MORK
 
-const PORT         = parse(Int, get(ENV, "MORK_SERVER_PORT",  "8080"))
-const ADDR         = get(ENV, "MORK_SERVER_ADDR",  "0.0.0.0")
+const PORT = parse(Int, get(ENV, "MORK_SERVER_PORT", "8080"))
+const ADDR = get(ENV, "MORK_SERVER_ADDR", "0.0.0.0")
 const RESOURCE_DIR = get(ENV, "MORK_RESOURCE_DIR", "/tmp/mork-resources")
 
 mkpath(RESOURCE_DIR)
 
-ss     = ServerSpace(RESOURCE_DIR)
+ss = ServerSpace(RESOURCE_DIR)
 server = MorkServer(ss, ADDR, PORT, Ref(false), Ref(0))
 
 println("MORK server starting on http://$ADDR:$PORT")

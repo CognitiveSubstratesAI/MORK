@@ -25,7 +25,12 @@ using MORK
         # Warm up JIT (first call may include compilation overhead)
         for _ in 1:3
             for h in [MORK._var_children, MORK._size_children, MORK._arity_children]
-                count = 0; for b in h(rz); count += Int(b); end; count
+                count = 0;
+                for b in h(rz)
+                    ;
+                    count += Int(b);
+                end;
+                count
             end
         end
 
@@ -34,7 +39,14 @@ using MORK
         # Threshold: 128 bytes — well above the 48-byte struct, well below any vector.
         THRESHOLD_C1 = 128
         for h in [MORK._var_children, MORK._size_children, MORK._arity_children]
-            n = @allocated (count = 0; for b in h(rz); count += Int(b); end; count)
+            n = @allocated (
+                count=0;
+                for b in h(rz)
+                    ;
+                    count += Int(b);
+                end;
+                count
+            )
             @test n <= THRESHOLD_C1
             @info "$(nameof(h)): $n bytes (threshold $THRESHOLD_C1)"
         end
@@ -45,15 +57,17 @@ using MORK
         s = new_space()
         for i in 1:5
             space_add_all_sexpr!(s, "(isa node$i type$i)")
-            space_add_all_sexpr!(s, "(exec 0 (, (isa node$i type$i)) (, (confirmed node$i)))")
+            space_add_all_sexpr!(
+                s, "(exec 0 (, (isa node$i type$i)) (, (confirmed node$i)))"
+            )
         end
         space_metta_calculus!(s, typemax(Int))  # JIT warmup run
 
         for i in 1:5
             space_add_all_sexpr!(s, "(exec 0 (, (isa node$i type$i)) (, (c2_node$i)))")
         end
-        allocs    = @allocated space_metta_calculus!(s, typemax(Int))
-        per_step  = allocs / 5
+        allocs = @allocated space_metta_calculus!(s, typemax(Int))
+        per_step = allocs / 5
 
         # Threshold: 90 KB/step (baseline measured 67 KB post-pjoin-skip; ~33%
         # headroom for JIT/measurement noise). Catches re-introduction of the
@@ -71,7 +85,7 @@ using MORK
         # raw"..." strings don't interpolate — $loc is a literal dollar sign + loc.
         for pat_str in [
             raw"(exec $loc $pat $tpl)",          # fully variable exec
-            raw"(exec 0 (, $pat) (, $tpl))",     # concrete priority
+            raw"(exec 0 (, $pat) (, $tpl))"     # concrete priority
         ]
             e = MORK.sexpr_to_expr(pat_str)
             @test MORK._pat_overlaps_exec_prefix(e) == true
@@ -81,7 +95,7 @@ using MORK
         for pat_str in [
             raw"(isa $x thing)",
             raw"(edge $a $b)",
-            raw"($x $y)",                        # wildcard — structurally no exec prefix
+            raw"($x $y)"                        # wildcard — structurally no exec prefix
         ]
             e = MORK.sexpr_to_expr(pat_str)
             @test MORK._pat_overlaps_exec_prefix(e) == false
@@ -93,7 +107,7 @@ using MORK
         space_add_all_sexpr!(s, raw"(exec 0 (, (isa $x bird)) (, (confirmed $x)))")
         space_metta_calculus!(s, 1000)
         out = space_dump_all_sexpr(s)
-        @test any(occursin("confirmed robin",   l) for l in split(out, "\n"))
+        @test any(occursin("confirmed robin", l) for l in split(out, "\n"))
         @test any(occursin("confirmed sparrow", l) for l in split(out, "\n"))
     end
 

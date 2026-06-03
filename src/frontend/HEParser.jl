@@ -19,7 +19,7 @@ using Base: Iterators
 # =====================================================================
 
 struct HESymbolAtom
-    name ::String
+    name::String
 end
 
 he_sym_name(s::HESymbolAtom) = s.name
@@ -30,7 +30,7 @@ Base.show(io::IO, s::HESymbolAtom) = print(io, s.name)
 # =====================================================================
 
 struct HEExpressionAtom
-    children ::Vector{Any}   # Vector of HEAtom (forward ref via Any)
+    children::Vector{Any}   # Vector of HEAtom (forward ref via Any)
 end
 
 he_expr_children(e::HEExpressionAtom) = e.children
@@ -52,17 +52,17 @@ end
 const _HE_NEXT_VAR_ID = Ref{Int}(1)
 
 mutable struct HEVariableAtom
-    name ::String
-    id   ::Int
+    name::String
+    id::Int
 end
 
 HEVariableAtom(name::String) = HEVariableAtom(name, 0)
 
-function he_var_name(v::HEVariableAtom) :: String
+function he_var_name(v::HEVariableAtom)::String
     v.id == 0 ? v.name : "$(v.name)#$(v.id)"
 end
 
-function he_var_make_unique!(v::HEVariableAtom) :: HEVariableAtom
+function he_var_make_unique!(v::HEVariableAtom)::HEVariableAtom
     HEVariableAtom(v.name, _HE_NEXT_VAR_ID[] += 1)
 end
 
@@ -75,10 +75,10 @@ Base.show(io::IO, v::HEVariableAtom) = print(io, "\$", he_var_name(v))
 # Atom is one of: HESymbolAtom, HEExpressionAtom, HEVariableAtom, or Any (Grounded)
 const HEAtom = Any
 
-he_atom_sym(name::String)          = HESymbolAtom(name)
-he_atom_var(name::String)          = HEVariableAtom(name)
-he_atom_expr(children::Vector)     = HEExpressionAtom(children)
-he_atom_gnd(val)                   = val   # grounded = any value
+he_atom_sym(name::String) = HESymbolAtom(name)
+he_atom_var(name::String) = HEVariableAtom(name)
+he_atom_expr(children::Vector) = HEExpressionAtom(children)
+he_atom_gnd(val) = val   # grounded = any value
 
 # =====================================================================
 # Tokenizer — mirrors Tokenizer in he_parser.rs
@@ -92,10 +92,10 @@ Mirrors `Tokenizer` in he_parser.rs.
 Tokens are tried in reverse order (last registered = highest priority).
 """
 mutable struct HETokenizer
-    tokens ::Vector{Tuple{Regex, Function}}   # (regex, token → HEAtom)
+    tokens::Vector{Tuple{Regex, Function}}   # (regex, token → HEAtom)
 end
 
-HETokenizer() = HETokenizer(Tuple{Regex,Function}[])
+HETokenizer() = HETokenizer(Tuple{Regex, Function}[])
 
 function he_tok_register!(t::HETokenizer, regex::Regex, constr::Function)
     push!(t.tokens, (regex, constr))
@@ -105,7 +105,7 @@ function he_tok_register_str!(t::HETokenizer, regex_str::String, constr::Functio
     he_tok_register!(t, Regex(regex_str), constr)
 end
 
-function he_tok_find(t::HETokenizer, token::String) :: Union{Function, Nothing}
+function he_tok_find(t::HETokenizer, token::String)::Union{Function, Nothing}
     # Try in reverse order (last = highest priority, mirrors rfind in Rust)
     for i in length(t.tokens):-1:1
         (regex, constr) = t.tokens[i]
@@ -134,7 +134,7 @@ end
     HE_ERROR_GROUP
 end
 
-function he_node_is_leaf(t::HESyntaxNodeType) :: Bool
+function he_node_is_leaf(t::HESyntaxNodeType)::Bool
     !(t == HE_EXPRESSION_GROUP || t == HE_ERROR_GROUP)
 end
 
@@ -143,33 +143,39 @@ end
 # =====================================================================
 
 mutable struct HESyntaxNode
-    node_type   ::HESyntaxNodeType
-    src_range   ::UnitRange{Int}
-    sub_nodes   ::Vector{HESyntaxNode}
-    parsed_text ::Union{String, Nothing}
-    message     ::Union{String, Nothing}
-    is_complete ::Bool
+    node_type::HESyntaxNodeType
+    src_range::UnitRange{Int}
+    sub_nodes::Vector{HESyntaxNode}
+    parsed_text::Union{String, Nothing}
+    message::Union{String, Nothing}
+    is_complete::Bool
 end
 
-function HESyntaxNode(node_type::HESyntaxNodeType, src_range::UnitRange{Int}, sub_nodes::Vector{HESyntaxNode})
+function HESyntaxNode(
+    node_type::HESyntaxNodeType, src_range::UnitRange{Int}, sub_nodes::Vector{HESyntaxNode}
+)
     HESyntaxNode(node_type, src_range, sub_nodes, nothing, nothing, true)
 end
 
-function _he_node_token(node_type::HESyntaxNodeType, src_range::UnitRange{Int}, text::String) :: HESyntaxNode
+function _he_node_token(
+    node_type::HESyntaxNodeType, src_range::UnitRange{Int}, text::String
+)::HESyntaxNode
     n = HESyntaxNode(node_type, src_range, HESyntaxNode[])
     n.parsed_text = text
     n
 end
 
 function _he_node_incomplete(node_type::HESyntaxNodeType, src_range::UnitRange{Int},
-                              sub_nodes::Vector{HESyntaxNode}, message::String) :: HESyntaxNode
+    sub_nodes::Vector{HESyntaxNode}, message::String)::HESyntaxNode
     n = HESyntaxNode(node_type, src_range, sub_nodes)
     n.message = message
     n.is_complete = false
     n
 end
 
-function _he_node_error_group(src_range::UnitRange{Int}, sub_nodes::Vector{HESyntaxNode}) :: HESyntaxNode
+function _he_node_error_group(
+    src_range::UnitRange{Int}, sub_nodes::Vector{HESyntaxNode}
+)::HESyntaxNode
     msg = isempty(sub_nodes) ? nothing : sub_nodes[end].message
     n = HESyntaxNode(HE_ERROR_GROUP, src_range, sub_nodes)
     n.message = msg
@@ -178,12 +184,14 @@ function _he_node_error_group(src_range::UnitRange{Int}, sub_nodes::Vector{HESyn
 end
 
 # SyntaxNode::as_atom — convert syntax tree node → HEAtom using tokenizer
-function he_node_as_atom(node::HESyntaxNode, tok::HETokenizer) :: Union{HEAtom, Nothing, String}
+function he_node_as_atom(
+    node::HESyntaxNode, tok::HETokenizer
+)::Union{HEAtom, Nothing, String}
     # Returns: HEAtom, nothing (skip), or String (error message)
     !node.is_complete && return node.message
 
     if node.node_type == HE_COMMENT || node.node_type == HE_WHITESPACE ||
-       node.node_type == HE_OPEN_PAREN || node.node_type == HE_CLOSE_PAREN
+        node.node_type == HE_OPEN_PAREN || node.node_type == HE_CLOSE_PAREN
         return nothing
 
     elseif node.node_type == HE_VARIABLE_TOKEN
@@ -193,8 +201,12 @@ function he_node_as_atom(node::HESyntaxNode, tok::HETokenizer) :: Union{HEAtom, 
         text = node.parsed_text
         constr = he_tok_find(tok, text)
         if constr !== nothing
-            try; return constr(text)
-            catch e; return "byte range = ($(node.src_range)) | $e"; end
+            try
+                ;
+                return constr(text)
+            catch e
+                ; return "byte range = ($(node.src_range)) | $e";
+            end
         else
             return he_atom_sym(text)
         end
@@ -231,36 +243,36 @@ Character-level MeTTa S-expression parser.
 Mirrors `SExprParser<'a>` in he_parser.rs.
 """
 mutable struct HESExprParser
-    text ::String
-    pos  ::Int         # current byte position (1-based Julia index)
+    text::String
+    pos::Int         # current byte position (1-based Julia index)
 end
 
 HESExprParser(text::String) = HESExprParser(text, 1)
 
 # Peek at current char without consuming. Returns (byte_idx, char) or nothing.
-function _hep_peek(p::HESExprParser) :: Union{Tuple{Int,Char}, Nothing}
+function _hep_peek(p::HESExprParser)::Union{Tuple{Int, Char}, Nothing}
     p.pos > ncodeunits(p.text) && return nothing
     idx = p.pos
-    c   = p.text[idx]
+    c = p.text[idx]
     (idx - 1, c)   # return 0-based index to match Rust CharIndices
 end
 
 # Consume and return current char
-function _hep_next!(p::HESExprParser) :: Union{Tuple{Int,Char}, Nothing}
+function _hep_next!(p::HESExprParser)::Union{Tuple{Int, Char}, Nothing}
     p.pos > ncodeunits(p.text) && return nothing
     idx = p.pos
-    c   = p.text[idx]
+    c = p.text[idx]
     p.pos = nextind(p.text, idx)
     (idx - 1, c)
 end
 
 # Current byte offset (0-based, matches Rust cur_idx)
-function _hep_cur_idx(p::HESExprParser) :: Int
+function _hep_cur_idx(p::HESExprParser)::Int
     p.pos - 1
 end
 
 # parse_comment: read to next \n
-function _hep_parse_comment!(p::HESExprParser) :: HESyntaxNode
+function _hep_parse_comment!(p::HESExprParser)::HESyntaxNode
     start = _hep_cur_idx(p)
     while (pk = _hep_peek(p)) !== nothing
         _, c = pk
@@ -271,14 +283,16 @@ function _hep_parse_comment!(p::HESExprParser) :: HESyntaxNode
 end
 
 # parse_leftovers: consume all remaining chars, return incomplete node
-function _hep_parse_leftovers!(p::HESExprParser, message::String) :: HESyntaxNode
+function _hep_parse_leftovers!(p::HESExprParser, message::String)::HESyntaxNode
     start = _hep_cur_idx(p)
-    while _hep_next!(p) !== nothing; end
+    while _hep_next!(p) !== nothing
+        ;
+    end
     _he_node_incomplete(HE_LEFTOVER_TEXT, start:_hep_cur_idx(p), HESyntaxNode[], message)
 end
 
 # parse_word: read non-whitespace, non-paren chars
-function _hep_parse_word!(p::HESExprParser) :: HESyntaxNode
+function _hep_parse_word!(p::HESExprParser)::HESyntaxNode
     token = IOBuffer()
     start = _hep_cur_idx(p)
     while (pk = _hep_peek(p)) !== nothing
@@ -291,7 +305,7 @@ function _hep_parse_word!(p::HESExprParser) :: HESyntaxNode
 end
 
 # parse_variable: consume $ then read word (no # allowed)
-function _hep_parse_variable!(p::HESExprParser) :: HESyntaxNode
+function _hep_parse_variable!(p::HESExprParser)::HESyntaxNode
     start, _ = _hep_peek(p)
     save_pos = p.pos
     _hep_next!(p)   # consume '$'
@@ -310,74 +324,96 @@ function _hep_parse_variable!(p::HESExprParser) :: HESyntaxNode
 end
 
 # parse_2_digit_radix_value: hex escape \xNN
-function _hep_parse_2digit_radix!(p::HESExprParser, radix::Int) :: Union{UInt8, Nothing}
-    r1 = _hep_next!(p);  r1 === nothing && return nothing
+function _hep_parse_2digit_radix!(p::HESExprParser, radix::Int)::Union{UInt8, Nothing}
+    r1 = _hep_next!(p);
+    r1 === nothing && return nothing
     _, d1 = r1
-    isdigit(d1) || (radix == 16 && d1 in 'a':'f') || (radix == 16 && d1 in 'A':'F') || return nothing
-    r2 = _hep_next!(p);  r2 === nothing && return nothing
+    isdigit(d1) || (radix == 16 && d1 in 'a':'f') || (radix == 16 && d1 in 'A':'F') ||
+        return nothing
+    r2 = _hep_next!(p);
+    r2 === nothing && return nothing
     _, d2 = r2
-    isdigit(d2) || (radix == 16 && d2 in 'a':'f') || (radix == 16 && d2 in 'A':'F') || return nothing
+    isdigit(d2) || (radix == 16 && d2 in 'a':'f') || (radix == 16 && d2 in 'A':'F') ||
+        return nothing
     val = parse(UInt8, string(d1, d2); base=radix)
     val <= 0x7F ? val : nothing
 end
 
 # parse_string: read "..." with escape sequences
-function _hep_parse_string!(p::HESExprParser) :: HESyntaxNode
-    token  = IOBuffer()
-    start  = _hep_cur_idx(p)
-    r      = _hep_next!(p)  # consume opening '"'
+function _hep_parse_string!(p::HESExprParser)::HESyntaxNode
+    token = IOBuffer()
+    start = _hep_cur_idx(p)
+    r = _hep_next!(p)  # consume opening '"'
     (r === nothing || r[2] != '"') && return _he_node_incomplete(
-        HE_LEFTOVER_TEXT, start:_hep_cur_idx(p), HESyntaxNode[], "Double quote expected")
+        HE_LEFTOVER_TEXT, start:_hep_cur_idx(p), HESyntaxNode[], "Double quote expected"
+    )
     write(token, '"')
 
     while (r = _hep_next!(p)) !== nothing
         char_idx, c = r
         if c == '"'
             write(token, '"')
-            return _he_node_token(HE_STRING_TOKEN, start:_hep_cur_idx(p), String(take!(token)))
+            return _he_node_token(
+                HE_STRING_TOKEN, start:_hep_cur_idx(p), String(take!(token))
+            )
         end
         if c == '\\'
             esc = _hep_next!(p)
             esc === nothing && return _he_node_incomplete(
-                HE_STRING_TOKEN, start:_hep_cur_idx(p), HESyntaxNode[], "Escaping sequence is not finished")
+                HE_STRING_TOKEN, start:_hep_cur_idx(p), HESyntaxNode[],
+                "Escaping sequence is not finished")
             _, ec = esc
             val = if ec == '\'' || ec == '"' || ec == '\\'
                 ec
-            elseif ec == 'n'; '\n'
-            elseif ec == 'r'; '\r'
-            elseif ec == 't'; '\t'
+            elseif ec == 'n'
+                ;
+                '\n'
+            elseif ec == 'r'
+                ;
+                '\r'
+            elseif ec == 't'
+                ;
+                '\t'
             elseif ec == 'x'
                 code = _hep_parse_2digit_radix!(p, 16)
                 code === nothing && return _he_node_incomplete(
-                    HE_STRING_TOKEN, char_idx:_hep_cur_idx(p), HESyntaxNode[], "Invalid escape sequence")
+                    HE_STRING_TOKEN, char_idx:_hep_cur_idx(p), HESyntaxNode[],
+                    "Invalid escape sequence")
                 Char(code)
             else
                 return _he_node_incomplete(
-                    HE_STRING_TOKEN, char_idx:_hep_cur_idx(p), HESyntaxNode[], "Invalid escape sequence")
+                    HE_STRING_TOKEN, char_idx:_hep_cur_idx(p), HESyntaxNode[],
+                    "Invalid escape sequence")
             end
             write(token, val)
         else
             write(token, c)
         end
     end
-    _he_node_incomplete(HE_STRING_TOKEN, start:_hep_cur_idx(p), HESyntaxNode[], "Unclosed String Literal")
+    _he_node_incomplete(
+        HE_STRING_TOKEN, start:_hep_cur_idx(p), HESyntaxNode[], "Unclosed String Literal"
+    )
 end
 
 # parse_token: dispatch on first char
-function _hep_parse_token!(p::HESExprParser) :: Union{HESyntaxNode, Nothing}
+function _hep_parse_token!(p::HESExprParser)::Union{HESyntaxNode, Nothing}
     pk = _hep_peek(p)
     pk === nothing && return nothing
     _, c = pk
-    if c == '"'; return _hep_parse_string!(p)
-    else; return _hep_parse_word!(p)
+    if c == '"'
+        ;
+        return _hep_parse_string!(p)
+    else
+        ;
+        return _hep_parse_word!(p)
     end
 end
 
 # parse_expr: read ( ... ) recursively
-function _hep_parse_expr!(p::HESExprParser) :: HESyntaxNode
-    start      = _hep_cur_idx(p)
+function _hep_parse_expr!(p::HESExprParser)::HESyntaxNode
+    start = _hep_cur_idx(p)
     child_nodes = HESyntaxNode[]
-    push!(child_nodes, HESyntaxNode(HE_OPEN_PAREN, start:start+1, HESyntaxNode[]))
+    push!(child_nodes, HESyntaxNode(HE_OPEN_PAREN, start:(start + 1), HESyntaxNode[]))
     _hep_next!(p)   # consume '('
 
     while (pk = _hep_peek(p)) !== nothing
@@ -385,10 +421,10 @@ function _hep_parse_expr!(p::HESExprParser) :: HESyntaxNode
         if c == ';'
             push!(child_nodes, _hep_parse_comment!(p))
         elseif isspace(c)
-            push!(child_nodes, HESyntaxNode(HE_WHITESPACE, idx:idx+1, HESyntaxNode[]))
+            push!(child_nodes, HESyntaxNode(HE_WHITESPACE, idx:(idx + 1), HESyntaxNode[]))
             _hep_next!(p)
         elseif c == ')'
-            push!(child_nodes, HESyntaxNode(HE_CLOSE_PAREN, idx:idx+1, HESyntaxNode[]))
+            push!(child_nodes, HESyntaxNode(HE_CLOSE_PAREN, idx:(idx + 1), HESyntaxNode[]))
             _hep_next!(p)
             return HESyntaxNode(HE_EXPRESSION_GROUP, start:_hep_cur_idx(p), child_nodes)
         else
@@ -403,18 +439,20 @@ function _hep_parse_expr!(p::HESExprParser) :: HESyntaxNode
             end
         end
     end
-    _he_node_incomplete(HE_ERROR_GROUP, start:_hep_cur_idx(p), child_nodes, "Unexpected end of expression")
+    _he_node_incomplete(
+        HE_ERROR_GROUP, start:_hep_cur_idx(p), child_nodes, "Unexpected end of expression"
+    )
 end
 
 # parse_to_syntax_tree: main dispatch, mirrors parse_to_syntax_tree in Rust
-function _hep_parse_to_syntax_tree!(p::HESExprParser) :: Union{HESyntaxNode, Nothing}
+function _hep_parse_to_syntax_tree!(p::HESExprParser)::Union{HESyntaxNode, Nothing}
     pk = _hep_peek(p)
     pk === nothing && return nothing
     idx, c = pk
     if c == ';'
         return _hep_parse_comment!(p)
     elseif isspace(c)
-        n = HESyntaxNode(HE_WHITESPACE, idx:idx+1, HESyntaxNode[])
+        n = HESyntaxNode(HE_WHITESPACE, idx:(idx + 1), HESyntaxNode[])
         _hep_next!(p)
         return n
     elseif c == '$'
@@ -422,7 +460,7 @@ function _hep_parse_to_syntax_tree!(p::HESExprParser) :: Union{HESyntaxNode, Not
     elseif c == '('
         return _hep_parse_expr!(p)
     elseif c == ')'
-        close_node = HESyntaxNode(HE_CLOSE_PAREN, idx:idx+1, HESyntaxNode[])
+        close_node = HESyntaxNode(HE_CLOSE_PAREN, idx:(idx + 1), HESyntaxNode[])
         _hep_next!(p)
         leftover = _hep_parse_leftovers!(p, "Unexpected right bracket")
         return _he_node_error_group(idx:_hep_cur_idx(p), [close_node, leftover])
@@ -432,7 +470,7 @@ function _hep_parse_to_syntax_tree!(p::HESExprParser) :: Union{HESyntaxNode, Not
 end
 
 # parse: loop until a real atom is produced, mirrors SExprParser::parse
-function he_sexpr_parse!(p::HESExprParser, tok::HETokenizer) :: Union{HEAtom, Nothing, String}
+function he_sexpr_parse!(p::HESExprParser, tok::HETokenizer)::Union{HEAtom, Nothing, String}
     while true
         node = _hep_parse_to_syntax_tree!(p)
         node === nothing && return nothing
@@ -454,15 +492,17 @@ Owned version of HESExprParser — holds the text string itself.
 Mirrors `OwnedSExprParser` in he_parser.rs.
 """
 mutable struct HEOwnedSExprParser
-    text     ::String
-    last_pos ::Int     # byte position (1-based)
+    text::String
+    last_pos::Int     # byte position (1-based)
 end
 
 HEOwnedSExprParser(text::String) = HEOwnedSExprParser(text, 1)
 
-function he_owned_next_atom!(p::HEOwnedSExprParser, tok::HETokenizer) :: Union{HEAtom, Nothing, String}
+function he_owned_next_atom!(
+    p::HEOwnedSExprParser, tok::HETokenizer
+)::Union{HEAtom, Nothing, String}
     p.last_pos > ncodeunits(p.text) && return nothing
-    slice  = p.text[p.last_pos:end]
+    slice = p.text[p.last_pos:end]
     parser = HESExprParser(slice)
     result = he_sexpr_parse!(parser, tok)
     p.last_pos += _hep_cur_idx(parser)

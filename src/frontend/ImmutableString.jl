@@ -16,32 +16,33 @@ Insertion-ordered map backed by a Vector of (K,V) pairs.
 Equality is set-based (order-independent).
 Mirrors `ListMap<K, V>` in immutable_string.rs.
 """
-mutable struct ListMap{K,V}
-    list ::Vector{Tuple{K,V}}
+mutable struct ListMap{K, V}
+    list::Vector{Tuple{K, V}}
 end
 
-ListMap{K,V}() where {K,V} = ListMap{K,V}(Tuple{K,V}[])
-ListMap(pairs::AbstractVector{Tuple{K,V}}) where {K,V} = ListMap{K,V}(Vector{Tuple{K,V}}(pairs))
+ListMap{K, V}() where {K, V} = ListMap{K, V}(Tuple{K, V}[])
+ListMap(pairs::AbstractVector{Tuple{K, V}}) where {K, V} =
+    ListMap{K, V}(Vector{Tuple{K, V}}(pairs))
 
-function lm_get(m::ListMap{K,V}, key::K) :: Union{V,Nothing} where {K,V}
+function lm_get(m::ListMap{K, V}, key::K)::Union{V, Nothing} where {K, V}
     for (k, v) in m.list
         k == key && return v
     end
     nothing
 end
 
-function lm_get_mut(m::ListMap{K,V}, key::K) :: Union{Ref{V},Nothing} where {K,V}
+function lm_get_mut(m::ListMap{K, V}, key::K)::Union{Ref{V}, Nothing} where {K, V}
     for i in eachindex(m.list)
         m.list[i][1] == key && return Ref(m.list[i])
     end
     nothing
 end
 
-function lm_insert!(m::ListMap{K,V}, key::K, val::V) where {K,V}
+function lm_insert!(m::ListMap{K, V}, key::K, val::V) where {K, V}
     push!(m.list, (key, val))
 end
 
-function lm_entry_or_insert!(m::ListMap{K,V}, key::K, default::V) :: V where {K,V}
+function lm_entry_or_insert!(m::ListMap{K, V}, key::K, default::V)::V where {K, V}
     v = lm_get(m, key)
     v !== nothing && return v
     lm_insert!(m, key, default)
@@ -49,9 +50,9 @@ function lm_entry_or_insert!(m::ListMap{K,V}, key::K, default::V) :: V where {K,
 end
 
 lm_clear!(m::ListMap) = empty!(m.list)
-lm_iter(m::ListMap)   = m.list
+lm_iter(m::ListMap) = m.list
 
-function Base.:(==)(a::ListMap{K,V}, b::ListMap{K,V}) where {K,V}
+function Base.:(==)(a::ListMap{K, V}, b::ListMap{K, V}) where {K, V}
     # Set equality: each entry in b must exist in a with same value, and vice versa
     for (k, v) in b.list
         lm_get(a, k) == v || return false
@@ -62,9 +63,12 @@ function Base.:(==)(a::ListMap{K,V}, b::ListMap{K,V}) where {K,V}
     true
 end
 
-function Base.convert(::Type{ListMap{K,V}}, pairs::Vector{Tuple{K,V}}) where {K,V}
-    m = ListMap{K,V}()
-    for (k, v) in pairs; lm_insert!(m, k, v); end
+function Base.convert(::Type{ListMap{K, V}}, pairs::Vector{Tuple{K, V}}) where {K, V}
+    m = ListMap{K, V}()
+    for (k, v) in pairs
+        ;
+        lm_insert!(m, k, v);
+    end
     m
 end
 
@@ -81,12 +85,12 @@ that preserves the API surface from the Rust port.
 Mirrors `ImmutableString` in immutable_string.rs.
 """
 struct ImmutableString
-    value ::String
+    value::String
 end
 
 ImmutableString(s::AbstractString) = ImmutableString(String(s))
 
-imm_as_str(s::ImmutableString) :: String = s.value
+imm_as_str(s::ImmutableString)::String = s.value
 
 Base.:(==)(a::ImmutableString, b::ImmutableString) = a.value == b.value
 Base.hash(s::ImmutableString, h::UInt) = hash(s.value, h)

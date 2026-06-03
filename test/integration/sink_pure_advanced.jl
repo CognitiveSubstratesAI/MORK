@@ -29,7 +29,8 @@ end
 # normalize rule is matched as a second sub-pattern; the formula $normalized
 # is the entire (div_f64 ...) expression evaluated by PureSink.
 @testset "sink_pure_dynamic_subformula (f64 normalize rule)" begin
-    s = mc("""
+    s = mc(
+        """
 (inputfile 0 (arg 1390) (arg 0.9257))
 (inputfile 1 (arg 3490) (arg 1.2329))
 
@@ -40,7 +41,8 @@ end
      (normalize (product_f64 (i64_as_f64 (i64_from_string \$x)) (f64_from_string \$y)) \$normalized))
   (O (pure (result \$i \$res) \$res (f64_to_string \$normalized)))
 )
-""")
+"""
+    )
     lines = all_lines(s)
     @test any(contains(l, "result 0") for l in lines)
     @test any(contains(l, "result 1") for l in lines)
@@ -69,7 +71,8 @@ end
 # Ports the pure-ops arithmetic from ip_sudoku without the full constraint solver.
 # Tests that i8 arithmetic ops (sum, product, div, mod) work in PureSink.
 @testset "ip_sudoku pure arithmetic (dim=2, box coordinate)" begin
-    s = mc("""
+    s = mc(
+        """
 (dim 2)
 (pos 0) (pos 1) (pos 2) (pos 3)
 (exec 0 (, (dim \$b) (pos \$c) (pos \$r))
@@ -79,7 +82,8 @@ end
                                      (div_i8 (i8_from_string \$r) (i8_from_string \$b))))
                (i8_to_string (sum_i8 (product_i8 (i8_from_string \$b) (mod_i8 (i8_from_string \$c) (i8_from_string \$b)))
                                      (mod_i8 (i8_from_string \$r) (i8_from_string \$b))))))))
-""")
+"""
+    )
     lines = all_lines(s)
     # box coordinates for (c=0,r=0) with dim=2: (2*(0/2)+0/2, 2*(0%2)+0%2) = (0,0)
     @test any(contains(l, "box 0") for l in lines)

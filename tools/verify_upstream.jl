@@ -27,66 +27,54 @@ end
 # All test cases from upstream kernel/src/main.rs
 const UPSTREAM_TESTS = [
     ("lookup",
-     "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something (very specific))\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something (very specific))\n",
+        "MATCHED"),
     ("positive",
-     "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n",
+        "MATCHED"),
     ("positive_equal",
-     "(exec 0 (, (Something \$r \$r)) (, MATCHED))\n(Something (very specific) (very specific))\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something \$r \$r)) (, MATCHED))\n(Something (very specific) (very specific))\n",
+        "MATCHED"),
     ("negative",
-     "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something \$unspecific)\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something \$unspecific)\n",
+        "MATCHED"),
     ("negative_equal",
-     "(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n(Something \$rep \$rep)\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n(Something \$rep \$rep)\n",
+        "MATCHED"),
     ("bipolar",
-     "(exec 0 (, (Something (very \$u))) (, MATCHED))\n(Something (\$u specific))\n",
-     "MATCHED"),
-
-    ("top_level",
-     "(exec 0 (, foo) (, bar))\nfoo\n",
-     "bar"),
-
+        "(exec 0 (, (Something (very \$u))) (, MATCHED))\n(Something (\$u specific))\n",
+        "MATCHED"), ("top_level",
+        "(exec 0 (, foo) (, bar))\nfoo\n",
+        "bar"),
     ("two_positive_equal",
-     "(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n",
+        "MATCHED"),
     ("two_positive_equal_crossed",
-     "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n",
-     "MATCHED"),
-
+        "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n",
+        "MATCHED"),
     ("two_bipolar_equal_crossed",
-     "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n" *
-     "(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n",
-     "(MATCHED (foo bar) (foo bar))"),
-
-    ("variable_priority",
-     "(A Z)\n(exec \$p (, (A \$x)) (, (B \$x)))\n",
-     "(B Z)"),
-
+        "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n" *
+        "(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n",
+        "(MATCHED (foo bar) (foo bar))"), ("variable_priority",
+        "(A Z)\n(exec \$p (, (A \$x)) (, (B \$x)))\n",
+        "(B Z)"),
     ("variables_in_priority",
-     "(A Z)\n(exec (0 \$p) (, (A \$x)) (, (B \$x)))\n",
-     "(B Z)"),
-
+        "(A Z)\n(exec (0 \$p) (, (A \$x)) (, (B \$x)))\n",
+        "(B Z)"),
     ("func_type_unification",
-     "(a (: \$a A))\n(b (: f (-> A)))\n" *
-     "(exec 0 (, (a (: (\$f) A)) (b (: \$f (-> A)))) (, (c OK)))\n",
-     "(c OK)"),
-
+        "(a (: \$a A))\n(b (: f (-> A)))\n" *
+        "(exec 0 (, (a (: (\$f) A)) (b (: \$f (-> A)))) (, (c OK)))\n",
+        "(c OK)"),
     ("issue_43",
-     "(data (0 1))\n(l \$a \$a)\n(((. \$a) \$a) lp 0 1)\n" *
-     "(exec 2 (, (((. (lp \$a)) \$a) lp 0 1)) (, T))\n",
-     x -> !occursin("\nT\n", x)),   # negative assertion
+        "(data (0 1))\n(l \$a \$a)\n(((. \$a) \$a) lp 0 1)\n" *
+        "(exec 2 (, (((. (lp \$a)) \$a) lp 0 1)) (, T))\n",
+        x -> !occursin("\nT\n", x))   # negative assertion
 ]
 
-pass = 0; fail = 0; loop = 0; crash = 0
+pass = 0;
+fail = 0;
+loop = 0;
+crash = 0
 println("\n=== Upstream verification ($(length(UPSTREAM_TESTS)) tests) ===\n")
 for (name, src, expected) in UPSTREAM_TESTS
     local r
@@ -111,8 +99,8 @@ for (name, src, expected) in UPSTREAM_TESTS
 end
 
 println("\n$(pass) passed  $(fail) failed  $(loop) loops  $(crash) crashes")
-println(loop  > 0 ? "⚠ Infinite loops detected" : "")
-println(fail  > 0 ? "⚠ Output diverges from upstream" : "")
+println(loop > 0 ? "⚠ Infinite loops detected" : "")
+println(fail > 0 ? "⚠ Output diverges from upstream" : "")
 println(crash > 0 ? "⚠ Crashes — unhandled errors in metta_calculus" : "")
 (pass == length(UPSTREAM_TESTS)) && println("✓ All upstream tests match")
 pass == length(UPSTREAM_TESTS) && println("\n✓ All upstream tests match")

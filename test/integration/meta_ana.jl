@@ -11,12 +11,15 @@ end
     s = new_space()
     # Load just the seed and static rules (no complex multi-source exec)
     space_add_all_sexpr!(s, "(branch (branch (leaf 11) (leaf 12)) (leaf 2))\n")
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (tree-to-space lift-tree (coalg (tree \$tree) (, (ctx \$tree nil) )))
 (tree-to-space explode-tree (coalg (ctx (branch \$left \$right) \$path) (, (ctx \$left  (cons \$path L))
                                                                           (ctx \$right (cons \$path R)) )))
 (tree-to-space drop-tree (coalg (ctx (leaf \$value) \$path) (, (value \$path \$value) )))
-    """)
+    """
+    )
     # No exec rules — just verify atoms loaded correctly
     @test space_val_count(s) >= 4
     result = space_dump_all_sexpr(s)

@@ -20,18 +20,18 @@ Julia translation notes:
 abstract type CZ2Expr end
 
 struct CZ2Var <: CZ2Expr
-    id ::Int   # 0 = new var, negative = var ref index
+    id::Int   # 0 = new var, negative = var ref index
 end
 
 struct CZ2App <: CZ2Expr
-    left  ::Int   # index into expr heap
-    right ::Int   # index into expr heap
+    left::Int   # index into expr heap
+    right::Int   # index into expr heap
 end
 
 # Heap: all allocated nodes stored here (replaces arena)
 # Index 0 = "empty" sentinel (mirrors const empty: i64)
 # Index 1 = "singleton" sentinel (mirrors const singleton: i64)
-const CZ2_EMPTY     = 0
+const CZ2_EMPTY = 0
 const CZ2_SINGLETON = 1
 
 # =====================================================================
@@ -39,16 +39,16 @@ const CZ2_SINGLETON = 1
 # =====================================================================
 
 mutable struct CZ2Parser
-    heap      ::Vector{CZ2Expr}   # index 0=empty,1=singleton, 2+ = real nodes
-    tokenizer ::Function           # String → Int (symbol id)
+    heap::Vector{CZ2Expr}   # index 0=empty,1=singleton, 2+ = real nodes
+    tokenizer::Function           # String → Int (symbol id)
 end
 
-function CZ2Parser(; tokenizer::Function = s -> hash(s) % typemax(Int32))
+function CZ2Parser(; tokenizer::Function=s -> hash(s) % typemax(Int32))
     heap = CZ2Expr[CZ2Var(0), CZ2Var(1)]  # indices 0,1 are sentinels
     CZ2Parser(heap, tokenizer)
 end
 
-function _cz2_alloc!(p::CZ2Parser, expr::CZ2Expr) :: Int
+function _cz2_alloc!(p::CZ2Parser, expr::CZ2Expr)::Int
     push!(p.heap, expr)
     length(p.heap) - 1
 end
@@ -59,28 +59,28 @@ end
 # =====================================================================
 
 mutable struct CZ2Iter
-    data   ::Vector{UInt8}
-    cursor ::Int
+    data::Vector{UInt8}
+    cursor::Int
 end
 
 CZ2Iter(s::String) = CZ2Iter(Vector{UInt8}(s), 1)
 
 _cz2_has_next(it::CZ2Iter) = it.cursor <= length(it.data)
-_cz2_head(it::CZ2Iter)     = _cz2_has_next(it) ? Char(it.data[it.cursor]) : '\0'
-function _cz2_next!(it::CZ2Iter) :: Char
+_cz2_head(it::CZ2Iter) = _cz2_has_next(it) ? Char(it.data[it.cursor]) : '\0'
+function _cz2_next!(it::CZ2Iter)::Char
     c = Char(it.data[it.cursor])
     it.cursor += 1
     c
 end
 
 _cz2_is_whitespace(c::Char) = c == ' ' || c == '\t' || c == '\n'
-_cz2_is_digit(c::Char)      = '0' <= c <= '9'
+_cz2_is_digit(c::Char) = '0' <= c <= '9'
 
 # =====================================================================
 # indexOf — mirrors indexOf in cz2_parser.rs
 # =====================================================================
 
-function _cz2_index_of(vars::Vector{String}, name::String) :: Int
+function _cz2_index_of(vars::Vector{String}, name::String)::Int
     for (i, v) in enumerate(vars)
         v == name && return i - 1   # 0-based like Rust
     end
@@ -93,13 +93,15 @@ end
 # =====================================================================
 
 function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
-                    vars::Vector{String},
-                    stack::Vector{Tuple{Int,Int}}) :: Int
+    vars::Vector{String},
+    stack::Vector{Tuple{Int, Int}})::Int
     while _cz2_has_next(it)
         c = _cz2_head(it)
 
         if c == ';'
-            while _cz2_has_next(it) && _cz2_next!(it) != '\n'; end
+            while _cz2_has_next(it) && _cz2_next!(it) != '\n'
+                ;
+            end
 
         elseif _cz2_is_whitespace(c)
             _cz2_next!(it)
@@ -113,7 +115,7 @@ function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
                 write(sb, _cz2_next!(it))
             end
             id_str = String(take!(sb))
-            ind    = _cz2_index_of(vars, id_str)
+            ind = _cz2_index_of(vars, id_str)
             if ind == -1
                 push!(vars, id_str)
                 return CZ2_EMPTY   # new var → 0
@@ -143,9 +145,9 @@ function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
                                 _cz2_next!(it)
                             else
                                 cont = cz2_sexpr!(p, it, vars, stack)
-                                l    = length(stack)
+                                l = length(stack)
                                 push!(stack, (res, cont))
-                                res  = l
+                                res = l
                             end
                         end
                     end
@@ -161,15 +163,22 @@ function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
             # Read symbol (quoted or plain)
             sym_str = if _cz2_has_next(it) && _cz2_head(it) == '"'
                 _cz2_next!(it)   # consume '"'
-                sb = IOBuffer(); write(sb, '"')
+                sb = IOBuffer();
+                write(sb, '"')
                 cont = true
                 while _cz2_has_next(it) && cont
                     ch = _cz2_next!(it)
-                    if ch == '"'; write(sb, '"'); cont = false
+                    if ch == '"'
+                        ;
+                        write(sb, '"');
+                        cont = false
                     elseif ch == '\\'
                         _cz2_has_next(it) || error("Escaping sequence is not finished")
                         write(sb, _cz2_next!(it))
-                    else; write(sb, ch); end
+                    else
+                        ;
+                        write(sb, ch);
+                    end
                 end
                 String(take!(sb))
             else

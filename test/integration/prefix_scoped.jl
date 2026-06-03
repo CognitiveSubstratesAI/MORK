@@ -13,7 +13,7 @@
 using MORK, Test
 using PathMap: UNIT_VAL, set_val_at!, read_zipper_at_path, zipper_to_next_val!, zipper_path
 using MORK: new_space, sexpr_to_expr, expr_serialize,
-            space_query_multi_at, space_metta_calculus_in_prefix!
+    space_query_multi_at, space_metta_calculus_in_prefix!
 
 # Store `sexpr` at  prefix ++ encoded(sexpr)  (the Core multi-space convention).
 _addp(btm, prefix, sexpr) =
@@ -32,16 +32,24 @@ end
 
 @testset "prefix-scoped query — region isolation, no prefix-byte leak" begin
     s = new_space()
-    _addp(s.btm, "a/", "(foo 1)"); _addp(s.btm, "a/", "(bar 1)")
-    _addp(s.btm, "b/", "(foo 2)"); _addp(s.btm, "b/", "(bar 2)")
+    _addp(s.btm, "a/", "(foo 1)");
+    _addp(s.btm, "a/", "(bar 1)")
+    _addp(s.btm, "b/", "(foo 2)");
+    _addp(s.btm, "b/", "(bar 2)")
     pat = sexpr_to_expr("(, (foo \$x) (bar \$x))")
 
     function joins(prefix)
         out = String[]
-        space_query_multi_at(s.btm, Vector{UInt8}(prefix), pat, (b, path) -> begin
-            buf = path isa MORK.Expr ? path.buf : collect(UInt8, path)
-            push!(out, expr_serialize(buf)); true
-        end)
+        space_query_multi_at(
+            s.btm,
+            Vector{UInt8}(prefix),
+            pat,
+            (b, path) -> begin
+                buf = path isa MORK.Expr ? path.buf : collect(UInt8, path)
+                push!(out, expr_serialize(buf));
+                true
+            end
+        )
         sort!(out)
     end
 
@@ -86,10 +94,13 @@ end
 @testset "prefix-scoped calculus — empty prefix == root calculus" begin
     # Sanity: empty prefix delegates to space_metta_calculus! (root path).
     s = new_space()
-    space_add_all_sexpr!(s, """
-    (item p) (item q)
-    (exec 0 (, (item \$v)) (, (seen \$v)))
-    """)
+    space_add_all_sexpr!(
+        s,
+        """
+(item p) (item q)
+(exec 0 (, (item \$v)) (, (seen \$v)))
+"""
+    )
     n = space_metta_calculus_in_prefix!(s, UInt8[], 1000)
     @test n >= 1
     out = space_dump_all_sexpr(s)

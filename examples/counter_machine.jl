@@ -21,7 +21,9 @@ using MORK
 println("=== Counter Machine: Peano counting to 5 ===\n")
 
 s = new_space()
-space_add_all_sexpr!(s, raw"""
+space_add_all_sexpr!(
+    s,
+    raw"""
 ; Peano successor relation
 (succ Z (S Z))
 (succ (S Z) (S (S Z)))
@@ -37,7 +39,8 @@ space_add_all_sexpr!(s, raw"""
            (, (exec $k $p0 $t0) (exec tick $p1 $t1)))
 
 (count Z)
-""")
+"""
+)
 
 cm_steps = space_metta_calculus!(s, 999)
 result = space_dump_all_sexpr(s)
@@ -53,7 +56,9 @@ println("=== Process Calculus: concurrent IC/R machine ===\n")
 # Two agents sharing a counter, each incrementing/decrementing via R rules
 
 s2 = new_space()
-space_add_all_sexpr!(s2, raw"""
+space_add_all_sexpr!(
+    s2,
+    raw"""
 ; IC: InterChange counter between agents 0 and 1
 ; (IC x y c) = agent x sends count c to agent y
 (exec (IC 0 1 (S (S Z)))
@@ -69,13 +74,17 @@ space_add_all_sexpr!(s2, raw"""
 ; R: reset agent back to active state
 (exec (R 0) (, (exec (R 0) $p $t)) (, (exec 0 $p $t)))
 (exec (R 1) (, (exec (R 1) $p $t)) (, (exec 1 $p $t)))
-""")
+"""
+)
 
 pc_steps = space_metta_calculus!(s2, 100)
 result2 = space_dump_all_sexpr(s2)
 results = filter(l -> startswith(l, "(! result"), split(result2, "\n"))
 println("After $pc_steps steps: $(length(results)) result atoms produced")
-for r in results[1:min(3, end)]; println("  $r"); end
+for r in results[1:min(3, end)]
+    ;
+    println("  $r");
+end
 println("PASS: process calculus IC/R machine ran successfully")
 
 println("""

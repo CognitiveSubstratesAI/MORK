@@ -123,20 +123,36 @@ const SUITE = BenchmarkGroup()
 
 # space: measure only calculus (setup excluded from timing)
 SUITE["space"] = BenchmarkGroup(["calculus"])
-SUITE["space"]["ground_match_200"]    = @benchmarkable run_calculus(s, 999_999) setup=(s=setup_ground_space(200))
-SUITE["space"]["two_source_10x10"]    = @benchmarkable run_calculus(s, 999_999) setup=(s=setup_two_source_space(10))
-SUITE["space"]["float_sinks_fsum_50"] = @benchmarkable run_calculus(s, 999_999) setup=(s=setup_float_sink_space(50))
-SUITE["space"]["chain_100_steps"]     = @benchmarkable run_calculus(s, 100)     setup=(s=setup_chain_space())
-SUITE["space"]["build_200_atoms"]     = @benchmarkable setup_ground_space(200)
+SUITE["space"]["ground_match_200"] = @benchmarkable run_calculus(s, 999_999) setup=(
+    s=setup_ground_space(200)
+)
+SUITE["space"]["two_source_10x10"] = @benchmarkable run_calculus(s, 999_999) setup=(
+    s=setup_two_source_space(10)
+)
+SUITE["space"]["float_sinks_fsum_50"] = @benchmarkable run_calculus(s, 999_999) setup=(
+    s=setup_float_sink_space(50)
+)
+SUITE["space"]["chain_100_steps"] = @benchmarkable run_calculus(s, 100) setup=(
+    s=setup_chain_space()
+)
+SUITE["space"]["build_200_atoms"] = @benchmarkable setup_ground_space(200)
 
 # pathmap: core trie ops
 SUITE["pathmap"] = BenchmarkGroup(["trie"])
-SUITE["pathmap"]["insert_1k"]            = @benchmarkable insert_1k()
-SUITE["pathmap"]["lookup_1k"]            = @benchmarkable lookup_1k(m) setup=(m=setup_pm_1k())
-SUITE["pathmap"]["pjoin_500"]            = @benchmarkable pjoin(a, b)  setup=((a,b)=setup_pm_500_pair())
-SUITE["pathmap"]["psubtract_500"]        = @benchmarkable psubtract(a, b) setup=((a,b)=setup_pm_500_overlap())
-SUITE["pathmap"]["serialize_100"]        = @benchmarkable serialize_100(m)  setup=(m=setup_pm_100_bool())
-SUITE["pathmap"]["deserialize_100"]      = @benchmarkable deserialize_100(io) setup=(io=setup_serialized_io(100))
+SUITE["pathmap"]["insert_1k"] = @benchmarkable insert_1k()
+SUITE["pathmap"]["lookup_1k"] = @benchmarkable lookup_1k(m) setup=(m=setup_pm_1k())
+SUITE["pathmap"]["pjoin_500"] = @benchmarkable pjoin(a, b) setup=(
+    (a, b)=setup_pm_500_pair()
+)
+SUITE["pathmap"]["psubtract_500"] = @benchmarkable psubtract(a, b) setup=(
+    (a, b)=setup_pm_500_overlap()
+)
+SUITE["pathmap"]["serialize_100"] = @benchmarkable serialize_100(m) setup=(
+    m=setup_pm_100_bool()
+)
+SUITE["pathmap"]["deserialize_100"] = @benchmarkable deserialize_100(io) setup=(
+    io=setup_serialized_io(100)
+)
 
 # expr: unification patterns
 SUITE["expr"] = BenchmarkGroup(["unification"])
@@ -170,8 +186,8 @@ if abspath(PROGRAM_FILE) == @__FILE__
         for (name, trial) in sort(collect(grp_results); by=first)
             m = median(trial)
             println(rpad("  $name", 34),
-                    rpad(BenchmarkTools.prettytime(m.time), 14),
-                    "$(m.allocs) allocs  $(BenchmarkTools.prettymemory(m.memory))")
+                rpad(BenchmarkTools.prettytime(m.time), 14),
+                "$(m.allocs) allocs  $(BenchmarkTools.prettymemory(m.memory))")
         end
     end
 end

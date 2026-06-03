@@ -37,8 +37,8 @@ end
 
 """Build clique-detection query for k nodes. Mirrors clique_query() in main.rs."""
 function clique_query(k::Int)
-    edges = join(["(edge \$x$i \$x$j)" for i in 0:k-1 for j in i+1:k-1], " ")
-    vars  = join(["\$x$i" for i in 0:k-1], " ")
+    edges = join(["(edge \$x$i \$x$j)" for i in 0:(k - 1) for j in (i + 1):(k - 1)], " ")
+    vars = join(["\$x$i" for i in 0:(k - 1)], " ")
     "(exec 0 (, $edges) (, ($k-clique $vars)))"
 end
 
@@ -102,7 +102,10 @@ end setup=(s=setup_transitive_space(200, 600)) seconds=15
 
 SUITE_CANONICAL["transitive"]["transitive_detect"] = @benchmarkable begin
     s2 = deepcopy(s)
-    space_add_all_sexpr!(s2, raw"(exec 0 (, (edge $x $y) (edge $y $z) (edge $z $w)) (, (dtrans $x $y $z $w)))")
+    space_add_all_sexpr!(
+        s2,
+        raw"(exec 0 (, (edge $x $y) (edge $y $z) (edge $z $w)) (, (dtrans $x $y $z $w)))"
+    )
     space_metta_calculus!(s2, 999_999)
 end setup=(s=setup_transitive_space(200, 600)) seconds=15
 
@@ -193,7 +196,7 @@ end seconds=15
 # Upstream: exponential_fringe(steps) — layered growth with successor chain
 
 function exponential_fringe_src(n_layers::Int)
-    succs = join(["(succ $i $(i+1))" for i in 0:n_layers-1], "\n")
+    succs = join(["(succ $i $(i+1))" for i in 0:(n_layers - 1)], "\n")
     """
 $succs
 ((step meet \$k)
@@ -287,14 +290,19 @@ end setup=(src=process_calculus_src(3, 1)) seconds=15
 # Upstream: bench_finite_domain(10000) — 10k 4-arg constraint evaluations on 64-element domain
 # Scaled: 500 inputs (vs 10k) for fast CI
 
-const FD_SYMS = vcat(string.(0:9), ["?","@"], collect(string.(collect('A':'Z'))), collect(string.(collect('a':'z'))))  # 64 symbols
+const FD_SYMS = vcat(
+    string.(0:9),
+    ["?", "@"],
+    collect(string.(collect('A':'Z'))),
+    collect(string.(collect('a':'z')))
+)  # 64 symbols
 
 function finite_domain_src(n_inputs::Int)
     rng = SeededRNG()
     DS = 64
     function bop(sym, f)
         lines = String[]
-        for x in 0:DS-1, y in 0:DS-1
+        for x in 0:(DS - 1), y in 0:(DS - 1)
             z = f(x, y)
             z == typemax(Int) && continue
             push!(lines, "($(FD_SYMS[x+1]) $sym $(FD_SYMS[y+1]) = $(FD_SYMS[z+1]))")
@@ -303,24 +311,31 @@ function finite_domain_src(n_inputs::Int)
     end
     function uop(sym, f)
         lines = String[]
-        for x in 0:DS-1
+        for x in 0:(DS - 1)
             z = f(x)
             z == typemax(Int) && continue
             push!(lines, "($sym $(FD_SYMS[x+1]) = $(FD_SYMS[z+1]))")
         end
         join(lines, "\n")
     end
-    ops = join([
-        bop("+",  (x,y) -> (x+y) % DS),
-        bop("-",  (x,y) -> mod(x-y, DS)),
-        bop("*",  (x,y) -> (x*y) % DS),
-        bop("/",  (x,y) -> y==0 ? typemax(Int) : x÷y),
-        bop("\\/", (x,y) -> max(x,y)),
-        bop("/\\", (x,y) -> min(x,y)),
-        uop("sq", x -> (x*x) % DS),
-        uop("sqrt", x -> isqrt(x)),
-    ], "\n")
-    args = join(["(args $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]))" for _ in 1:n_inputs], "\n")
+    ops = join(
+        [
+            bop("+", (x, y) -> (x+y) % DS),
+            bop("-", (x, y) -> mod(x-y, DS)),
+            bop("*", (x, y) -> (x*y) % DS),
+            bop("/", (x, y) -> y==0 ? typemax(Int) : x÷y),
+            bop("\\/", (x, y) -> max(x, y)),
+            bop("/\\", (x, y) -> min(x, y)),
+            uop("sq", x -> (x*x) % DS),
+            uop("sqrt", x -> isqrt(x))
+        ], "\n")
+    args = join(
+        [
+            "(args $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]) $(FD_SYMS[next_rand!(rng,DS)+1]))"
+            for _ in 1:n_inputs
+        ],
+        "\n"
+    )
     ops * "\n" * args * "\n" *
     raw"(exec 0 (, (args $x0 $y0 $x1 $y1) ($x0 /\ $x1 = $xl) ($x0 \/ $x1 = $xh) ($y0 /\ $y1 = $yl) ($y0 \/ $y1 = $yh) ($xh - $xl = $dx) ($yh - $yl = $dy) (sq $dx = $dx2) (sq $dy = $dy2) ($dx2 + $dy2 = $d2) (sqrt $d2 = $d)) (, (res $d)))"
 end
@@ -350,8 +365,8 @@ if abspath(PROGRAM_FILE) == @__FILE__
         for (name, trial) in sort(collect(grp_results); by=first)
             m = median(trial)
             println(rpad("  $name", 34),
-                    rpad(BenchmarkTools.prettytime(m.time), 14),
-                    "$(m.allocs) allocs")
+                rpad(BenchmarkTools.prettytime(m.time), 14),
+                "$(m.allocs) allocs")
         end
     end
 end

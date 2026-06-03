@@ -45,10 +45,10 @@ const PM = PathMap.PathMap
             @test invert_identity(AlgResIdentity(SELF_IDENT)).mask == COUNTER_IDENT
             @test invert_identity(AlgResIdentity(COUNTER_IDENT)).mask == SELF_IDENT
             @test invert_identity(AlgResIdentity(SELF_IDENT | COUNTER_IDENT)).mask ==
-                  (SELF_IDENT | COUNTER_IDENT)
+                (SELF_IDENT | COUNTER_IDENT)
             # Higher bits are removed
             @test invert_identity(AlgResIdentity(UInt64(0xFF))).mask ==
-                  (SELF_IDENT | COUNTER_IDENT)
+                (SELF_IDENT | COUNTER_IDENT)
         end
 
         @testset "map / map_into_option / into_option / unwrap_or_else" begin
@@ -61,8 +61,12 @@ const PM = PathMap.PathMap
             @test map_into_option(AlgResElement(42), i -> 99) == 42
             @test map_into_option(AlgResNone(), i -> 99) === nothing
             # Identity(SELF_IDENT) → trailing_zeros(1) == 0 → ident_f(0)
-            @test map_into_option(AlgResIdentity(SELF_IDENT), i -> i == 0 ? "self" : "other") == "self"
-            @test map_into_option(AlgResIdentity(COUNTER_IDENT), i -> i == 1 ? "other" : "self") == "other"
+            @test map_into_option(
+                AlgResIdentity(SELF_IDENT), i -> i == 0 ? "self" : "other"
+            ) == "self"
+            @test map_into_option(
+                AlgResIdentity(COUNTER_IDENT), i -> i == 1 ? "other" : "self"
+            ) == "other"
 
             # into_option with idents table (1-indexed in Julia, 0-indexed in Rust)
             @test into_option(AlgResElement(42), ["a", "b"]) == 42
@@ -86,19 +90,30 @@ const PM = PathMap.PathMap
 
         @testset "merge_status" begin
             # All 9 cells of the merge table from upstream ring.rs:374-396
-            @test merge_status(ALG_STATUS_NONE,     ALG_STATUS_NONE,     true, true)  == ALG_STATUS_NONE
-            @test merge_status(ALG_STATUS_NONE,     ALG_STATUS_ELEMENT,  true, true)  == ALG_STATUS_ELEMENT
-            @test merge_status(ALG_STATUS_NONE,     ALG_STATUS_IDENTITY, true, true)  == ALG_STATUS_IDENTITY
-            @test merge_status(ALG_STATUS_NONE,     ALG_STATUS_IDENTITY, false, true) == ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_NONE, ALG_STATUS_NONE, true, true) ==
+                ALG_STATUS_NONE
+            @test merge_status(ALG_STATUS_NONE, ALG_STATUS_ELEMENT, true, true) ==
+                ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_NONE, ALG_STATUS_IDENTITY, true, true) ==
+                ALG_STATUS_IDENTITY
+            @test merge_status(ALG_STATUS_NONE, ALG_STATUS_IDENTITY, false, true) ==
+                ALG_STATUS_ELEMENT
 
-            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_ELEMENT,  true, true)  == ALG_STATUS_ELEMENT
-            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_IDENTITY, true, true)  == ALG_STATUS_IDENTITY
-            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_NONE,     true, true)  == ALG_STATUS_IDENTITY
-            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_NONE,     true, false) == ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_ELEMENT, true, true) ==
+                ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_IDENTITY, true, true) ==
+                ALG_STATUS_IDENTITY
+            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_NONE, true, true) ==
+                ALG_STATUS_IDENTITY
+            @test merge_status(ALG_STATUS_IDENTITY, ALG_STATUS_NONE, true, false) ==
+                ALG_STATUS_ELEMENT
 
-            @test merge_status(ALG_STATUS_ELEMENT,  ALG_STATUS_NONE,     true, true)  == ALG_STATUS_ELEMENT
-            @test merge_status(ALG_STATUS_ELEMENT,  ALG_STATUS_IDENTITY, true, true)  == ALG_STATUS_ELEMENT
-            @test merge_status(ALG_STATUS_ELEMENT,  ALG_STATUS_ELEMENT,  true, true)  == ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_ELEMENT, ALG_STATUS_NONE, true, true) ==
+                ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_ELEMENT, ALG_STATUS_IDENTITY, true, true) ==
+                ALG_STATUS_ELEMENT
+            @test merge_status(ALG_STATUS_ELEMENT, ALG_STATUS_ELEMENT, true, true) ==
+                ALG_STATUS_ELEMENT
         end
 
         @testset "status + from_status roundtrip" begin
@@ -230,23 +245,23 @@ const PM = PathMap.PathMap
         end
 
         @testset "Dict lattice (ports ring.rs HashMap SetLattice)" begin
-            a = Dict{String,Int}("x"=>1, "y"=>2)
-            b = Dict{String,Int}("x"=>3, "z"=>4)
+            a = Dict{String, Int}("x"=>1, "y"=>2)
+            b = Dict{String, Int}("x"=>3, "z"=>4)
             r = pjoin(a, b)
             @test r isa AlgResElement
             d = r.value
-            @test d["x"] == max(1,3)   # max via pjoin on Int
+            @test d["x"] == max(1, 3)   # max via pjoin on Int
             @test d["y"] == 2           # only in a
             @test d["z"] == 4           # only in b
 
             s = pmeet(a, b)
             @test s isa AlgResElement || s isa AlgResNone
             # meet of disjoint keys = empty → None
-            a2 = Dict{String,Int}("p"=>1)
-            b2 = Dict{String,Int}("q"=>2)
+            a2 = Dict{String, Int}("p"=>1)
+            b2 = Dict{String, Int}("q"=>2)
             @test pmeet(a2, b2) isa AlgResNone
 
-            sub = psubtract(a, Dict{String,Int}("x"=>1))
+            sub = psubtract(a, Dict{String, Int}("x"=>1))
             # subtracting x=1 from x=1 → None for that key; only y remains
             @test sub isa AlgResElement
             @test haskey(sub.value, "y")
@@ -254,11 +269,11 @@ const PM = PathMap.PathMap
         end
 
         @testset "Set lattice (ports ring.rs HashSet SetLattice)" begin
-            a = Set(["a","b","c"])
-            b = Set(["b","c","d"])
+            a = Set(["a", "b", "c"])
+            b = Set(["b", "c", "d"])
             r = pjoin(a, b)
             @test r isa AlgResElement
-            @test r.value == Set(["a","b","c","d"])
+            @test r.value == Set(["a", "b", "c", "d"])
 
             s = pmeet(a, b)
             @test s isa AlgResElement
@@ -273,7 +288,7 @@ const PM = PathMap.PathMap
 
         @testset "Utils — Bits4 primitives" begin
             empty = MORK.EMPTY_BITS4
-            full  = MORK.FULL_BITS4
+            full = MORK.FULL_BITS4
             @test count_bits(empty) == 0
             @test count_bits(full) == 256
             @test is_empty_mask(empty)
@@ -281,7 +296,7 @@ const PM = PathMap.PathMap
 
             # Test bits at word boundaries
             for b in (UInt8(0), UInt8(63), UInt8(64), UInt8(127),
-                      UInt8(128), UInt8(191), UInt8(192), UInt8(255))
+                UInt8(128), UInt8(191), UInt8(192), UInt8(255))
                 m = with_bit_set(empty, b)
                 @test test_bit(m, b)
                 @test count_bits(m) == 1
@@ -355,18 +370,22 @@ const PM = PathMap.PathMap
                 @test cnt == length(set_bits)
             end
 
-            do_test(ByteMask((
-                0b1010010010010010010010000000000000000000000000000000000000010101,
-                0b0000000000000000000000000000000000000000100000000000000000000000,
-                0b0000000000000000000000000000000000000000000000000000000000000000,
-                0b1001000000000000000000000000000000000000000000000000000000000001,
-            )))
-            do_test(ByteMask((
-                0b0000000000000000000000000000000000000000000000000000000000000000,
-                0b0000000000000000000000000000000000000000100000000000000000000000,
-                0b0000000000000000000000000000000000000000000000000000000000000000,
-                0b1001000000000000000000000000000000000000000000000000000000000001,
-            )))
+            do_test(
+                ByteMask((
+                    0b1010010010010010010010000000000000000000000000000000000000010101,
+                    0b0000000000000000000000000000000000000000100000000000000000000000,
+                    0b0000000000000000000000000000000000000000000000000000000000000000,
+                    0b1001000000000000000000000000000000000000000000000000000000000001
+                ))
+            )
+            do_test(
+                ByteMask((
+                    0b0000000000000000000000000000000000000000000000000000000000000000,
+                    0b0000000000000000000000000000000000000000100000000000000000000000,
+                    0b0000000000000000000000000000000000000000000000000000000000000000,
+                    0b1001000000000000000000000000000000000000000000000000000000000001
+                ))
+            )
             do_test(bytemask_full())
         end
 
@@ -389,17 +408,17 @@ const PM = PathMap.PathMap
                 0b1111111111111111111111111111111111111111111111111111110000000000,
                 0b0000000000000000000000000000000000000000000000000000000000111111,
                 UInt64(0),
-                UInt64(0),
+                UInt64(0)
             )
             @test m.bits == expected_bits
 
             @test from_range_full() == bytemask_full()
             @test from_range(0:127) == ByteMask((
-                typemax(UInt64), typemax(UInt64), UInt64(0), UInt64(0),
+                typemax(UInt64), typemax(UInt64), UInt64(0), UInt64(0)
             ))
             @test from_range(10:255) == ByteMask((
                 0b1111111111111111111111111111111111111111111111111111110000000000,
-                typemax(UInt64), typemax(UInt64), typemax(UInt64),
+                typemax(UInt64), typemax(UInt64), typemax(UInt64)
             ))
 
             # Empty / degenerate ranges
@@ -417,10 +436,10 @@ const PM = PathMap.PathMap
             m = set(m, UInt8(200))
 
             # Count set bits strictly below each threshold
-            @test index_of(m, UInt8(0))   == UInt8(0)
-            @test index_of(m, UInt8(1))   == UInt8(0)     # nothing below 1
-            @test index_of(m, UInt8(2))   == UInt8(1)     # {1}
-            @test index_of(m, UInt8(6))   == UInt8(2)     # {1, 5}
+            @test index_of(m, UInt8(0)) == UInt8(0)
+            @test index_of(m, UInt8(1)) == UInt8(0)     # nothing below 1
+            @test index_of(m, UInt8(2)) == UInt8(1)     # {1}
+            @test index_of(m, UInt8(6)) == UInt8(2)     # {1, 5}
             @test index_of(m, UInt8(101)) == UInt8(3)     # {1, 5, 100}
             @test index_of(m, UInt8(255)) == UInt8(4)     # all four
         end
@@ -496,10 +515,14 @@ const PM = PathMap.PathMap
 
         @testset "Utils — ByteMask Lattice (pjoin / pmeet / psubtract)" begin
             a = ByteMask()
-            a = set(a, UInt8(1)); a = set(a, UInt8(3)); a = set(a, UInt8(5))
+            a = set(a, UInt8(1));
+            a = set(a, UInt8(3));
+            a = set(a, UInt8(5))
 
             b = ByteMask()
-            b = set(b, UInt8(3)); b = set(b, UInt8(5)); b = set(b, UInt8(7))
+            b = set(b, UInt8(3));
+            b = set(b, UInt8(5));
+            b = set(b, UInt8(7))
 
             # pjoin = union; has both a's and b's bits
             r = pjoin(a, b)
@@ -566,16 +589,16 @@ const PM = PathMap.PathMap
         end
 
         @testset "Ints — PathInteger alias" begin
-            @test UInt8  <: PathInteger
+            @test UInt8 <: PathInteger
             @test UInt16 <: PathInteger
             @test UInt32 <: PathInteger
             @test UInt64 <: PathInteger
             @test UInt128 <: PathInteger
             # sizeof recovers NUM_SIZE
-            @test sizeof(UInt8)   == 1
-            @test sizeof(UInt16)  == 2
-            @test sizeof(UInt32)  == 4
-            @test sizeof(UInt64)  == 8
+            @test sizeof(UInt8) == 1
+            @test sizeof(UInt16) == 2
+            @test sizeof(UInt32) == 4
+            @test sizeof(UInt64) == 8
             @test sizeof(UInt128) == 16
         end
 
@@ -584,7 +607,7 @@ const PM = PathMap.PathMap
             is_orig = UInt64[10, 30, 100]
             is_decoded = zeros(UInt64, 3)
             weave = UInt8[]
-            bob   = UInt8[]
+            bob = UInt8[]
             indices_to_weave!(weave, is_orig, 8)
             weave_to_indices!(is_decoded, weave)
             @test is_decoded == is_orig
@@ -598,7 +621,7 @@ const PM = PathMap.PathMap
             is_orig = UInt64[3333, 30, 1000]
             is_decoded = zeros(UInt64, 3)
             weave = UInt8[]
-            bob   = UInt8[]
+            bob = UInt8[]
             indices_to_weave!(weave, is_orig, 8)
             weave_to_indices!(is_decoded, weave)
             @test is_decoded == is_orig
@@ -663,9 +686,9 @@ const PM = PathMap.PathMap
 
         @testset "Ints — BOB across integer widths" begin
             for T in (UInt8, UInt16, UInt32, UInt64, UInt128)
-                orig    = T[T(5), T(10), T(17)]
+                orig = T[T(5), T(10), T(17)]
                 decoded = zeros(T, 3)
-                bob     = UInt8[]
+                bob = UInt8[]
                 indices_to_bob!(bob, orig)
                 bob_to_indices!(decoded, bob)
                 @test decoded == orig
@@ -674,9 +697,9 @@ const PM = PathMap.PathMap
 
         @testset "Ints — weave across integer widths" begin
             for T in (UInt8, UInt16, UInt32, UInt64)
-                orig    = T[T(5), T(10), T(17), T(255)]
+                orig = T[T(5), T(10), T(17), T(255)]
                 decoded = zeros(T, 4)
-                weave   = UInt8[]
+                weave = UInt8[]
                 indices_to_weave!(weave, orig, sizeof(T))
                 weave_to_indices!(decoded, weave)
                 @test decoded == orig
@@ -686,19 +709,21 @@ const PM = PathMap.PathMap
         @testset "TrieNode — constants" begin
             # Port of trie_node.rs: MAX_NODE_KEY_BYTES / NODE_ITER_INVALID / NODE_ITER_FINISHED
             @test MAX_NODE_KEY_BYTES == 48
-            @test NODE_ITER_INVALID  == typemax(UInt128)
+            @test NODE_ITER_INVALID == typemax(UInt128)
             @test NODE_ITER_FINISHED == typemax(UInt128) - UInt128(1)
-            @test NODE_ITER_INVALID  > NODE_ITER_FINISHED
+            @test NODE_ITER_INVALID > NODE_ITER_FINISHED
 
             # Node tag constants match upstream
-            @test EMPTY_NODE_TAG      == 0
+            @test EMPTY_NODE_TAG == 0
             @test DENSE_BYTE_NODE_TAG == 1
-            @test LINE_LIST_NODE_TAG  == 2
-            @test CELL_BYTE_NODE_TAG  == 3
-            @test TINY_REF_NODE_TAG   == 4
+            @test LINE_LIST_NODE_TAG == 2
+            @test CELL_BYTE_NODE_TAG == 3
+            @test TINY_REF_NODE_TAG == 4
             # All distinct
-            @test length(Set([EMPTY_NODE_TAG, DENSE_BYTE_NODE_TAG, LINE_LIST_NODE_TAG,
-                              CELL_BYTE_NODE_TAG, TINY_REF_NODE_TAG])) == 5
+            @test length(
+                Set([EMPTY_NODE_TAG, DENSE_BYTE_NODE_TAG, LINE_LIST_NODE_TAG,
+                    CELL_BYTE_NODE_TAG, TINY_REF_NODE_TAG])
+            ) == 5
         end
 
         @testset "TrieNode — TrieNodeODRc empty sentinel" begin
@@ -758,7 +783,7 @@ const PM = PathMap.PathMap
             @test node_contains_val(e, key) == false
             @test node_get_val(e, key) === nothing
             @test node_get_val_mut(e, key) === nothing
-            @test node_val_count(e, Dict{UInt64,Int}()) == 0
+            @test node_val_count(e, Dict{UInt64, Int}()) == 0
             @test node_goat_val_count(e) == 0
             @test count_branches(e, key) == 0
             @test prior_branch_key(e, key) == UInt8[]
@@ -874,8 +899,8 @@ const PM = PathMap.PathMap
             @test !is_used_0(n) && !is_used_1(n)
             @test key_len_0(n) == 0 && key_len_1(n) == 0
             @test used_slot_count(n) == 0
-            @test node_contains_val(n, UInt8[1,2,3]) == false
-            @test node_get_val(n, UInt8[1,2,3]) === nothing
+            @test node_contains_val(n, UInt8[1, 2, 3]) == false
+            @test node_get_val(n, UInt8[1, 2, 3]) === nothing
             @test node_get_child(n, UInt8[1]) === nothing
         end
 
@@ -1067,7 +1092,7 @@ const PM = PathMap.PathMap
                 r = node_get_child(cur, remaining)
                 r === nothing && break
                 consumed, child_rc = r
-                remaining = remaining[(consumed+1):end]
+                remaining = remaining[(consumed + 1):end]
                 cur = as_tagged(child_rc)
                 levels += 1
             end
@@ -1179,7 +1204,8 @@ const PM = PathMap.PathMap
             tiny = TinyRefNode(false, collect(UInt8, "xyz"), ValOrChild(2), GlobalAlloc())
             r = pjoin_dyn(lln, tiny)
             @test r isa AlgResElement
-            m = PM{Int}(); m.root = r.value
+            m = PM{Int}();
+            m.root = r.value
             @test get_val_at(m, collect(UInt8, "abc")) == 1
             @test get_val_at(m, collect(UInt8, "xyz")) == 2
         end
@@ -1311,16 +1337,22 @@ const PM = PathMap.PathMap
             n = LineListNode{Int, GlobalAlloc}(GlobalAlloc())
             node_set_val!(n, UInt8[0x61], 5)
             # pmeet of node with itself (same content) via PathMap
-            m1 = PM{Int}(); set_val_at!(m1, "a", 5)
-            m2 = PM{Int}(); set_val_at!(m2, "a", 5)
+            m1 = PM{Int}();
+            set_val_at!(m1, "a", 5)
+            m2 = PM{Int}();
+            set_val_at!(m2, "a", 5)
             r = pmeet(m1.root, m2.root)
             @test r isa AlgResIdentity || (r isa AlgResElement && get_val_at(m1, "a") == 5)
         end
 
         @testset "LineListNode — pmeet_dyn intersection: common key wins" begin
             # a has "a"→3, "b"→7 ; b has "a"→5, "c"→9 ; meet = "a"→min(3,5)=3
-            m1 = PM{Int}(); set_val_at!(m1, "a", 3); set_val_at!(m1, "b", 7)
-            m2 = PM{Int}(); set_val_at!(m2, "a", 5); set_val_at!(m2, "c", 9)
+            m1 = PM{Int}();
+            set_val_at!(m1, "a", 3);
+            set_val_at!(m1, "b", 7)
+            m2 = PM{Int}();
+            set_val_at!(m2, "a", 5);
+            set_val_at!(m2, "c", 9)
             r = pmeet(m1.root, m2.root)
             # result contains only key "a" with value min(3,5)=3
             @test r isa AlgResElement || r isa AlgResIdentity
@@ -1336,8 +1368,10 @@ const PM = PathMap.PathMap
         end
 
         @testset "LineListNode — pmeet_dyn disjoint keys → None" begin
-            m1 = PM{Int}(); set_val_at!(m1, "a", 1)
-            m2 = PM{Int}(); set_val_at!(m2, "b", 2)
+            m1 = PM{Int}();
+            set_val_at!(m1, "a", 1)
+            m2 = PM{Int}();
+            set_val_at!(m2, "b", 2)
             r = pmeet(m1.root, m2.root)
             @test r isa AlgResNone
         end
@@ -1456,24 +1490,26 @@ const PM = PathMap.PathMap
     end
 
     @testset "BridgeNode (ports bridge_node.rs)" begin
-        V = Int; A = GlobalAlloc; alloc = GlobalAlloc()
+        V = Int;
+        A = GlobalAlloc;
+        alloc = GlobalAlloc()
 
         @testset "BridgeNode — short key val round-trip" begin
-            n = BridgeNode{V,A}(alloc)
+            n = BridgeNode{V, A}(alloc)
             @test node_is_empty(n)
-            r = node_set_val!(n, collect(UInt8,"abc"), 42)
+            r = node_set_val!(n, collect(UInt8, "abc"), 42)
             @test !node_is_empty(n)
-            @test node_contains_val(n, collect(UInt8,"abc"))
-            @test node_get_val(n, collect(UInt8,"abc")) == 42
-            @test node_get_val(n, collect(UInt8,"xy"))  === nothing
+            @test node_contains_val(n, collect(UInt8, "abc"))
+            @test node_get_val(n, collect(UInt8, "abc")) == 42
+            @test node_get_val(n, collect(UInt8, "xy")) === nothing
         end
 
         @testset "BridgeNode — short key child round-trip" begin
-            child = LineListNode{V,A}(alloc)
+            child = LineListNode{V, A}(alloc)
             child_rc = TrieNodeODRc(child, alloc)
-            n = BridgeNode{V,A}(alloc)
-            node_set_branch!(n, collect(UInt8,"a"), child_rc)
-            r = node_get_child(n, collect(UInt8,"a"))
+            n = BridgeNode{V, A}(alloc)
+            node_set_branch!(n, collect(UInt8, "a"), child_rc)
+            r = node_get_child(n, collect(UInt8, "a"))
             @test r !== nothing
             consumed, rc = r
             @test consumed == 1
@@ -1496,18 +1532,18 @@ const PM = PathMap.PathMap
         end
 
         @testset "BridgeNode — remove val" begin
-            n = BridgeNode{V,A}(alloc)
-            node_set_val!(n, collect(UInt8,"k"), 5)
-            old = node_remove_val!(n, collect(UInt8,"k"), false)
+            n = BridgeNode{V, A}(alloc)
+            node_set_val!(n, collect(UInt8, "k"), 5)
+            old = node_remove_val!(n, collect(UInt8, "k"), false)
             @test old == 5
             @test node_is_empty(n)
         end
 
         @testset "BridgeNode — node_add_payload! on DenseByteNode" begin
-            d = DenseByteNode{V,A}(alloc)
-            node_add_payload!(d, collect(UInt8,"ax"), false, ValOrChild(1))
-            node_add_payload!(d, collect(UInt8,"by"), false, ValOrChild(2))
-            @test node_get_val(d, collect(UInt8,"a")) === nothing  # 'a' is a child prefix
+            d = DenseByteNode{V, A}(alloc)
+            node_add_payload!(d, collect(UInt8, "ax"), false, ValOrChild(1))
+            node_add_payload!(d, collect(UInt8, "by"), false, ValOrChild(2))
+            @test node_get_val(d, collect(UInt8, "a")) === nothing  # 'a' is a child prefix
             # Navigate: child at 'a' → val at 'x'
             res = node_get_child(d, UInt8[UInt8('a')])
             @test res !== nothing
@@ -1763,18 +1799,18 @@ const PM = PathMap.PathMap
         alloc = GlobalAlloc()
 
         @testset "Dense × Empty → None" begin
-            m = PM{Int,GlobalAlloc}(alloc)
+            m = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m, UInt8[0x61], 1)
             set_val_at!(m, UInt8[0x62], 2)
             set_val_at!(m, UInt8[0x63], 3)
             # root should be DenseByteNode after 3 entries
-            e = EmptyNode{Int,GlobalAlloc}()
+            e = EmptyNode{Int, GlobalAlloc}()
             r = pmeet_dyn(as_tagged(m.root), e)
             @test r isa AlgResNone
         end
 
         @testset "Dense × Dense same node → Identity(SELF|COUNTER)" begin
-            m = PM{Int,GlobalAlloc}(alloc)
+            m = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m, UInt8[0x61], 1)
             set_val_at!(m, UInt8[0x62], 2)
             set_val_at!(m, UInt8[0x63], 3)
@@ -1784,11 +1820,11 @@ const PM = PathMap.PathMap
         end
 
         @testset "Dense × Dense overlap → common keys only" begin
-            m1 = PM{Int,GlobalAlloc}(alloc)
+            m1 = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m1, UInt8[0x61], 10)
             set_val_at!(m1, UInt8[0x62], 20)
             set_val_at!(m1, UInt8[0x63], 30)
-            m2 = PM{Int,GlobalAlloc}(alloc)
+            m2 = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m2, UInt8[0x62], 200)
             set_val_at!(m2, UInt8[0x63], 300)
             set_val_at!(m2, UInt8[0x64], 400)
@@ -1798,11 +1834,11 @@ const PM = PathMap.PathMap
         end
 
         @testset "Dense × Dense disjoint → None" begin
-            m1 = PM{Int,GlobalAlloc}(alloc)
+            m1 = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m1, UInt8[0x61], 1)
             set_val_at!(m1, UInt8[0x62], 2)
             set_val_at!(m1, UInt8[0x63], 3)
-            m2 = PM{Int,GlobalAlloc}(alloc)
+            m2 = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m2, UInt8[0x64], 4)
             set_val_at!(m2, UInt8[0x65], 5)
             set_val_at!(m2, UInt8[0x66], 6)
@@ -1811,11 +1847,11 @@ const PM = PathMap.PathMap
         end
 
         @testset "Dense × LineListNode (cross-type, delegates via invert)" begin
-            m = PM{Int,GlobalAlloc}(alloc)
+            m = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(m, UInt8[0x61], 10)
             set_val_at!(m, UInt8[0x62], 20)
             set_val_at!(m, UInt8[0x63], 30)
-            lln = LineListNode{Int,GlobalAlloc}(alloc)
+            lln = LineListNode{Int, GlobalAlloc}(alloc)
             node_set_val!(lln, UInt8[0x61], 10)
             r = pmeet_dyn(as_tagged(m.root), lln)
             # Dense × LLN delegates to LLN.pmeet_dyn(Dense).invert_identity
@@ -1829,14 +1865,14 @@ const PM = PathMap.PathMap
     # ================================================================
 
     @testset "Zipper and PathMap (ports pathmap/src/zipper.rs + trie_map.rs)" begin
-        V   = Int
-        A   = GlobalAlloc
+        V = Int
+        A = GlobalAlloc
         alloc = GlobalAlloc()
 
         # ---- node_along_path ----
 
         @testset "node_along_path — empty path returns root unchanged" begin
-            rc = TrieNodeODRc(LineListNode{V,A}(alloc), alloc)
+            rc = TrieNodeODRc(LineListNode{V, A}(alloc), alloc)
             node_set_val!(rc.node, UInt8[UInt8('a')], 1)
             final_rc, rem, val = node_along_path(rc, UInt8[], nothing)
             @test final_rc === rc
@@ -1846,10 +1882,10 @@ const PM = PathMap.PathMap
 
         @testset "node_along_path — traverse single slot" begin
             # root → child at key "ab"
-            child_n = LineListNode{V,A}(alloc)
+            child_n = LineListNode{V, A}(alloc)
             node_set_val!(child_n, UInt8[UInt8('c')], 99)
             child_rc = TrieNodeODRc(child_n, alloc)
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_branch!(root_n, collect(UInt8, "ab"), child_rc)
             root_rc = TrieNodeODRc(root_n, alloc)
 
@@ -1860,7 +1896,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "node_along_path — full key match returns value" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "hello"), 42)
             root_rc = TrieNodeODRc(root_n, alloc)
             # path exactly matches the key that leads to a value
@@ -1876,13 +1912,13 @@ const PM = PathMap.PathMap
 
         @testset "val_count_below_root — empty node" begin
             @test val_count_below_root(nothing) == 0
-            e = EmptyNode{V,A}()
-            cache = Dict{UInt64,Int}()
+            e = EmptyNode{V, A}()
+            cache = Dict{UInt64, Int}()
             @test node_val_count(e, cache) == 0
         end
 
         @testset "val_count_below_root — LineListNode with values" begin
-            n = LineListNode{V,A}(alloc)
+            n = LineListNode{V, A}(alloc)
             node_set_val!(n, UInt8[UInt8('a')], 1)
             node_set_val!(n, UInt8[UInt8('b')], 2)
             @test val_count_below_root(n) == 2
@@ -1891,7 +1927,7 @@ const PM = PathMap.PathMap
         # ---- ReadZipperCore construction ----
 
         @testset "ReadZipperCore — construct at root of empty map" begin
-            rc = TrieNodeODRc(LineListNode{V,A}(alloc), alloc)
+            rc = TrieNodeODRc(LineListNode{V, A}(alloc), alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
             @test zipper_at_root(z)
             @test isempty(zipper_path(z))
@@ -1900,7 +1936,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "ReadZipperCore — at_root after construction" begin
-            rc = TrieNodeODRc(LineListNode{V,A}(alloc), alloc)
+            rc = TrieNodeODRc(LineListNode{V, A}(alloc), alloc)
             node_set_val!(rc.node, UInt8[UInt8('x')], 10)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
             @test zipper_at_root(z)
@@ -1912,7 +1948,7 @@ const PM = PathMap.PathMap
 
         @testset "ReadZipperCore_at_path — positions at path 'a'" begin
             # Build: root → LineListNode with value at "a"
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, UInt8[UInt8('a')], 55)
             root_rc = TrieNodeODRc(root_n, alloc)
 
@@ -1928,7 +1964,7 @@ const PM = PathMap.PathMap
         # ---- descend / ascend navigation ----
 
         @testset "ReadZipperCore — descend_to and is_val" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, UInt8[UInt8('a'), UInt8('b')], 7)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
@@ -1941,7 +1977,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "ReadZipperCore — ascend after descend" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, UInt8[UInt8('x')], 3)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
@@ -1954,7 +1990,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "ReadZipperCore — ascend_byte" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "abc"), 11)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
@@ -1970,7 +2006,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "ReadZipperCore — reset!" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "hello"), 5)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
@@ -1984,7 +2020,7 @@ const PM = PathMap.PathMap
 
         @testset "ReadZipperCore — to_next_val iterates values in order" begin
             # Build a DenseByteNode with values at 'a', 'b', 'c'
-            n = DenseByteNode{V,A}(alloc)
+            n = DenseByteNode{V, A}(alloc)
             node_set_val!(n, UInt8[UInt8('a')], 1)
             node_set_val!(n, UInt8[UInt8('b')], 2)
             node_set_val!(n, UInt8[UInt8('c')], 3)
@@ -2000,14 +2036,14 @@ const PM = PathMap.PathMap
         end
 
         @testset "ReadZipperCore — to_next_val empty node yields nothing" begin
-            n = LineListNode{V,A}(alloc)
+            n = LineListNode{V, A}(alloc)
             rc = TrieNodeODRc(n, alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
             @test !zipper_to_next_val!(z)
         end
 
         @testset "ReadZipperCore — to_next_val single value" begin
-            n = LineListNode{V,A}(alloc)
+            n = LineListNode{V, A}(alloc)
             node_set_val!(n, UInt8[UInt8('z')], 99)
             rc = TrieNodeODRc(n, alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
@@ -2038,10 +2074,10 @@ const PM = PathMap.PathMap
 
         @testset "PathMap — manual root population then read" begin
             # Manually build a PathMap's root node (bypass write zipper)
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "hello"), 42)
             root_rc = TrieNodeODRc(root_n, alloc)
-            m = PM{V,A}(root_rc, nothing, alloc)
+            m = PM{V, A}(root_rc, nothing, alloc)
 
             @test get_val_at(m, collect(UInt8, "hello")) == 42
             @test get_val_at(m, collect(UInt8, "world")) === nothing
@@ -2050,10 +2086,10 @@ const PM = PathMap.PathMap
         end
 
         @testset "PathMap — read_zipper_at_path" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "key"), 77)
             root_rc = TrieNodeODRc(root_n, alloc)
-            m = PM{V,A}(root_rc, nothing, alloc)
+            m = PM{V, A}(root_rc, nothing, alloc)
 
             z = read_zipper_at_path(m, collect(UInt8, "key"))
             @test zipper_is_val(z)
@@ -2062,10 +2098,10 @@ const PM = PathMap.PathMap
         end
 
         @testset "PathMap — path_exists_at" begin
-            root_n = LineListNode{V,A}(alloc)
+            root_n = LineListNode{V, A}(alloc)
             node_set_val!(root_n, collect(UInt8, "yes"), 1)
             root_rc = TrieNodeODRc(root_n, alloc)
-            m = PM{V,A}(root_rc, nothing, alloc)
+            m = PM{V, A}(root_rc, nothing, alloc)
 
             @test path_exists_at(m, collect(UInt8, "yes"))
             @test !path_exists_at(m, collect(UInt8, "no"))
@@ -2075,9 +2111,9 @@ const PM = PathMap.PathMap
 
         @testset "zipper_to_next_sibling_byte!" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"a"), 1)
-            set_val_at!(m, collect(UInt8,"b"), 2)
-            set_val_at!(m, collect(UInt8,"c"), 3)
+            set_val_at!(m, collect(UInt8, "a"), 1)
+            set_val_at!(m, collect(UInt8, "b"), 2)
+            set_val_at!(m, collect(UInt8, "c"), 3)
             z = read_zipper(m)
             zipper_descend_first_byte!(z)
             @test last(zipper_path(z)) == UInt8('a')
@@ -2090,8 +2126,8 @@ const PM = PathMap.PathMap
 
         @testset "zipper_descend_last_byte! / zipper_descend_last_path!" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"a"), 1)
-            set_val_at!(m, collect(UInt8,"b"), 2)
+            set_val_at!(m, collect(UInt8, "a"), 1)
+            set_val_at!(m, collect(UInt8, "b"), 2)
             z = read_zipper(m)
             @test zipper_descend_last_byte!(z)
             @test last(zipper_path(z)) == UInt8('b')
@@ -2099,10 +2135,10 @@ const PM = PathMap.PathMap
 
         @testset "zipper_to_next_val! iterates all values in DFS order" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"a"),  1)
-            set_val_at!(m, collect(UInt8,"ba"), 2)
-            set_val_at!(m, collect(UInt8,"bb"), 3)
-            set_val_at!(m, collect(UInt8,"c"),  4)
+            set_val_at!(m, collect(UInt8, "a"), 1)
+            set_val_at!(m, collect(UInt8, "ba"), 2)
+            set_val_at!(m, collect(UInt8, "bb"), 3)
+            set_val_at!(m, collect(UInt8, "c"), 4)
             z = read_zipper(m)
             collected = V[]
             while zipper_to_next_val!(z)
@@ -2113,30 +2149,30 @@ const PM = PathMap.PathMap
 
         @testset "zipper_descend_to_val! stops at first val along path" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"ab"), 10)
-            set_val_at!(m, collect(UInt8,"abc"), 20)
+            set_val_at!(m, collect(UInt8, "ab"), 10)
+            set_val_at!(m, collect(UInt8, "abc"), 20)
             z = read_zipper(m)
-            steps = zipper_descend_to_val!(z, collect(UInt8,"abc"))
+            steps = zipper_descend_to_val!(z, collect(UInt8, "abc"))
             @test steps == 2   # stops at "ab" which has a val
             @test zipper_is_val(z)
         end
 
         @testset "zipper_move_to_path! navigates to absolute path" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"foo"), 1)
-            set_val_at!(m, collect(UInt8,"bar"), 2)
+            set_val_at!(m, collect(UInt8, "foo"), 1)
+            set_val_at!(m, collect(UInt8, "bar"), 2)
             z = read_zipper(m)
-            zipper_descend_to!(z, collect(UInt8,"foo"))
+            zipper_descend_to!(z, collect(UInt8, "foo"))
             @test zipper_is_val(z)
-            zipper_move_to_path!(z, collect(UInt8,"bar"))
+            zipper_move_to_path!(z, collect(UInt8, "bar"))
             @test zipper_is_val(z)
             @test zipper_val(z) == 2
         end
 
         @testset "zipper_fork! creates sub-zipper at focus" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"ab"), 1)
-            set_val_at!(m, collect(UInt8,"ac"), 2)
+            set_val_at!(m, collect(UInt8, "ab"), 1)
+            set_val_at!(m, collect(UInt8, "ac"), 2)
             z = read_zipper(m)
             zipper_descend_to_byte!(z, UInt8('a'))
             sub = zipper_fork!(z)
@@ -2146,8 +2182,8 @@ const PM = PathMap.PathMap
 
         @testset "zipper_to_next_step! does DFS one step at a time" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"a"), 1)
-            set_val_at!(m, collect(UInt8,"b"), 2)
+            set_val_at!(m, collect(UInt8, "a"), 1)
+            set_val_at!(m, collect(UInt8, "b"), 2)
             z = read_zipper(m)
             @test zipper_to_next_step!(z)   # descend to 'a'
             @test zipper_to_next_step!(z)   # sibling 'b'
@@ -2156,13 +2192,13 @@ const PM = PathMap.PathMap
 
         @testset "rz_ aliases work" begin
             m = PM{V}()
-            set_val_at!(m, collect(UInt8,"x"), 99)
+            set_val_at!(m, collect(UInt8, "x"), 99)
             z = read_zipper(m)
             @test !rz_is_val(z)
-            rz_descend_to!(z, collect(UInt8,"x"))
+            rz_descend_to!(z, collect(UInt8, "x"))
             @test rz_is_val(z)
             @test rz_get_val(z) == 99
-            @test rz_path(z) == collect(UInt8,"x")
+            @test rz_path(z) == collect(UInt8, "x")
             rz_reset!(z)
             @test isempty(rz_path(z))
         end
@@ -2172,9 +2208,9 @@ const PM = PathMap.PathMap
         alloc = GlobalAlloc()
 
         @testset "pjoin: disjoint → Element with all keys" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
-            b = PM{Int,GlobalAlloc}(alloc)
+            b = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(b, UInt8[0x62], 2)
             r = pjoin(a, b)
             @test r isa AlgResElement
@@ -2183,7 +2219,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "pjoin: same map → Identity(SELF|COUNTER)" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
             r = pjoin(a, a)
             @test r isa AlgResIdentity
@@ -2194,9 +2230,9 @@ const PM = PathMap.PathMap
             # pmeet(a, b) where nodes are disjoint and both root_vals are nothing:
             # node_res=None, val_res=Identity(SELF|COUNTER) → merge_f(nothing,nothing)
             # → AlgResElement(empty PathMap). Upstream trie_map.rs:725 + ring.rs:216.
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
-            b = PM{Int,GlobalAlloc}(alloc)
+            b = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(b, UInt8[0x62], 2)
             r = pmeet(a, b)
             @test r isa AlgResElement
@@ -2204,7 +2240,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "pmeet: same map → Identity(SELF|COUNTER)" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
             r = pmeet(a, a)
             @test r isa AlgResIdentity
@@ -2212,10 +2248,10 @@ const PM = PathMap.PathMap
         end
 
         @testset "pmeet: overlapping keys → common key survives" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
             set_val_at!(a, UInt8[0x62], 2)
-            b = PM{Int,GlobalAlloc}(alloc)
+            b = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(b, UInt8[0x62], 2)
             set_val_at!(b, UInt8[0x63], 3)
             r = pmeet(a, b)
@@ -2223,41 +2259,43 @@ const PM = PathMap.PathMap
         end
 
         @testset "psubtract: a - empty → Identity(SELF)" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
-            b = PM{Int,GlobalAlloc}(alloc)
+            b = PM{Int, GlobalAlloc}(alloc)
             r = psubtract(a, b)
             @test r isa AlgResIdentity
             @test (r.mask & SELF_IDENT) != 0
         end
 
         @testset "psubtract: a - a → None" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
             r = psubtract(a, a)
             @test r isa AlgResNone
         end
 
         @testset "prestrict: other has root_val → Identity(SELF)" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
-            b = PM{Int,GlobalAlloc}(nothing, 99, alloc)
+            b = PM{Int, GlobalAlloc}(nothing, 99, alloc)
             r = prestrict(a, b)
             @test r isa AlgResIdentity
             @test (r.mask & SELF_IDENT) != 0
         end
 
         @testset "prestrict: b empty → None" begin
-            a = PM{Int,GlobalAlloc}(alloc)
+            a = PM{Int, GlobalAlloc}(alloc)
             set_val_at!(a, UInt8[0x61], 1)
-            b = PM{Int,GlobalAlloc}(alloc)
+            b = PM{Int, GlobalAlloc}(alloc)
             r = prestrict(a, b)
             @test r isa AlgResNone
         end
     end
 
     @testset "WriteZipper and PathMap write API (ports pathmap/src/write_zipper.rs)" begin
-        V = Int; A = GlobalAlloc; alloc = GlobalAlloc()
+        V = Int;
+        A = GlobalAlloc;
+        alloc = GlobalAlloc()
 
         # ------------------------------------------------------------------
         # write_zipper construction
@@ -2265,7 +2303,7 @@ const PM = PathMap.PathMap
         @testset "write_zipper — construction at root" begin
             m = PM{V}()
             z = write_zipper(m)
-            @test z isa WriteZipperCore{V,GlobalAlloc}
+            @test z isa WriteZipperCore{V, GlobalAlloc}
             @test length(z.focus_stack) == 1
             @test isempty(z.prefix_buf)
             @test isempty(z.prefix_idx)
@@ -2467,7 +2505,7 @@ const PM = PathMap.PathMap
             src = PM{V}()
             set_val_at!(src, collect(UInt8, "b"), 2)
 
-            z    = write_zipper(m)
+            z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
             st = wz_join_into!(z, src_anr)
@@ -2481,8 +2519,8 @@ const PM = PathMap.PathMap
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 7)
 
-            z   = write_zipper(m)
-            st  = wz_join_into!(z, ANRNone{V, GlobalAlloc}())
+            z = write_zipper(m)
+            st = wz_join_into!(z, ANRNone{V, GlobalAlloc}())
 
             @test st == ALG_STATUS_IDENTITY
             @test get_val_at(m, collect(UInt8, "a")) == 7
@@ -2495,7 +2533,7 @@ const PM = PathMap.PathMap
             src = PM{V}()
             set_val_at!(src, collect(UInt8, "k"), 3)
 
-            z  = write_zipper(m)
+            z = write_zipper(m)
             st = wz_join_map_into!(z, src)
             # pjoin(identical) → AlgResIdentity; mask & SELF_IDENT > 0 → Identity
             @test st == ALG_STATUS_IDENTITY || st == ALG_STATUS_ELEMENT
@@ -2508,7 +2546,7 @@ const PM = PathMap.PathMap
             src = PM{V}()
             set_val_at!(src, collect(UInt8, "b"), 2)
 
-            z     = write_zipper(m)
+            z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
             st = wz_meet_into!(z, src_anr)
@@ -2523,7 +2561,7 @@ const PM = PathMap.PathMap
             src = PM{V}()
             set_val_at!(src, collect(UInt8, "ab"), 99)
 
-            z     = write_zipper(m)
+            z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
             st = wz_meet_into!(z, src_anr)
@@ -2539,7 +2577,7 @@ const PM = PathMap.PathMap
             src2 = PM{UInt32}()
             set_val_at!(src2, collect(UInt8, "x"), UInt32(5))
 
-            z2    = write_zipper(m2)
+            z2 = write_zipper(m2)
             z_src2 = write_zipper(src2)
             src_anr2 = _wz_get_focus_anr(z_src2)
             st = wz_subtract_into!(z2, src_anr2)
@@ -2551,8 +2589,8 @@ const PM = PathMap.PathMap
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "x"), 5)
 
-            z   = write_zipper(m)
-            st  = wz_subtract_into!(z, ANRNone{V, GlobalAlloc}())
+            z = write_zipper(m)
+            st = wz_subtract_into!(z, ANRNone{V, GlobalAlloc}())
 
             @test st == ALG_STATUS_IDENTITY
             @test get_val_at(m, collect(UInt8, "x")) == 5
@@ -2562,7 +2600,7 @@ const PM = PathMap.PathMap
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 1)
 
-            z  = write_zipper(m)
+            z = write_zipper(m)
             st = wz_restrict!(z, ANRNone{V, GlobalAlloc}())
             @test st == ALG_STATUS_NONE
         end
@@ -2574,7 +2612,7 @@ const PM = PathMap.PathMap
             set_val_at!(src, collect(UInt8, "a"), 2)
             set_val_at!(src, collect(UInt8, "b"), 3)
 
-            z     = write_zipper(m)
+            z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
             st = wz_restrict!(z, src_anr)
@@ -2587,19 +2625,23 @@ const PM = PathMap.PathMap
             m = PM{V}()
             set_val_at!(m, UInt8[0x01, 0x02, 0x03], V(1))
             set_val_at!(m, UInt8[0x01, 0x02, 0x04], V(2))
-            z   = write_zipper(m)
+            z = write_zipper(m)
             res = wz_join_k_path_into!(z, 2)
             @test res == true
             # After dropping 2 bytes, only 0x03 and 0x04 remain
-            n = 0; rz = read_zipper(m)
-            while zipper_to_next_val!(rz); n += 1 end
+            n = 0;
+            rz = read_zipper(m)
+            while zipper_to_next_val!(rz)
+                ;
+                n += 1
+            end
             @test n == 2
         end
 
         @testset "wz_join_k_path_into! — empty subtrie returns false + prunes" begin
-            m  = PM{V}()
+            m = PM{V}()
             set_val_at!(m, UInt8[0xAA], V(1))
-            z  = write_zipper(m)
+            z = write_zipper(m)
             wz_descend_to!(z, UInt8[0xBB])   # no paths here
             res = wz_join_k_path_into!(z, 1, true)
             @test res == false
@@ -2608,7 +2650,7 @@ const PM = PathMap.PathMap
         @testset "wz_restricting! — empty src returns false" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), V(1))
-            z   = write_zipper(m)
+            z = write_zipper(m)
             res = wz_restricting!(z, ANRNone{V, GlobalAlloc}())
             @test res == false
         end
@@ -2800,7 +2842,10 @@ const PM = PathMap.PathMap
             @test tr_get_val(tr) === nothing
 
             # Very long path (> MAX_NODE_KEY_BYTES bytes) that doesn't exist
-            long_path = collect(UInt8, "Hello Mr. Washington, my name is John, but sometimes people call me Jack.  I live in Springfield.")
+            long_path = collect(
+                UInt8,
+                "Hello Mr. Washington, my name is John, but sometimes people call me Jack.  I live in Springfield."
+            )
             tr = trie_ref_at_path(m, long_path)
             @test !tr_path_exists(tr)
             @test tr_child_count(tr) == 0
@@ -2809,7 +2854,10 @@ const PM = PathMap.PathMap
         @testset "TrieRef — child_count / child_mask at 'H'" begin
             keys = ["Hello", "Hell", "Help", "Helsinki"]
             m = PM{UnitVal}()
-            for k in keys; set_val_at!(m, collect(UInt8, k), UNIT_VAL); end
+            for k in keys
+                ;
+                set_val_at!(m, collect(UInt8, k), UNIT_VAL);
+            end
 
             tr0 = trie_ref_at_path(m, collect(UInt8, "H"))
             @test tr_path_exists(tr0)
@@ -2836,7 +2884,7 @@ const PM = PathMap.PathMap
 
         @testset "TrieRef — trie_ref_test2: val_count + fork_read_zipper + make_map" begin
             rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus^", "romulus",
-                  "rubens", "ruber", "rubicon", "rubicundus", "rom'i"]
+                "rubens", "ruber", "rubicon", "rubicundus", "rom'i"]
             m = PM{Int}()
             for (i, r) in enumerate(rs)
                 set_val_at!(m, collect(UInt8, r), i)
@@ -2926,14 +2974,18 @@ const PM = PathMap.PathMap
 
             @testset "dep_test_1: appended .postfix to each path" begin
                 m = PM{Int}()
-                words = ["arrow","bow","cannon","roman","romane","romanus","romulus"]
-                for (i,w) in enumerate(words); set_val_at!(m, collect(UInt8,w), i); end
+                words = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus"]
+                for (i, w) in enumerate(words)
+                    ;
+                    set_val_at!(m, collect(UInt8, w), i);
+                end
 
                 postfix_m = PM{Int}()
-                set_val_at!(postfix_m, collect(UInt8,".postfix"), 0)
+                set_val_at!(postfix_m, collect(UInt8, ".postfix"), 0)
 
                 dpz = DependentZipper(read_zipper(m), nothing,
-                    (payload, path, c) -> c == 0 ?
+                    (payload, path, c) ->
+                        c == 0 ?
                         (nothing, read_zipper(postfix_m)) :
                         (nothing, nothing))
 
@@ -2943,15 +2995,17 @@ const PM = PathMap.PathMap
                 end
                 # "roman" has children (romane, romanus, romulus) so is_path_end=false
                 # → "roman.postfix" is NOT included (matches upstream dep_test_1 behavior)
-                leaf_words = filter(w -> !any(startswith(other, w) && other != w for other in words), words)
+                leaf_words = filter(
+                    w -> !any(startswith(other, w) && other != w for other in words), words
+                )
                 expected = [collect(UInt8, w * ".postfix") for w in sort(leaf_words)]
                 @test sort(paths) == sort(expected)
             end
 
             @testset "factor_count and at_root" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"a"), 1)
-                dpz = DependentZipper(read_zipper(m), nothing, (p,_,_) -> (p,nothing))
+                set_val_at!(m, collect(UInt8, "a"), 1)
+                dpz = DependentZipper(read_zipper(m), nothing, (p, _, _) -> (p, nothing))
                 @test dpz_factor_count(dpz) == 1
                 @test dpz_at_root(dpz)
             end
@@ -2962,8 +3016,8 @@ const PM = PathMap.PathMap
 
             @testset "count_occupancy basic stats" begin
                 m = PM{Int}()
-                for w in ["a","b","ba","bb","c"]
-                    set_val_at!(m, collect(UInt8,w), 1)
+                for w in ["a", "b", "ba", "bb", "c"]
+                    set_val_at!(m, collect(UInt8, w), 1)
                 end
                 c = count_occupancy(m)
                 @test total_nodes(c) >= 1
@@ -2982,8 +3036,20 @@ const PM = PathMap.PathMap
 
             @testset "serialize + deserialize round-trip" begin
                 m = PM{UnitVal}()
-                words = ["arrow","bow","cannon","roman","romane","romulus","rubens","ruber"]
-                for w in words; set_val_at!(m, collect(UInt8, w), UNIT_VAL); end
+                words = [
+                    "arrow",
+                    "bow",
+                    "cannon",
+                    "roman",
+                    "romane",
+                    "romulus",
+                    "rubens",
+                    "ruber"
+                ]
+                for w in words
+                    ;
+                    set_val_at!(m, collect(UInt8, w), UNIT_VAL);
+                end
 
                 buf = IOBuffer()
                 stats = serialize_paths(m, buf)
@@ -3004,7 +3070,10 @@ const PM = PathMap.PathMap
             @testset "auxdata round-trip preserves values" begin
                 m = PM{Int}()
                 pairs = [("a", 1), ("b", 2), ("ba", 3)]
-                for (w, v) in pairs; set_val_at!(m, collect(UInt8, w), v); end
+                for (w, v) in pairs
+                    ;
+                    set_val_at!(m, collect(UInt8, w), v);
+                end
 
                 collected_vals = Int[]
                 buf = IOBuffer()
@@ -3013,7 +3082,7 @@ const PM = PathMap.PathMap
 
                 m2 = PM{Int}()
                 seekstart(buf)
-                deserialize_paths_with_auxdata(m2, buf, (k, _) -> collected_vals[k+1])
+                deserialize_paths_with_auxdata(m2, buf, (k, _) -> collected_vals[k + 1])
                 for (w, v) in pairs
                     @test get_val_at(m2, collect(UInt8, w)) == v
                 end
@@ -3052,7 +3121,7 @@ const PM = PathMap.PathMap
 
             @testset "varint round-trip" begin
                 for v in [UInt64(0), UInt64(100), UInt64(247), UInt64(1000),
-                          UInt64(typemax(UInt32)), typemax(UInt64)]
+                    UInt64(typemax(UInt32)), typemax(UInt64)]
                     buf = UInt8[]
                     n = act_push_varint!(buf, v)
                     decoded, m = act_read_varint(buf, 1)
@@ -3063,37 +3132,40 @@ const PM = PathMap.PathMap
 
             @testset "act_from_zipper + get_val_at round-trip" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"ace"), 1)
-                set_val_at!(m, collect(UInt8,"acf"), 2)
-                set_val_at!(m, collect(UInt8,"bjk"), 3)
+                set_val_at!(m, collect(UInt8, "ace"), 1)
+                set_val_at!(m, collect(UInt8, "acf"), 2)
+                set_val_at!(m, collect(UInt8, "bjk"), 3)
                 tree = act_from_zipper(m, v -> UInt64(v))
-                @test act_get_val_at(tree, collect(UInt8,"ace")) == 1
-                @test act_get_val_at(tree, collect(UInt8,"acf")) == 2
-                @test act_get_val_at(tree, collect(UInt8,"bjk")) == 3
-                @test act_get_val_at(tree, collect(UInt8,"xyz")) === nothing
+                @test act_get_val_at(tree, collect(UInt8, "ace")) == 1
+                @test act_get_val_at(tree, collect(UInt8, "acf")) == 2
+                @test act_get_val_at(tree, collect(UInt8, "bjk")) == 3
+                @test act_get_val_at(tree, collect(UInt8, "xyz")) === nothing
             end
 
             @testset "ACTZipper navigates compact tree" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"a"), 1)
-                set_val_at!(m, collect(UInt8,"b"), 2)
-                set_val_at!(m, collect(UInt8,"ba"), 3)
+                set_val_at!(m, collect(UInt8, "a"), 1)
+                set_val_at!(m, collect(UInt8, "b"), 2)
+                set_val_at!(m, collect(UInt8, "ba"), 3)
                 tree = act_from_zipper(m, v -> UInt64(v))
                 z = act_read_zipper(tree)
                 @test act_child_count(z) >= 1
                 vals = UInt64[]
-                while act_to_next_val!(z); push!(vals, act_val(z)); end
+                while act_to_next_val!(z)
+                    ;
+                    push!(vals, act_val(z));
+                end
                 @test sort(vals) == [1, 2, 3]
             end
 
             @testset "act_save + act_open round-trip" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"hello"), 42)
+                set_val_at!(m, collect(UInt8, "hello"), 42)
                 tree = act_from_zipper(m, v -> UInt64(v))
                 path = tempname() * ".act"
                 act_save(tree, path)
                 tree2 = act_open(path)
-                @test act_get_val_at(tree2, collect(UInt8,"hello")) == 42
+                @test act_get_val_at(tree2, collect(UInt8, "hello")) == 42
                 rm(path)
             end
 
@@ -3103,25 +3175,31 @@ const PM = PathMap.PathMap
 
             @testset "cata_side_effect counts values (leaf fold)" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"a"), 1)
-                set_val_at!(m, collect(UInt8,"b"), 2)
-                set_val_at!(m, collect(UInt8,"ba"), 3)
+                set_val_at!(m, collect(UInt8, "a"), 1)
+                set_val_at!(m, collect(UInt8, "b"), 2)
+                set_val_at!(m, collect(UInt8, "ba"), 3)
                 # fold: sum all values in the trie
-                total = cata_side_effect(m, (mask, children, val, path) -> begin
-                    s = sum(children; init=0)
-                    val !== nothing ? s + val : s
-                end)
+                total = cata_side_effect(
+                    m, (mask, children, val, path) -> begin
+                        s = sum(children; init=0)
+                        val !== nothing ? s + val : s
+                    end
+                )
                 @test total == 6
             end
 
             @testset "cata_cached same result as side_effect" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"x"), 10)
-                set_val_at!(m, collect(UInt8,"y"), 20)
-                count_se = cata_side_effect(m, (mask, ch, val, path) ->
-                    sum(ch; init=0) + (val !== nothing ? 1 : 0))
-                count_ca = cata_cached(m, (mask, ch, val) ->
-                    sum(ch; init=0) + (val !== nothing ? 1 : 0))
+                set_val_at!(m, collect(UInt8, "x"), 10)
+                set_val_at!(m, collect(UInt8, "y"), 20)
+                count_se = cata_side_effect(
+                    m, (mask, ch, val, path) ->
+                        sum(ch; init=0) + (val !== nothing ? 1 : 0)
+                )
+                count_ca = cata_cached(
+                    m, (mask, ch, val) ->
+                        sum(ch; init=0) + (val !== nothing ? 1 : 0)
+                )
                 @test count_se == count_ca == 2
             end
 
@@ -3131,32 +3209,38 @@ const PM = PathMap.PathMap
                     set_val_at!(m, [UInt8(i)], i)
                 end
                 # Count leaves
-                count = cata_jumping_cached(m, (mask, ch, val, sub_path) ->
-                    sum(ch; init=0) + (val !== nothing ? 1 : 0))
+                count = cata_jumping_cached(
+                    m,
+                    (mask, ch, val, sub_path) ->
+                        sum(ch; init=0) + (val !== nothing ? 1 : 0)
+                )
                 @test count == 5
             end
 
             @testset "cata_jumping_side_effect provides jump_len" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"abc"), 1)
-                set_val_at!(m, collect(UInt8,"abd"), 2)
+                set_val_at!(m, collect(UInt8, "abc"), 1)
+                set_val_at!(m, collect(UInt8, "abd"), 2)
                 # With jumping, alg sees "abc"/"abd" with a jump over common prefix
                 jumps = Int[]
-                cata_jumping_side_effect(m, (mask, ch, jump, val, path) -> begin
-                    push!(jumps, jump)
-                    sum(ch; init=0) + (val !== nothing ? 1 : 0)
-                end)
+                cata_jumping_side_effect(
+                    m,
+                    (mask, ch, jump, val, path) -> begin
+                        push!(jumps, jump)
+                        sum(ch; init=0) + (val !== nothing ? 1 : 0)
+                    end
+                )
                 # Some steps should have jump > 0 (the "ab" common prefix is jumped)
                 @test any(j -> j > 0, jumps)
             end
 
             @testset "map_hash consistent" begin
                 m1 = PM{Int}()
-                set_val_at!(m1, collect(UInt8,"a"), 1)
+                set_val_at!(m1, collect(UInt8, "a"), 1)
                 m2 = PM{Int}()
-                set_val_at!(m2, collect(UInt8,"a"), 1)
+                set_val_at!(m2, collect(UInt8, "a"), 1)
                 @test map_hash(m1) == map_hash(m2)
-                set_val_at!(m2, collect(UInt8,"b"), 2)
+                set_val_at!(m2, collect(UInt8, "b"), 2)
                 @test map_hash(m1) != map_hash(m2)
             end
 
@@ -3166,22 +3250,25 @@ const PM = PathMap.PathMap
 
             @testset "single-factor is equivalent to read_zipper" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"a"), 1)
-                set_val_at!(m, collect(UInt8,"b"), 2)
+                set_val_at!(m, collect(UInt8, "a"), 1)
+                set_val_at!(m, collect(UInt8, "b"), 2)
                 pz = ProductZipper(read_zipper(m))
                 @test pz_factor_count(pz) == 1
                 vals = Int[]
-                while pz_to_next_val!(pz); push!(vals, pz_val(pz)); end
+                while pz_to_next_val!(pz)
+                    ;
+                    push!(vals, pz_val(pz));
+                end
                 @test sort(vals) == [1, 2]
             end
 
             @testset "2-factor product: paths include junction + leaf vals" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"x"), 0)
-                set_val_at!(a, collect(UInt8,"y"), 0)
+                set_val_at!(a, collect(UInt8, "x"), 0)
+                set_val_at!(a, collect(UInt8, "y"), 0)
                 b = PM{Int}()
-                set_val_at!(b, collect(UInt8,"1"), 1)
-                set_val_at!(b, collect(UInt8,"2"), 2)
+                set_val_at!(b, collect(UInt8, "1"), 1)
+                set_val_at!(b, collect(UInt8, "2"), 2)
 
                 pz = ProductZipper(read_zipper(a), [read_zipper(b)])
                 @test pz_factor_count(pz) == 2
@@ -3193,15 +3280,15 @@ const PM = PathMap.PathMap
                     push!(paths, collect(pz_path(pz)))
                 end
                 @test length(paths) == 6
-                expected = [collect(UInt8, s) for s in ["x","x1","x2","y","y1","y2"]]
+                expected = [collect(UInt8, s) for s in ["x", "x1", "x2", "y", "y1", "y2"]]
                 @test sort(paths) == sort(expected)
             end
 
             @testset "pz_reset! returns to root" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"k"), 1)
+                set_val_at!(a, collect(UInt8, "k"), 1)
                 b = PM{Int}()
-                set_val_at!(b, collect(UInt8,"v"), 2)
+                set_val_at!(b, collect(UInt8, "v"), 2)
                 pz = ProductZipper(read_zipper(a), [read_zipper(b)])
                 pz_to_next_val!(pz)
                 @test !isempty(pz_path(pz))
@@ -3215,9 +3302,9 @@ const PM = PathMap.PathMap
 
             @testset "prefix prepended to path space" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"A"), 1)
-                set_val_at!(m, collect(UInt8,"B"), 2)
-                pz = PrefixZipper(collect(UInt8,"prefix."), read_zipper(m))
+                set_val_at!(m, collect(UInt8, "A"), 1)
+                set_val_at!(m, collect(UInt8, "B"), 2)
+                pz = PrefixZipper(collect(UInt8, "prefix."), read_zipper(m))
                 # At root: child is 'p' (first byte of prefix)
                 @test pz_child_count(pz) == 1
                 @test test_bit(pz_child_mask(pz), UInt8('p'))
@@ -3225,26 +3312,26 @@ const PM = PathMap.PathMap
 
             @testset "descend through prefix reaches source" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"X"), 10)
-                pz = PrefixZipper(collect(UInt8,"pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8,"pre.X"))
+                set_val_at!(m, collect(UInt8, "X"), 10)
+                pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
+                pz_descend_to!(pz, collect(UInt8, "pre.X"))
                 @test pz_path_exists(pz)
                 @test pz_is_val(pz)
             end
 
             @testset "off-prefix path does not exist" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"A"), 1)
-                pz = PrefixZipper(collect(UInt8,"pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8,"wrong.A"))
+                set_val_at!(m, collect(UInt8, "A"), 1)
+                pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
+                pz_descend_to!(pz, collect(UInt8, "wrong.A"))
                 @test !pz_path_exists(pz)
             end
 
             @testset "ascend restores position" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"Y"), 99)
-                pz = PrefixZipper(collect(UInt8,"pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8,"pre.Y"))
+                set_val_at!(m, collect(UInt8, "Y"), 99)
+                pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
+                pz_descend_to!(pz, collect(UInt8, "pre.Y"))
                 @test pz_is_val(pz)
                 pz_ascend!(pz, 6)  # ascend 6 bytes back through prefix
                 @test isempty(pz_path(pz))
@@ -3252,9 +3339,9 @@ const PM = PathMap.PathMap
 
             @testset "reset restores to root" begin
                 m = PM{Int}()
-                set_val_at!(m, collect(UInt8,"Z"), 5)
-                pz = PrefixZipper(collect(UInt8,"p."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8,"p.Z"))
+                set_val_at!(m, collect(UInt8, "Z"), 5)
+                pz = PrefixZipper(collect(UInt8, "p."), read_zipper(m))
+                pz_descend_to!(pz, collect(UInt8, "p.Z"))
                 pz_reset!(pz)
                 @test isempty(pz_path(pz))
                 @test pz_child_count(pz) == 1
@@ -3266,9 +3353,9 @@ const PM = PathMap.PathMap
 
             @testset "union of disjoint maps" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"a"), 1)
+                set_val_at!(a, collect(UInt8, "a"), 1)
                 b = PM{Int}()
-                set_val_at!(b, collect(UInt8,"b"), 2)
+                set_val_at!(b, collect(UInt8, "b"), 2)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
                 @test oz_child_count(oz) == 2
                 @test test_bit(oz_child_mask(oz), UInt8('a'))
@@ -3277,21 +3364,21 @@ const PM = PathMap.PathMap
 
             @testset "A-value wins over B-value" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"k"), 1)
+                set_val_at!(a, collect(UInt8, "k"), 1)
                 b = PM{Int}()
-                set_val_at!(b, collect(UInt8,"k"), 2)
+                set_val_at!(b, collect(UInt8, "k"), 2)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
-                oz_descend_to!(oz, collect(UInt8,"k"))
+                oz_descend_to!(oz, collect(UInt8, "k"))
                 @test oz_is_val(oz)
                 @test oz_val(oz) == 1   # A wins
             end
 
             @testset "to_next_val iterates all overlay values" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"a"), 1)
-                set_val_at!(a, collect(UInt8,"b"), 2)
+                set_val_at!(a, collect(UInt8, "a"), 1)
+                set_val_at!(a, collect(UInt8, "b"), 2)
                 b = PM{Int}()
-                set_val_at!(b, collect(UInt8,"c"), 3)
+                set_val_at!(b, collect(UInt8, "c"), 3)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
                 vals = Int[]
                 while oz_to_next_val!(oz)
@@ -3302,10 +3389,10 @@ const PM = PathMap.PathMap
 
             @testset "reset restores to root" begin
                 a = PM{Int}()
-                set_val_at!(a, collect(UInt8,"abc"), 1)
+                set_val_at!(a, collect(UInt8, "abc"), 1)
                 b = PM{Int}()
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
-                oz_descend_to!(oz, collect(UInt8,"abc"))
+                oz_descend_to!(oz, collect(UInt8, "abc"))
                 @test oz_is_val(oz)
                 oz_reset!(oz)
                 @test isempty(oz_path(oz))
@@ -3436,7 +3523,7 @@ const PM = PathMap.PathMap
         @testset "expr_span — symbol" begin
             # arity-2 node [foo, bar]: [2] "foo" "bar"
             buf = UInt8[0x02, 0xC3, UInt8('f'), UInt8('o'), UInt8('o'),
-                                0xC3, UInt8('b'), UInt8('a'), UInt8('r')]
+                0xC3, UInt8('b'), UInt8('a'), UInt8('r')]
             e = MORK.Expr(buf)
             sp = expr_span(e, 1)
             @test length(sp) == length(buf)
@@ -3497,7 +3584,7 @@ const PM = PathMap.PathMap
             h2 = bounded_pearson_hash(Vector{UInt8}("hello"))
             @test h1 == h2
             @test bounded_pearson_hash(Vector{UInt8}("hello")) !=
-                  bounded_pearson_hash(Vector{UInt8}("world"))
+                bounded_pearson_hash(Vector{UInt8}("world"))
         end
 
         @testset "MorkSymbol identity / hash" begin
@@ -3515,8 +3602,8 @@ const PM = PathMap.PathMap
         end
 
         @testset "get_sym_or_insert! roundtrip" begin
-            h   = SharedMappingHandle()
-            wp  = try_acquire_permission(h)
+            h = SharedMappingHandle()
+            wp = try_acquire_permission(h)
             @test wp !== nothing
             sym = get_sym_or_insert!(wp, Vector{UInt8}("hello"))
             @test sym isa MorkSymbol
@@ -3530,7 +3617,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "get_sym finds after insert" begin
-            h  = SharedMappingHandle()
+            h = SharedMappingHandle()
             wp = try_acquire_permission(h)
             @test wp !== nothing
             sym = get_sym_or_insert!(wp, Vector{UInt8}("julia"))
@@ -3541,8 +3628,8 @@ const PM = PathMap.PathMap
         end
 
         @testset "get_bytes roundtrip" begin
-            h   = SharedMappingHandle()
-            wp  = try_acquire_permission(h)
+            h = SharedMappingHandle()
+            wp = try_acquire_permission(h)
             @test wp !== nothing
             sym = get_sym_or_insert!(wp, Vector{UInt8}("mork"))
             release_permission!(wp)
@@ -3567,13 +3654,24 @@ const PM = PathMap.PathMap
             # the task-local storage.
             leaked_raw = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
-                try; try_acquire_permission(h); error("boom"); catch; end
+                try
+                    ; try_acquire_permission(h); error("boom");
+                catch
+                    ;
+                end
                 get(task_local_storage(), :mork_thread_idx, nothing)
             end)
             @test leaked_raw !== nothing      # confirms the leak the fix prevents
             released = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
-                try; with_write_permit(h) do _; error("boom"); end; catch; end
+                try
+                    ; with_write_permit(h) do _
+                        ;
+                        error("boom");
+                    end;
+                catch
+                    ;
+                end
                 get(task_local_storage(), :mork_thread_idx, nothing)
             end)
             @test released === nothing         # released despite the exception
@@ -3591,29 +3689,39 @@ const PM = PathMap.PathMap
                 h = SharedMappingHandle()
                 for k in 1:100
                     wb = Vector{UInt8}("iw_$(k)")
-                    ready = Threads.Atomic{Int}(0); ts = Vector{Task}(undef, 8)
+                    ready = Threads.Atomic{Int}(0);
+                    ts = Vector{Task}(undef, 8)
                     for t in 1:8
                         ts[t] = Threads.@spawn begin
-                            Threads.atomic_add!(ready, 1); while ready[] < 8; yield(); end
-                            with_write_permit(h) do wp; get_sym_or_insert!(wp, wb); end
+                            Threads.atomic_add!(ready, 1);
+                            while ready[] < 8
+                                ;
+                                yield();
+                            end
+                            with_write_permit(h) do wp
+                                ;
+                                get_sym_or_insert!(wp, wb);
+                            end
                         end
                     end
                     foreach(fetch, ts)
                 end
                 inner = h.inner
-                tb   = sum(val_count(inner.to_bytes[i][2])  for i in 1:length(inner.to_bytes))
-                tsym = sum(val_count(inner.to_symbol[i][2]) for i in 1:length(inner.to_symbol))
+                tb = sum(val_count(inner.to_bytes[i][2]) for i in 1:length(inner.to_bytes))
+                tsym = sum(
+                    val_count(inner.to_symbol[i][2]) for i in 1:length(inner.to_symbol)
+                )
                 @test tsym == 100      # one symbol per distinct word
                 @test tb == tsym       # NO orphan to_bytes entries (was tb > tsym pre-fix)
             end
         end
 
         @testset "multiple distinct symbols" begin
-            h  = SharedMappingHandle()
+            h = SharedMappingHandle()
             wp = try_acquire_permission(h)
             @test wp !== nothing
-            words = ["alpha","beta","gamma","delta","epsilon"]
-            syms  = [get_sym_or_insert!(wp, Vector{UInt8}(w)) for w in words]
+            words = ["alpha", "beta", "gamma", "delta", "epsilon"]
+            syms = [get_sym_or_insert!(wp, Vector{UInt8}(w)) for w in words]
             release_permission!(wp)
             @test length(unique(syms)) == length(words)
             for (sym, w) in zip(syms, words)
@@ -3624,7 +3732,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "try_acquire_permission re-entrant" begin
-            h   = SharedMappingHandle()
+            h = SharedMappingHandle()
             wp1 = try_acquire_permission(h)
             @test wp1 !== nothing
             wp2 = try_acquire_permission(h)   # same task → reuse
@@ -3677,7 +3785,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "json_parse! — number via WriteTranscriber" begin
-            p  = JSONParser("42")
+            p = JSONParser("42")
             wt = WriteTranscriber()
             json_parse!(p, wt)
             @test wt_result(wt) == "42"
@@ -3685,7 +3793,7 @@ const PM = PathMap.PathMap
 
         @testset "json_parse! — WriteTranscriber roundtrip" begin
             json_in = """{"pos": 42, "neg": -100}"""
-            p  = JSONParser(json_in)
+            p = JSONParser(json_in)
             wt = WriteTranscriber()
             json_parse!(p, wt)
             out = wt_result(wt)
@@ -3694,7 +3802,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "json_parse! — array" begin
-            p  = JSONParser("[1, 2, 3]")
+            p = JSONParser("[1, 2, 3]")
             wt = WriteTranscriber()
             json_parse!(p, wt)
             out = wt_result(wt)
@@ -3702,7 +3810,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "json_parse! — nested object" begin
-            p  = JSONParser("""{"a": {"b": true}}""")
+            p = JSONParser("""{"a": {"b": true}}""")
             wt = WriteTranscriber()
             json_parse!(p, wt)
             out = wt_result(wt)
@@ -3710,7 +3818,7 @@ const PM = PathMap.PathMap
         end
 
         @testset "json_parse! — string escapes" begin
-            p  = JSONParser("""{"k": "hello\\nworld"}""")
+            p = JSONParser("""{"k": "hello\\nworld"}""")
             wt = WriteTranscriber()
             json_parse!(p, wt)
             out = wt_result(wt)
@@ -3721,65 +3829,67 @@ const PM = PathMap.PathMap
     @testset "ExprAlg (traverseh + unify)" begin
         @testset "expr_traverseh — symbol counting" begin
             buf = UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')]
-            e   = MORK.Expr(buf)
+            e = MORK.Expr(buf)
             (sym_count, _, _) = expr_traverseh(0, e, 0,
-                (h,o)    -> (h, nothing),
-                (h,o,r)  -> (h, nothing),
-                (h,o,sl) -> (h + 1, nothing),    # count symbols via value
-                (h,o,a)  -> (h, 0),
-                (h,o,x,y)-> (h, x + (y===nothing ? 0 : y)),
-                (h,o,acc)-> (h, acc))
+                (h, o) -> (h, nothing),
+                (h, o, r) -> (h, nothing),
+                (h, o, sl) -> (h + 1, nothing),    # count symbols via value
+                (h, o, a) -> (h, 0),
+                (h, o, x, y) -> (h, x + (y===nothing ? 0 : y)),
+                (h, o, acc) -> (h, acc))
             # sym_count here is h_final (not updated in this config), use value instead
             (_, v, _) = expr_traverseh(0, e, 0,
-                (h,o)    -> (h, 0),
-                (h,o,r)  -> (h, 0),
-                (h,o,sl) -> (h, 1),
-                (h,o,a)  -> (h, 0),
-                (h,o,x,y)-> (h, x + y),
-                (h,o,acc)-> (h, acc))
+                (h, o) -> (h, 0),
+                (h, o, r) -> (h, 0),
+                (h, o, sl) -> (h, 1),
+                (h, o, a) -> (h, 0),
+                (h, o, x, y) -> (h, x + y),
+                (h, o, acc) -> (h, acc))
             @test v == 1
         end
 
         @testset "expr_traverseh — arity node" begin
             buf = UInt8[0x02,
-                        0xC3, UInt8('f'), UInt8('o'), UInt8('o'),
-                        0xC3, UInt8('b'), UInt8('a'), UInt8('r')]
-            e   = MORK.Expr(buf)
+                0xC3, UInt8('f'), UInt8('o'), UInt8('o'),
+                0xC3, UInt8('b'), UInt8('a'), UInt8('r')]
+            e = MORK.Expr(buf)
             (_, v, _) = expr_traverseh(0, e, 0,
-                (h,o)    -> (h, 0),
-                (h,o,r)  -> (h, 0),
-                (h,o,sl) -> (h, 1),
-                (h,o,a)  -> (h, 0),
-                (h,o,x,y)-> (h, x + y),
-                (h,o,acc)-> (h, acc))
+                (h, o) -> (h, 0),
+                (h, o, r) -> (h, 0),
+                (h, o, sl) -> (h, 1),
+                (h, o, a) -> (h, 0),
+                (h, o, x, y) -> (h, x + y),
+                (h, o, acc) -> (h, acc))
             @test v == 2
         end
 
         @testset "expr_traverseh — new_var counting via h" begin
             buf = UInt8[0x02, 0xC0, 0xC0]   # arity-2 ($ $)
-            e   = MORK.Expr(buf)
+            e = MORK.Expr(buf)
             (h_final, _, _) = expr_traverseh(0, e, 0,
-                (h,o)    -> (h + 1, nothing),    # new_var: increment h
-                (h,o,r)  -> (h, nothing),
-                (h,o,sl) -> (h, nothing),
-                (h,o,a)  -> (h, nothing),
-                (h,o,x,y)-> (h, nothing),
-                (h,o,acc)-> (h, acc))
+                (h, o) -> (h + 1, nothing),    # new_var: increment h
+                (h, o, r) -> (h, nothing),
+                (h, o, sl) -> (h, nothing),
+                (h, o, a) -> (h, nothing),
+                (h, o, x, y) -> (h, nothing),
+                (h, o, acc) -> (h, acc))
             @test h_final == 2
         end
 
         @testset "ee_args! — compound" begin
-            e   = MORK.Expr(UInt8[0x02, 0xC3, UInt8('a'), UInt8('b'), UInt8('c'),
-                                        0xC3, UInt8('d'), UInt8('e'), UInt8('f')])
-            ee  = ExprEnv(0, e)
+            e = MORK.Expr(
+                UInt8[0x02, 0xC3, UInt8('a'), UInt8('b'), UInt8('c'),
+                    0xC3, UInt8('d'), UInt8('e'), UInt8('f')]
+            )
+            ee = ExprEnv(0, e)
             kids = ExprEnv[]
             ee_args!(ee, kids)
             @test length(kids) == 2
         end
 
         @testset "ee_args! — atom (no children)" begin
-            e   = MORK.Expr(UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')])
-            ee  = ExprEnv(0, e)
+            e = MORK.Expr(UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')])
+            ee = ExprEnv(0, e)
             kids = ExprEnv[]
             ee_args!(ee, kids)
             @test isempty(kids)
@@ -3878,42 +3988,58 @@ const PM = PathMap.PathMap
         end
 
         @testset "lookup — exact ground pattern" begin
-            result = _mc("(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something (very specific))\n")
+            result = _mc(
+                "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something (very specific))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "positive — variable pattern matches ground fact" begin
-            result = _mc("(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n")
+            result = _mc(
+                "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "positive_equal — repeated variable constraint" begin
-            result = _mc("(exec 0 (, (Something \$rep \$rep)) (, MATCHED))\n(Something (very specific) (very specific))\n")
+            result = _mc(
+                "(exec 0 (, (Something \$rep \$rep)) (, MATCHED))\n(Something (very specific) (very specific))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "negative — ground pattern, variable fact" begin
-            result = _mc("(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something \$unspecific)\n")
+            result = _mc(
+                "(exec 0 (, (Something (very specific))) (, MATCHED))\n(Something \$unspecific)\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "negative_equal — ground repeated, variable fact" begin
-            result = _mc("(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n(Something \$rep \$rep)\n")
+            result = _mc(
+                "(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n(Something \$rep \$rep)\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "bipolar — partial variable both sides" begin
-            result = _mc("(exec 0 (, (Something (very \$u))) (, MATCHED))\n(Something (\$u specific))\n")
+            result = _mc(
+                "(exec 0 (, (Something (very \$u))) (, MATCHED))\n(Something (\$u specific))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "two_positive_equal — two-source join, repeated vars" begin
-            result = _mc("(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n")
+            result = _mc(
+                "(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
         @testset "two_positive_equal_crossed — shared vars across sources" begin
-            result = _mc("(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n")
+            result = _mc(
+                "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n"
+            )
             @test occursin("MATCHED", result)
         end
 
@@ -3923,8 +4049,10 @@ const PM = PathMap.PathMap
         end
 
         @testset "two_bipolar_equal_crossed — variable substitution in output" begin
-            result = _mc("(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n" *
-                         "(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n")
+            result = _mc(
+                "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n" *
+                "(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n"
+            )
             @test occursin("(MATCHED (foo bar) (foo bar))", result)
         end
 
@@ -3934,12 +4062,12 @@ const PM = PathMap.PathMap
 
         @testset "act_open_mmap — mmap-backed ACT file" begin
             m = PM{UInt64}()
-            PathMap.set_val_at!(m, b"alpha",  UInt64(42))
-            PathMap.set_val_at!(m, b"beta",   UInt64(99))
-            PathMap.set_val_at!(m, b"gamma",  UInt64(7))
+            PathMap.set_val_at!(m, b"alpha", UInt64(42))
+            PathMap.set_val_at!(m, b"beta", UInt64(99))
+            PathMap.set_val_at!(m, b"gamma", UInt64(7))
 
             tree_vec = PathMap.act_from_zipper(m, v -> v)
-            tmpfile  = tempname() * ".act"
+            tmpfile = tempname() * ".act"
             PathMap.act_save(tree_vec, tmpfile)
 
             tree_mmap = PathMap.act_open_mmap(tmpfile)
@@ -3947,15 +4075,16 @@ const PM = PathMap.PathMap
             @test length(tree_mmap.data) == filesize(tmpfile)
             @test tree_mmap.data[1:8] == PathMap.ACT_MAGIC
 
-            @test PathMap.act_get_val_at(tree_mmap, b"alpha")   === UInt64(42)
-            @test PathMap.act_get_val_at(tree_mmap, b"beta")    === UInt64(99)
-            @test PathMap.act_get_val_at(tree_mmap, b"gamma")   === UInt64(7)
+            @test PathMap.act_get_val_at(tree_mmap, b"alpha") === UInt64(42)
+            @test PathMap.act_get_val_at(tree_mmap, b"beta") === UInt64(99)
+            @test PathMap.act_get_val_at(tree_mmap, b"gamma") === UInt64(7)
             @test PathMap.act_get_val_at(tree_mmap, b"missing") === nothing
 
             # mmap and copy agree on all keys
             tree_copy = PathMap.act_open(tmpfile)
             for key in (b"alpha", b"beta", b"gamma", b"missing")
-                @test PathMap.act_get_val_at(tree_mmap, key) === PathMap.act_get_val_at(tree_copy, key)
+                @test PathMap.act_get_val_at(tree_mmap, key) ===
+                    PathMap.act_get_val_at(tree_copy, key)
             end
 
             # ACTZipper traversal over mmap tree
@@ -3981,14 +4110,14 @@ const PM = PathMap.PathMap
             m = PM{Int}()
             PathMap.set_val_at!(m, b"foo:a", 10)
             PathMap.set_val_at!(m, b"foo:b", 20)
-            PathMap.set_val_at!(m, b"bar",   30)
+            PathMap.set_val_at!(m, b"bar", 30)
 
             wz = PathMap.write_zipper_at_path(m, b"foo:")
             PathMap.wz_remove_branches!(wz, true)
 
             @test PathMap.get_val_at(m, b"foo:a") === nothing
             @test PathMap.get_val_at(m, b"foo:b") === nothing
-            @test PathMap.get_val_at(m, b"bar")   === 30
+            @test PathMap.get_val_at(m, b"bar") === 30
         end
 
     end   # PathMap deferred items
@@ -3996,20 +4125,23 @@ const PM = PathMap.PathMap
     @testset "MORK new sinks" begin
 
         # Build a [2] U <bytes> header for USink paths
-        _u_hdr()  = UInt8[item_byte(ExprArity(UInt8(2))),
-                           item_byte(ExprSymbol(UInt8(1))), UInt8('U')]
+        _u_hdr() = UInt8[item_byte(ExprArity(UInt8(2))),
+            item_byte(ExprSymbol(UInt8(1))), UInt8('U')]
         # Build a [2] AU <bytes> header for AUSink paths
         _au_hdr() = UInt8[item_byte(ExprArity(UInt8(2))),
-                           item_byte(ExprSymbol(UInt8(2))), UInt8('A'), UInt8('U')]
+            item_byte(ExprSymbol(UInt8(2))), UInt8('A'), UInt8('U')]
         # Build a symbol sub-expression
         _sym(s::String) = vcat(item_byte(ExprSymbol(UInt8(length(s)))), Vector{UInt8}(s))
 
         @testset "CmpSource — stale comment removed, dispatch works" begin
             s = new_space()
-            space_add_all_sexpr!(s, raw"""
-            (foo 1) (foo 2) (foo 3)
-            (exec 0 (, (foo $x) (== $x $x)) (, (matched $x)))
-            """)
+            space_add_all_sexpr!(
+                s,
+                raw"""
+(foo 1) (foo 2) (foo 3)
+(exec 0 (, (foo $x) (== $x $x)) (, (matched $x)))
+"""
+            )
             steps = space_metta_calculus!(s, 10)
             @test steps >= 1
         end
@@ -4018,7 +4150,7 @@ const PM = PathMap.PathMap
             btm = new_space().btm
             # Build (U foo) sink; expr bytes don't matter for apply/finalize
             e_buf = vcat(_u_hdr(), _sym("foo"))
-            sink  = USink(MORK.Expr(e_buf))
+            sink = USink(MORK.Expr(e_buf))
             # Two identical paths → MGU = foo
             p = vcat(_u_hdr(), _sym("foo"))
             sink_apply!(sink, Dict(), p, btm)
@@ -4028,9 +4160,9 @@ const PM = PathMap.PathMap
         end
 
         @testset "USink — single path written unchanged" begin
-            btm  = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(_u_hdr(), _sym("bar"))
-            sink  = USink(MORK.Expr(e_buf))
+            sink = USink(MORK.Expr(e_buf))
             p = vcat(_u_hdr(), _sym("bar"))
             sink_apply!(sink, Dict(), p, btm)
             @test sink_finalize!(sink, btm) == true
@@ -4038,9 +4170,9 @@ const PM = PathMap.PathMap
         end
 
         @testset "USink — conflict on incompatible ground terms" begin
-            btm  = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(_u_hdr(), _sym("x"))
-            sink  = USink(MORK.Expr(e_buf))
+            sink = USink(MORK.Expr(e_buf))
             sink_apply!(sink, Dict(), vcat(_u_hdr(), _sym("foo")), btm)
             sink_apply!(sink, Dict(), vcat(_u_hdr(), _sym("bar")), btm)
             @test sink_finalize!(sink, btm) == false   # conflict → nothing written
@@ -4052,20 +4184,20 @@ const PM = PathMap.PathMap
             # only accepts an AbstractNodeRef → MethodError. Fixed to use the
             # map-level wz_join_map_into!(wz, s.head). Populate the collected-head
             # map directly (skip/max are irrelevant to finalize).
-            btm   = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(item_byte(ExprArity(UInt8(3))), _sym("head"), _sym("2"), _sym("x"))
-            sink  = HeadSink(MORK.Expr(e_buf))
+            sink = HeadSink(MORK.Expr(e_buf))
             set_val_at!(sink.head, b"alpha", UNIT_VAL)
-            set_val_at!(sink.head, b"beta",  UNIT_VAL)
+            set_val_at!(sink.head, b"beta", UNIT_VAL)
             @test sink_finalize!(sink, btm) == true          # no MethodError; join happened
             @test get_val_at(btm, b"alpha") === UNIT_VAL     # head map joined into btm
-            @test get_val_at(btm, b"beta")  === UNIT_VAL
+            @test get_val_at(btm, b"beta") === UNIT_VAL
         end
 
         @testset "AUSink — identical terms → same term written" begin
-            btm  = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(_au_hdr(), _sym("foo"))
-            sink  = AUSink(MORK.Expr(e_buf))
+            sink = AUSink(MORK.Expr(e_buf))
             p = vcat(_au_hdr(), _sym("foo"))
             sink_apply!(sink, Dict(), p, btm)
             sink_apply!(sink, Dict(), copy(p), btm)
@@ -4074,9 +4206,9 @@ const PM = PathMap.PathMap
         end
 
         @testset "AUSink — differing terms → fresh variable" begin
-            btm  = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(_au_hdr(), _sym("x"))
-            sink  = AUSink(MORK.Expr(e_buf))
+            sink = AUSink(MORK.Expr(e_buf))
             sink_apply!(sink, Dict(), vcat(_au_hdr(), _sym("foo")), btm)
             sink_apply!(sink, Dict(), vcat(_au_hdr(), _sym("bar")), btm)
             @test sink_finalize!(sink, btm) == true
@@ -4085,20 +4217,20 @@ const PM = PathMap.PathMap
         end
 
         @testset "ACTSink — writes .act file on finalize" begin
-            tmpdir   = mktempdir()
+            tmpdir = mktempdir()
             old_path = ACT_PATH[]
             ACT_PATH[] = tmpdir
             try
-                btm  = new_space().btm
+                btm = new_space().btm
                 name = "testfile"
                 e_buf = vcat(item_byte(ExprArity(UInt8(3))),
-                             item_byte(ExprSymbol(UInt8(3))), Vector{UInt8}("ACT")...,
-                             item_byte(ExprSymbol(UInt8(length(name)))), Vector{UInt8}(name)...,
-                             _sym("x"))
+                    item_byte(ExprSymbol(UInt8(3))), Vector{UInt8}("ACT")...,
+                    item_byte(ExprSymbol(UInt8(length(name)))), Vector{UInt8}(name)...,
+                    _sym("x"))
                 sink = ACTSink(MORK.Expr(e_buf))
                 # Construct a path that starts with the ACT prefix
                 content = _sym("abc")
-                path    = vcat(e_buf[1:sink.skip], content)
+                path = vcat(e_buf[1:sink.skip], content)
                 sink_apply!(sink, Dict(), path, btm)
                 @test sink_finalize!(sink, btm) == true
                 @test isfile(joinpath(tmpdir, "testfile.act"))
@@ -4108,13 +4240,13 @@ const PM = PathMap.PathMap
         end
 
         @testset "HashSink — does not throw on valid path" begin
-            btm  = new_space().btm
+            btm = new_space().btm
             e_buf = vcat(item_byte(ExprArity(UInt8(4))),
-                         item_byte(ExprSymbol(UInt8(4))), Vector{UInt8}("hash")...,
-                         _sym("r"), _sym("c"), _sym("h"))
+                item_byte(ExprSymbol(UInt8(4))), Vector{UInt8}("hash")...,
+                _sym("r"), _sym("c"), _sym("h"))
             sink = HashSink(MORK.Expr(e_buf))
             content = vcat(_sym("abc"), _sym("xyz"))
-            path    = vcat(e_buf[1:sink.skip], content)
+            path = vcat(e_buf[1:sink.skip], content)
             sink_apply!(sink, Dict(), path, btm)
             @test_nowarn sink_finalize!(sink, btm)
         end
@@ -4126,12 +4258,15 @@ const PM = PathMap.PathMap
         @testset "CountSink mode 2 — variable embed: (count (all \$k) \$k source)" begin
             # Mirrors upstream sink_count_constant: result embeds count in template
             s = new_space()
-            space_add_all_sexpr!(s, raw"""
-            (foo 1) (foo 2) (foo 3)
-            (bar x) (bar y)
-            (baz P) (baz Q) (baz R)
-            (exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all $k) $k (cux $z $y $x))))
-            """)
+            space_add_all_sexpr!(
+                s,
+                raw"""
+(foo 1) (foo 2) (foo 3)
+(bar x) (bar y)
+(baz P) (baz Q) (baz R)
+(exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all $k) $k (cux $z $y $x))))
+"""
+            )
             space_metta_calculus!(s, typemax(Int))
             out = space_dump_all_sexpr(s)
             # 3 foo × 2 bar × 3 baz = 18 unique (cux ...) combos
@@ -4141,29 +4276,35 @@ const PM = PathMap.PathMap
         @testset "CountSink mode 1 — fixed guard: (count (all eighteen) 18 source)" begin
             # Mirrors upstream sink_count_literal: only emit when count == literal
             s = new_space()
-            space_add_all_sexpr!(s, raw"""
-            (foo 1) (foo 2) (foo 3)
-            (bar x) (bar y)
-            (baz P) (baz Q) (baz R)
-            (exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all eighteen) 18 (cux $z $y $x))))
-            (exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all sixteen) 16 (cux $z $y $x))))
-            """)
+            space_add_all_sexpr!(
+                s,
+                raw"""
+(foo 1) (foo 2) (foo 3)
+(bar x) (bar y)
+(baz P) (baz Q) (baz R)
+(exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all eighteen) 18 (cux $z $y $x))))
+(exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all sixteen) 16 (cux $z $y $x))))
+"""
+            )
             space_metta_calculus!(s, typemax(Int))
             out = space_dump_all_sexpr(s)
             lines = split(out, "\n")
-            @test  any(l -> occursin("eighteen", l), lines)   # 18 matches → emitted
-            @test !any(l -> occursin("sixteen",  l), lines)   # 16 ≠ 18 → not emitted
+            @test any(l -> occursin("eighteen", l), lines)   # 18 matches → emitted
+            @test !any(l -> occursin("sixteen", l), lines)   # 16 ≠ 18 → not emitted
         end
 
         @testset "CountSink mode 3 — variable no-embed: (count (all stupid) \$k source)" begin
             # Mirrors upstream sink_count_constant: template has no $k, always emit
             s = new_space()
-            space_add_all_sexpr!(s, raw"""
-            (foo 1) (foo 2) (foo 3)
-            (bar x) (bar y)
-            (baz P) (baz Q) (baz R)
-            (exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all stupid) $k (cux $z $y $x))))
-            """)
+            space_add_all_sexpr!(
+                s,
+                raw"""
+(foo 1) (foo 2) (foo 3)
+(bar x) (bar y)
+(baz P) (baz Q) (baz R)
+(exec 0 (, (foo $x) (bar $y) (baz $z)) (O (count (all stupid) $k (cux $z $y $x))))
+"""
+            )
             space_metta_calculus!(s, typemax(Int))
             out = space_dump_all_sexpr(s)
             @test any(l -> occursin("stupid", l), split(out, "\n"))
@@ -4172,13 +4313,16 @@ const PM = PathMap.PathMap
         @testset "CountSink — two independent sinks, different sources" begin
             # Mirrors upstream count-1/count-2: independent per-variable counts
             s = new_space()
-            space_add_all_sexpr!(s, raw"""
-            (item a) (item b) (item c)
-            (item2 a) (item2 b) (item2 c) (item2 d)
-            (exec 0 (, (item $x) (item2 $y))
-                     (O (count (count-1 $k) $k $x)
-                        (count (count-2 $j) $j $y)))
-            """)
+            space_add_all_sexpr!(
+                s,
+                raw"""
+(item a) (item b) (item c)
+(item2 a) (item2 b) (item2 c) (item2 d)
+(exec 0 (, (item $x) (item2 $y))
+         (O (count (count-1 $k) $k $x)
+            (count (count-2 $j) $j $y)))
+"""
+            )
             space_metta_calculus!(s, typemax(Int))
             out = space_dump_all_sexpr(s)
             lines = split(out, "\n")
@@ -4242,7 +4386,7 @@ const PM = PathMap.PathMap
     @testset "Pure i128 ops — no truncation to 64-bit (audit P-1)" begin
         # The i128 ops used _read_i64 (8 bytes) + Int64 math → values beyond Int64
         # range were truncated. Fixed to native Int128 via _read_i128/_be_bytes(Int128).
-        v   = Int128(2)^100 + 7
+        v = Int128(2)^100 + 7
         arg = collect(reinterpret(UInt8, [hton(v)]))   # 16 BE bytes
         res = MORK.pure_apply("abs_i128", [arg])
         @test length(res) == 16
@@ -4256,9 +4400,18 @@ const PM = PathMap.PathMap
         # The *_ternarylogic ops ignored x, y, AND the selector (they rebuilt z) — and
         # u128_ternarylogic truncated to u64. Fixed via the general vpternlog
         # _ternarylogic (8-minterm LUT ≡ upstream 256-case ternary_table).
-        x = UInt8(0b11001010); y = UInt8(0b10110100); z = UInt8(0b01101001)
-        tl(s) = only(MORK.pure_apply("u8_ternarylogic",
-                     [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z), MORK._be_bytes(UInt8(s))]))
+        x = UInt8(0b11001010);
+        y = UInt8(0b10110100);
+        z = UInt8(0b01101001)
+        tl(s) = only(
+            MORK.pure_apply("u8_ternarylogic",
+                [
+                    MORK._be_bytes(x),
+                    MORK._be_bytes(y),
+                    MORK._be_bytes(z),
+                    MORK._be_bytes(UInt8(s))
+                ])
+        )
         @test tl(0xF0) == x            # selector 0xF0 ⇒ identity on x
         @test tl(0xCC) == y            # 0xCC ⇒ y
         @test tl(0xAA) == z            # 0xAA ⇒ z
@@ -4266,8 +4419,15 @@ const PM = PathMap.PathMap
         @test tl(0x80) == (x & y & z)  # AND
         # u128 path: full width + selector honored (was truncating to u64, ignoring s)
         vx = UInt128(2)^100
-        @test MORK._read_u128(MORK.pure_apply("u128_ternarylogic",
-            [MORK._be_bytes(vx), MORK._be_bytes(UInt128(0)), MORK._be_bytes(UInt128(0)), MORK._be_bytes(0xF0)])) == vx
+        @test MORK._read_u128(
+            MORK.pure_apply("u128_ternarylogic",
+                [
+                    MORK._be_bytes(vx),
+                    MORK._be_bytes(UInt128(0)),
+                    MORK._be_bytes(UInt128(0)),
+                    MORK._be_bytes(0xF0)
+                ])
+        ) == vx
     end
 
     @testset "Pure u128 bitwise — full 128-bit width + nary folds (audit P-1/P-3)" begin
@@ -4279,23 +4439,27 @@ const PM = PathMap.PathMap
         u128(b) = MORK._read_u128(b)
         u64r(b) = ntoh(only(reinterpret(UInt64, b[1:8])))
         allones = ~UInt128(0)
-        hi      = UInt128(0x0102030405060708090a0b0c0d0e0f10)
+        hi = UInt128(0x0102030405060708090a0b0c0d0e0f10)
         # population counts span all 128 bits (was capped at 64)
-        @test u64r(MORK.pure_apply("u128_count_ones",   [b128(allones)]))   == 128
-        @test u64r(MORK.pure_apply("u128_count_zeros",  [b128(0)]))         == 128
-        @test u64r(MORK.pure_apply("u128_leading_zeros",[b128(0)]))         == 128
-        @test u64r(MORK.pure_apply("u128_leading_ones", [b128(allones)]))   == 128
+        @test u64r(MORK.pure_apply("u128_count_ones", [b128(allones)])) == 128
+        @test u64r(MORK.pure_apply("u128_count_zeros", [b128(0)])) == 128
+        @test u64r(MORK.pure_apply("u128_leading_zeros", [b128(0)])) == 128
+        @test u64r(MORK.pure_apply("u128_leading_ones", [b128(allones)])) == 128
         # N-ary folds over >2 args
-        @test u128(MORK.pure_apply("u128_and", [b128(allones), b128(allones), b128(hi)])) == hi
-        @test u128(MORK.pure_apply("u128_or",  [b128(0), b128(hi), b128(0)]))             == hi
-        @test u128(MORK.pure_apply("u128_parity", [b128(hi), b128(hi), b128(hi)]))        == hi  # x^x^x
+        @test u128(MORK.pure_apply("u128_and", [b128(allones), b128(allones), b128(hi)])) ==
+            hi
+        @test u128(MORK.pure_apply("u128_or", [b128(0), b128(hi), b128(0)])) == hi
+        @test u128(MORK.pure_apply("u128_parity", [b128(hi), b128(hi), b128(hi)])) == hi  # x^x^x
         # binary bit ops touch the high 64 bits
-        @test u128(MORK.pure_apply("u128_not",          [b128(hi)]))               == ~hi
-        @test u128(MORK.pure_apply("u128_nand",         [b128(allones), b128(hi)])) == ~(allones & hi)
-        @test u128(MORK.pure_apply("u128_andn",         [b128(allones), b128(hi)])) == (allones & ~hi)
-        @test u128(MORK.pure_apply("u128_swap_bytes",   [b128(hi)]))               == bswap(hi)
-        @test u128(MORK.pure_apply("u128_reverse_bits", [b128(hi)]))               == bitreverse(hi)
-        @test u128(MORK.pure_apply("u128_shl", [b128(1), MORK._be_bytes(UInt64(100))])) == (UInt128(1) << 100)
+        @test u128(MORK.pure_apply("u128_not", [b128(hi)])) == ~hi
+        @test u128(MORK.pure_apply("u128_nand", [b128(allones), b128(hi)])) ==
+            ~(allones & hi)
+        @test u128(MORK.pure_apply("u128_andn", [b128(allones), b128(hi)])) ==
+            (allones & ~hi)
+        @test u128(MORK.pure_apply("u128_swap_bytes", [b128(hi)])) == bswap(hi)
+        @test u128(MORK.pure_apply("u128_reverse_bits", [b128(hi)])) == bitreverse(hi)
+        @test u128(MORK.pure_apply("u128_shl", [b128(1), MORK._be_bytes(UInt64(100))])) ==
+            (UInt128(1) << 100)
     end
 
     @testset "expr_span ≡ _expr_end_offset at all offsets (E-1 retracted; S-1 drift guard)" begin
@@ -4303,24 +4467,43 @@ const PM = PathMap.PathMap
         # canonical recursive _expr_end_offset shows EQUIVALENCE at every item offset,
         # including nested/compound positions — so it is NOT a live bug. This pins the
         # two impls so they cannot silently drift apart (S-1: 3 competing span impls).
-        A(n)  = item_byte(ExprArity(UInt8(n)))
+        A(n) = item_byte(ExprArity(UInt8(n)))
         Sy(s) = vcat(item_byte(ExprSymbol(UInt8(length(s)))), Vector{UInt8}(codeunits(s)))
-        NV()  = item_byte(ExprNewVar()); VR(i) = item_byte(ExprVarRef(UInt8(i)))
+        NV() = item_byte(ExprNewVar());
+        VR(i) = item_byte(ExprVarRef(UInt8(i)))
         function starts!(buf, off, acc)
             off > length(buf) && return off
-            push!(acc, off); t = byte_item(buf[off])
-            if t isa ExprSymbol; return off + 1 + Int(t.size)
-            elseif t isa ExprArity; cur = off + 1; for _ in 1:Int(t.arity); cur = starts!(buf, cur, acc); end; return cur
-            else; return off + 1; end
+            push!(acc, off);
+            t = byte_item(buf[off])
+            if t isa ExprSymbol
+                ;
+                return off + 1 + Int(t.size)
+            elseif t isa ExprArity
+                ;
+                cur = off + 1;
+                for _ in 1:Int(t.arity)
+                    ;
+                    cur = starts!(buf, cur, acc);
+                end;
+                return cur
+            else
+                ;
+                return off + 1;
+            end
         end
         bufs = [vcat(A(2), Sy("a"), Sy("b")), vcat(A(2), Sy("a"), A(2), Sy("b"), Sy("c")),
-                vcat(A(3), Sy("a"), NV(), Sy("b")), vcat(A(2), Sy("a"), A(0)),
-                vcat(A(2), A(2), Sy("a"), Sy("b"), A(3), Sy("c"), Sy("d"), Sy("e")),
-                vcat(A(1), A(1), A(1), Sy("z")), vcat(A(3), Sy("f"), A(2), Sy("g"), NV(), VR(2))]
+            vcat(A(3), Sy("a"), NV(), Sy("b")), vcat(A(2), Sy("a"), A(0)),
+            vcat(A(2), A(2), Sy("a"), Sy("b"), A(3), Sy("c"), Sy("d"), Sy("e")),
+            vcat(A(1), A(1), A(1), Sy("z")), vcat(
+                A(3), Sy("f"), A(2), Sy("g"), NV(), VR(2)
+            )]
         for buf in bufs
-            e = MORK.Expr(buf); acc = Int[]; starts!(buf, 1, acc)
+            e = MORK.Expr(buf);
+            acc = Int[];
+            starts!(buf, 1, acc)
             for off in acc
-                @test off + length(MORK.expr_span(e, off)) == MORK._expr_end_offset(buf, off)
+                @test off + length(MORK.expr_span(e, off)) ==
+                    MORK._expr_end_offset(buf, off)
             end
         end
     end

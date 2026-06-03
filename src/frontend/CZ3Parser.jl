@@ -17,19 +17,28 @@ Julia translation notes:
 # =====================================================================
 
 abstract type CZ3Item end
-struct CZ3NewVar      <: CZ3Item end
-struct CZ3VarRef      <: CZ3Item; index::UInt8; end
-struct CZ3Symbol      <: CZ3Item; value::UInt32; end
-struct CZ3Arity       <: CZ3Item; arity::UInt8; end
+struct CZ3NewVar <: CZ3Item end
+struct CZ3VarRef <: CZ3Item
+    ;
+    index::UInt8;
+end
+struct CZ3Symbol <: CZ3Item
+    ;
+    value::UInt32;
+end
+struct CZ3Arity <: CZ3Item
+    ;
+    arity::UInt8;
+end
 
 # =====================================================================
 # Breadcrumb — mirrors Breadcrumb struct
 # =====================================================================
 
 mutable struct CZ3Breadcrumb
-    parent ::UInt32
-    arity  ::UInt8
-    seen   ::UInt8
+    parent::UInt32
+    arity::UInt8
+    seen::UInt8
 end
 
 # =====================================================================
@@ -37,9 +46,9 @@ end
 # =====================================================================
 
 mutable struct CZ3ExprZipper
-    buf   ::Vector{CZ3Item}   # the flat item buffer
-    loc   ::Int               # current position (1-based)
-    trace ::Vector{CZ3Breadcrumb}
+    buf::Vector{CZ3Item}   # the flat item buffer
+    loc::Int               # current position (1-based)
+    trace::Vector{CZ3Breadcrumb}
 end
 
 function CZ3ExprZipper(buf::Vector{CZ3Item})
@@ -56,23 +65,43 @@ end
 CZ3ExprZipper() = CZ3ExprZipper(CZ3Item[])
 
 function _cz3_write_arity!(z::CZ3ExprZipper, a::UInt8)
-    if z.loc > length(z.buf); push!(z.buf, CZ3Arity(a))
-    else; z.buf[z.loc] = CZ3Arity(a); end
+    if z.loc > length(z.buf)
+        ;
+        push!(z.buf, CZ3Arity(a))
+    else
+        ;
+        z.buf[z.loc] = CZ3Arity(a);
+    end
 end
 
 function _cz3_write_symbol!(z::CZ3ExprZipper, v::UInt32)
-    if z.loc > length(z.buf); push!(z.buf, CZ3Symbol(v))
-    else; z.buf[z.loc] = CZ3Symbol(v); end
+    if z.loc > length(z.buf)
+        ;
+        push!(z.buf, CZ3Symbol(v))
+    else
+        ;
+        z.buf[z.loc] = CZ3Symbol(v);
+    end
 end
 
 function _cz3_write_new_var!(z::CZ3ExprZipper)
-    if z.loc > length(z.buf); push!(z.buf, CZ3NewVar())
-    else; z.buf[z.loc] = CZ3NewVar(); end
+    if z.loc > length(z.buf)
+        ;
+        push!(z.buf, CZ3NewVar())
+    else
+        ;
+        z.buf[z.loc] = CZ3NewVar();
+    end
 end
 
 function _cz3_write_var_ref!(z::CZ3ExprZipper, idx::UInt8)
-    if z.loc > length(z.buf); push!(z.buf, CZ3VarRef(idx))
-    else; z.buf[z.loc] = CZ3VarRef(idx); end
+    if z.loc > length(z.buf)
+        ;
+        push!(z.buf, CZ3VarRef(idx))
+    else
+        ;
+        z.buf[z.loc] = CZ3VarRef(idx);
+    end
 end
 
 # Update arity at position pos
@@ -86,7 +115,7 @@ end
 # Helpers
 # =====================================================================
 
-function _cz3_index_of(vars::Vector{String}, name::String) :: Int
+function _cz3_index_of(vars::Vector{String}, name::String)::Int
     for (i, v) in enumerate(vars)
         v == name && return i - 1
     end
@@ -100,16 +129,18 @@ _cz3_is_whitespace(c::Char) = c == ' ' || c == '\t' || c == '\n'
 # =====================================================================
 
 mutable struct CZ3Iter
-    data   ::Vector{UInt8}
-    cursor ::Int
+    data::Vector{UInt8}
+    cursor::Int
 end
 
 CZ3Iter(s::String) = CZ3Iter(Vector{UInt8}(s), 1)
 
 _cz3_has_next(it::CZ3Iter) = it.cursor <= length(it.data)
-_cz3_head(it::CZ3Iter)     = _cz3_has_next(it) ? Char(it.data[it.cursor]) : '\0'
-function _cz3_next!(it::CZ3Iter) :: Char
-    c = Char(it.data[it.cursor]); it.cursor += 1; c
+_cz3_head(it::CZ3Iter) = _cz3_has_next(it) ? Char(it.data[it.cursor]) : '\0'
+function _cz3_next!(it::CZ3Iter)::Char
+    c = Char(it.data[it.cursor]);
+    it.cursor += 1;
+    c
 end
 
 # =====================================================================
@@ -117,10 +148,10 @@ end
 # =====================================================================
 
 mutable struct CZ3Parser
-    tokenizer ::Function   # String → Int64 (symbol id)
+    tokenizer::Function   # String → Int64 (symbol id)
 end
 
-CZ3Parser(; tokenizer::Function = s -> hash(s) % typemax(Int32)) = CZ3Parser(tokenizer)
+CZ3Parser(; tokenizer::Function=s -> hash(s) % typemax(Int32)) = CZ3Parser(tokenizer)
 
 # =====================================================================
 # sexprUnsafe — mirrors Parser::sexprUnsafe in cz3_parser.rs
@@ -129,13 +160,15 @@ CZ3Parser(; tokenizer::Function = s -> hash(s) % typemax(Int32)) = CZ3Parser(tok
 # =====================================================================
 
 function cz3_sexpr!(p::CZ3Parser, it::CZ3Iter,
-                    vars::Vector{String},
-                    target::CZ3ExprZipper) :: Bool
+    vars::Vector{String},
+    target::CZ3ExprZipper)::Bool
     while _cz3_has_next(it)
         c = _cz3_head(it)
 
         if c == ';'
-            while _cz3_has_next(it) && _cz3_next!(it) != '\n'; end
+            while _cz3_has_next(it) && _cz3_next!(it) != '\n'
+                ;
+            end
 
         elseif _cz3_is_whitespace(c)
             _cz3_next!(it)
@@ -149,7 +182,7 @@ function cz3_sexpr!(p::CZ3Parser, it::CZ3Iter,
                 write(sb, _cz3_next!(it))
             end
             id_str = String(take!(sb))
-            ind    = _cz3_index_of(vars, id_str)
+            ind = _cz3_index_of(vars, id_str)
             if ind == -1
                 push!(vars, id_str)
                 _cz3_write_new_var!(target)
@@ -184,15 +217,22 @@ function cz3_sexpr!(p::CZ3Parser, it::CZ3Iter,
         else
             sym_str = if _cz3_has_next(it) && _cz3_head(it) == '"'
                 _cz3_next!(it)
-                sb = IOBuffer(); write(sb, '"')
+                sb = IOBuffer();
+                write(sb, '"')
                 cont = true
                 while _cz3_has_next(it) && cont
                     ch = _cz3_next!(it)
-                    if ch == '"'; write(sb, '"'); cont = false
+                    if ch == '"'
+                        ;
+                        write(sb, '"');
+                        cont = false
                     elseif ch == '\\'
                         _cz3_has_next(it) || error("Escaping sequence is not finished")
                         write(sb, _cz3_next!(it))
-                    else; write(sb, ch); end
+                    else
+                        ;
+                        write(sb, ch);
+                    end
                 end
                 String(take!(sb))
             else

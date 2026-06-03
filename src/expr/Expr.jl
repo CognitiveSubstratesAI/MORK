@@ -26,22 +26,42 @@ Mirrors `Tag` in mork/expr/src/lib.rs.
 """
 abstract type ExprTag end
 
-struct ExprNewVar  <: ExprTag end
-struct ExprVarRef  <: ExprTag; idx::UInt8 end   # 0-based back-reference
-struct ExprSymbol  <: ExprTag; size::UInt8 end   # 1..63 bytes follow
-struct ExprArity   <: ExprTag; arity::UInt8 end  # 0..63 children follow
+struct ExprNewVar <: ExprTag end
+struct ExprVarRef <: ExprTag
+    ;
+    idx::UInt8
+end   # 0-based back-reference
+struct ExprSymbol <: ExprTag
+    ;
+    size::UInt8
+end   # 1..63 bytes follow
+struct ExprArity <: ExprTag
+    ;
+    arity::UInt8
+end  # 0..63 children follow
 
 """
     item_byte(tag::ExprTag) → UInt8
 
 Encode an ExprTag as a single byte.  Mirrors `item_byte` in mork_expr.
 """
-function item_byte(tag::ExprTag) :: UInt8
-    if tag isa ExprNewVar;  return 0b11000000
-    elseif tag isa ExprVarRef;   return 0b10000000 | (tag.idx & 0x3f)
-    elseif tag isa ExprSymbol;   return 0b11000000 | (tag.size & 0x3f)
-    elseif tag isa ExprArity;    return 0b00000000 | (tag.arity & 0x3f)
-    else; error("Unknown ExprTag"); end
+function item_byte(tag::ExprTag)::UInt8
+    if tag isa ExprNewVar
+        ;
+        return 0b11000000
+    elseif tag isa ExprVarRef
+        ;
+        return 0b10000000 | (tag.idx & 0x3f)
+    elseif tag isa ExprSymbol
+        ;
+        return 0b11000000 | (tag.size & 0x3f)
+    elseif tag isa ExprArity
+        ;
+        return 0b00000000 | (tag.arity & 0x3f)
+    else
+        ;
+        error("Unknown ExprTag");
+    end
 end
 
 """
@@ -49,7 +69,7 @@ end
 
 Decode a byte into an ExprTag.  Mirrors `byte_item` in mork_expr.
 """
-function byte_item(b::UInt8) :: ExprTag
+function byte_item(b::UInt8)::ExprTag
     if b == 0b11000000
         return ExprNewVar()
     elseif (b & 0b11000000) == 0b11000000
@@ -95,16 +115,16 @@ function expr_span(e::Expr, offset::Int=1)
         tag = byte_item(e.buf[i])
         if tag isa ExprSymbol
             i += 1 + Int(tag.size)
-            depth == 0 && return view(e.buf, offset:i-1)
+            depth == 0 && return view(e.buf, offset:(i - 1))
         elseif tag isa ExprArity
             i += 1
-            tag.arity == 0 && depth == 0 && return view(e.buf, offset:i-1)
+            tag.arity == 0 && depth == 0 && return view(e.buf, offset:(i - 1))
             depth += Int(tag.arity)
         else  # NewVar or VarRef — leaf
             i += 1
-            depth == 0 && return view(e.buf, offset:i-1)
+            depth == 0 && return view(e.buf, offset:(i - 1))
         end
-        depth == 0 && return view(e.buf, offset:i-1)
+        depth == 0 && return view(e.buf, offset:(i - 1))
         depth -= 1
     end
     view(e.buf, offset:length(e.buf))
@@ -121,8 +141,8 @@ Cursor for traversing a flat byte-encoded expression.
 Mirrors `ExprZipper` in mork_expr.
 """
 mutable struct ExprZipper
-    root ::Expr
-    loc  ::Int       # current byte offset (1-based)
+    root::Expr
+    loc::Int       # current byte offset (1-based)
 end
 
 ExprZipper(e::Expr) = ExprZipper(e, 1)
@@ -135,7 +155,7 @@ ez_tag(z::ExprZipper) = expr_tag_at(z.root, z.loc)
 ez_item(z::ExprZipper) = z.root.buf[z.loc]
 
 """Advance the zipper past the current leaf/expression. Returns false if done."""
-function ez_next!(z::ExprZipper) :: Bool
+function ez_next!(z::ExprZipper)::Bool
     i = z.loc
     length(z.root) < i && return false
     tag = byte_item(z.root.buf[i])
@@ -156,7 +176,7 @@ ez_span(z::ExprZipper) = expr_span(z.root, z.loc)
 function ez_symbol(z::ExprZipper)
     tag = byte_item(z.root.buf[z.loc])
     tag isa ExprSymbol || return UInt8[]
-    view(z.root.buf, z.loc+1 : z.loc + Int(tag.size))
+    view(z.root.buf, (z.loc + 1):(z.loc + Int(tag.size)))
 end
 
 """Ensure buffer has at least `needed` bytes total, resizing if required."""
@@ -208,7 +228,7 @@ function ez_write_move!(z::ExprZipper, bytes::AbstractVector{UInt8})
 end
 
 """Final span (the expression from start to current position)."""
-ez_finish_span(z::ExprZipper) = view(z.root.buf, 1:z.loc-1)
+ez_finish_span(z::ExprZipper) = view(z.root.buf, 1:(z.loc - 1))
 
 # =====================================================================
 # serialize — bytes → human-readable string
@@ -220,7 +240,7 @@ ez_finish_span(z::ExprZipper) = view(z.root.buf, 1:z.loc-1)
 Convert a flat byte-encoded expression to a human-readable s-expression string.
 Mirrors `SerializerTraversal` in mork_expr (produces parenthesized s-expressions).
 """
-function expr_serialize(bytes::AbstractVector{UInt8}) :: String
+function expr_serialize(bytes::AbstractVector{UInt8})::String
     io = IOBuffer()
     # Stack tracks (children_remaining) for open arity nodes.
     # When children_remaining hits 0 we close with ')'.
@@ -241,10 +261,13 @@ function expr_serialize(bytes::AbstractVector{UInt8}) :: String
             transient && write(io, ' ')
             n = Int(tag.size)
             i += 1
-            for j in i:min(i+n-1, length(bytes))
+            for j in i:min(i + n - 1, length(bytes))
                 cb = bytes[j]
-                (isprint(Char(cb)) && cb != UInt8('\\')) ?
-                    write(io, Char(cb)) : write(io, "\\x$(string(cb, base=16, pad=2))")
+                if (isprint(Char(cb)) && cb != UInt8('\\'))
+                    write(io, Char(cb))
+                else
+                    write(io, "\\x$(string(cb, base=16, pad=2))")
+                end
             end
             i += n
             transient = true
@@ -302,10 +325,10 @@ Expression cursor with source-ID scoping for unification.
 Mirrors `ExprEnv { n, v, offset, base }` in mork_expr.
 """
 struct ExprEnv
-    n      ::UInt8   # source id (0, 1, ...)
-    v      ::UInt8   # next free var index
-    offset ::UInt32  # byte offset into base
-    base   ::Expr    # backing expression
+    n::UInt8   # source id (0, 1, ...)
+    v::UInt8   # next free var index
+    offset::UInt32  # byte offset into base
+    base::Expr    # backing expression
 end
 
 ExprEnv(n::Integer, base::Expr) = ExprEnv(UInt8(n), UInt8(0), UInt32(0), base)
@@ -313,15 +336,22 @@ ExprEnv(n::Integer, base::Vector{UInt8}) = ExprEnv(n, Expr(base))
 
 """Sub-expression at current offset."""
 function ee_subsexpr(ee::ExprEnv)
-    Expr(view(ee.base.buf, Int(ee.offset)+1:length(ee.base.buf)))
+    Expr(view(ee.base.buf, (Int(ee.offset) + 1):length(ee.base.buf)))
 end
 
 """Variable at current position, or nothing."""
-function ee_var_opt(ee::ExprEnv) :: Union{Nothing, ExprVar}
-    tag = byte_item(ee.base.buf[Int(ee.offset)+1])
-    if tag isa ExprNewVar;  return (ee.n, ee.v)
-    elseif tag isa ExprVarRef; return (ee.n, tag.idx)
-    else; return nothing; end
+function ee_var_opt(ee::ExprEnv)::Union{Nothing, ExprVar}
+    tag = byte_item(ee.base.buf[Int(ee.offset) + 1])
+    if tag isa ExprNewVar
+        ;
+        return (ee.n, ee.v)
+    elseif tag isa ExprVarRef
+        ;
+        return (ee.n, tag.idx)
+    else
+        ;
+        return nothing;
+    end
 end
 
 """Advance offset past the current expression item."""
@@ -375,9 +405,9 @@ Mirrors `ExtractFailure` in mork_expr.
 end
 
 struct ExtractFailure
-    kind ::ExtractFailureKind
-    a    ::UInt8
-    b    ::UInt8
+    kind::ExtractFailureKind
+    a::UInt8
+    b::UInt8
     sym_a::Vector{UInt8}
     sym_b::Vector{UInt8}
     tag_a::Union{Nothing, ExprTag}
@@ -407,13 +437,16 @@ Syntax:
   - `_N`   → VarRef(N-1)
   - `word` → Symbol(word)
 """
-function expr_parse_str(s::AbstractString) :: MORK.Expr
+function expr_parse_str(s::AbstractString)::MORK.Expr
     out = UInt8[]
-    i   = 1
-    n   = length(s)
+    i = 1
+    n = length(s)
     while i <= n
         # skip spaces
-        while i <= n && s[i] == ' '; i += 1; end
+        while i <= n && s[i] == ' '
+            ;
+            i += 1;
+        end
         i > n && break
         c = s[i]
         if c == '['
@@ -442,7 +475,7 @@ function expr_parse_str(s::AbstractString) :: MORK.Expr
             while i <= n && s[i] != ' '
                 i += 1
             end
-            sym_bytes = Vector{UInt8}(s[start:i-1])
+            sym_bytes = Vector{UInt8}(s[start:(i - 1)])
             n_sym = UInt8(length(sym_bytes))
             push!(out, item_byte(ExprSymbol(n_sym)))
             append!(out, sym_bytes)
@@ -462,12 +495,12 @@ end
 # Examples: "a" → full; "(isa)" → full; "(isa $x $y)" → [Arity3, "isa"];
 # "$x" → []. Mirrors upstream `derive_prefix_from_expr_slice` +
 # `till_constant_to_full` (upstream 83d1276).
-function _derive_prefix(expr::Expr) :: Vector{UInt8}
+function _derive_prefix(expr::Expr)::Vector{UInt8}
     buf = expr.buf
-    n   = length(buf)
+    n = length(buf)
     i = 1
     while i <= n
-        b   = buf[i]
+        b = buf[i]
         tag = byte_item(b)
         if tag isa ExprNewVar || tag isa ExprVarRef
             break
@@ -479,7 +512,7 @@ function _derive_prefix(expr::Expr) :: Vector{UInt8}
             break
         end
     end
-    buf[1:i-1]
+    buf[1:(i - 1)]
 end
 
 # =====================================================================

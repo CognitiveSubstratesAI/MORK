@@ -4,7 +4,9 @@ using MORK, Test
 
 @testset "roman_disjoin_initial — set intersections via 4-source match" begin
     s = new_space()
-    space_add_all_sexpr!(s, """
+    space_add_all_sexpr!(
+        s,
+        """
 (set 1 a) (set 1 b) (set 1 c)
 (set 2 d) (set 2 e) (set 2 f)
 (set 3 a) (set 3 b)
@@ -23,7 +25,8 @@ using MORK, Test
 (exec 2
     (, (intersection \$a \$b Nil) (neq Nil \$e2) (intersection \$a \$b \$e2)  )
     (O (- (intersection \$a \$b Nil) ) ) )
-    """)
+    """
+    )
     steps = space_metta_calculus!(s, 100_000)
     @test steps < 100_000
     result = space_dump_all_sexpr(s)

@@ -55,8 +55,8 @@ function sink_finalize! end
 # Empty prefix is never wrapped (callers pass the bare `PathMap`), so the root
 # path is byte-identical and zero-overhead.
 struct PrefixBtm
-    inner  ::PathMap{UnitVal}
-    prefix ::Vector{UInt8}
+    inner::PathMap{UnitVal}
+    prefix::Vector{UInt8}
 end
 
 const SinkBtm = Union{PathMap{UnitVal}, PrefixBtm}
@@ -72,11 +72,13 @@ const SinkBtm = Union{PathMap{UnitVal}, PrefixBtm}
 # `import PathMap: ez_reset!` pattern in MORK.jl.
 import PathMap: set_val_at!, get_val_at, remove_val_at!, read_zipper, write_zipper
 
-set_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}, v) = set_val_at!(p.inner, _pp(p, path), v)
-get_val_at(p::PrefixBtm, path::AbstractVector{UInt8})     = get_val_at(p.inner, _pp(p, path))
-remove_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}) = remove_val_at!(p.inner, _pp(p, path))
+set_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}, v) =
+    set_val_at!(p.inner, _pp(p, path), v)
+get_val_at(p::PrefixBtm, path::AbstractVector{UInt8}) = get_val_at(p.inner, _pp(p, path))
+remove_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}) =
+    remove_val_at!(p.inner, _pp(p, path))
 # Zippers root at the prefix node so descend/iterate stay anchor-relative.
-read_zipper(p::PrefixBtm)  = read_zipper_at_path(p.inner, p.prefix)
+read_zipper(p::PrefixBtm) = read_zipper_at_path(p.inner, p.prefix)
 write_zipper(p::PrefixBtm) = write_zipper_at_path(p.inner, p.prefix)
 
 # =====================================================================
@@ -90,13 +92,17 @@ Return the longest constant prefix of expression `e` — the bytes before the
 first variable or compound subexpression.  Used by sinks to scope their
 WriteZipper to the appropriate path.
 """
-function _sink_prefix(e::MORK.Expr) :: Vector{UInt8}
+function _sink_prefix(e::MORK.Expr)::Vector{UInt8}
     buf = e.buf
-    n   = length(buf)
-    i   = 1
+    n = length(buf)
+    i = 1
     while i <= n
-        b   = buf[i]
-        tag = try byte_item(b) catch; break end
+        b = buf[i]
+        tag = try
+            byte_item(b)
+        catch
+            ; break
+        end
         if tag isa ExprNewVar || tag isa ExprVarRef
             break
         elseif tag isa ExprArity
@@ -106,7 +112,7 @@ function _sink_prefix(e::MORK.Expr) :: Vector{UInt8}
             i += 1 + Int(tag.size)   # include symbol bytes
         end
     end
-    buf[1:i-1]
+    buf[1:(i - 1)]
 end
 
 # =====================================================================
@@ -120,18 +126,18 @@ Insert each matched path verbatim into the destination PathMap.
 Mirrors `CompatSink` in sinks.rs.
 """
 mutable struct CompatSink <: AbstractSink
-    expr    ::MORK.Expr
-    changed ::Bool
+    expr::MORK.Expr
+    changed::Bool
 end
 
 CompatSink(e::MORK.Expr) = CompatSink(e, false)
 
-function sink_apply!(s::CompatSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
+function sink_apply!(s::CompatSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
     set_val_at!(btm, path, UNIT_VAL) === nothing && (s.changed = true)
 end
 
-sink_finalize!(s::CompatSink, ::SinkBtm) :: Bool = s.changed
+sink_finalize!(s::CompatSink, ::SinkBtm)::Bool = s.changed
 
 # =====================================================================
 # AddSink — [2] + <expr>: insert after skipping [2]+ prefix
@@ -144,19 +150,19 @@ Insert matched paths, skipping the first 3 bytes (`[2] +`).
 Mirrors `AddSink` in sinks.rs.
 """
 mutable struct AddSink <: AbstractSink
-    expr    ::MORK.Expr
-    changed ::Bool
+    expr::MORK.Expr
+    changed::Bool
 end
 
 AddSink(e::MORK.Expr) = AddSink(e, false)
 
-function sink_apply!(s::AddSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
-    length(path) > 3 || return
+function sink_apply!(s::AddSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
+    length(path) > 3 || return nothing
     set_val_at!(btm, path[4:end], UNIT_VAL) === nothing && (s.changed = true)
 end
 
-sink_finalize!(s::AddSink, ::SinkBtm) :: Bool = s.changed
+sink_finalize!(s::AddSink, ::SinkBtm)::Bool = s.changed
 
 # =====================================================================
 # RemoveSink — [2] - <expr>: collect paths to remove, apply in finalize
@@ -171,19 +177,19 @@ Mirrors `RemoveSink` in sinks.rs.
 # Upstream: collects paths into an internal PathMap, then calls wz.subtract_into
 # on finalize — one trie-level operation instead of N individual removes.
 mutable struct RemoveSink <: AbstractSink
-    expr   ::MORK.Expr
-    remove ::PathMap{UnitVal}
+    expr::MORK.Expr
+    remove::PathMap{UnitVal}
 end
 
 RemoveSink(e::MORK.Expr) = RemoveSink(e, PathMap{UnitVal}())
 
-function sink_apply!(s::RemoveSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
-    length(path) > 3 || return
+function sink_apply!(s::RemoveSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
+    length(path) > 3 || return nothing
     set_val_at!(s.remove, path[4:end], UNIT_VAL)
 end
 
-function sink_finalize!(s::RemoveSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::RemoveSink, btm::SinkBtm)::Bool
     # Subtract collected paths from btm using per-path removal.
     changed = false
     rz = read_zipper(s.remove)
@@ -212,12 +218,12 @@ Mirrors `HeadSink` in sinks.rs.
 # top tracks the lexicographically largest path in head (for O(1) displacement check).
 # finalize uses wz_join_into! (one trie-level merge instead of N individual inserts).
 mutable struct HeadSink <: AbstractSink
-    expr  ::MORK.Expr
-    head  ::PathMap{UnitVal}  # collected paths — mirrors upstream PathMap<()>
-    skip  ::Int
-    count ::Int
-    max   ::Int
-    top   ::Vector{UInt8}     # largest path in head (mirrors upstream top: Vec<u8>)
+    expr::MORK.Expr
+    head::PathMap{UnitVal}  # collected paths — mirrors upstream PathMap<()>
+    skip::Int
+    count::Int
+    max::Int
+    top::Vector{UInt8}     # largest path in head (mirrors upstream top: Vec<u8>)
 end
 
 function HeadSink(e::MORK.Expr)
@@ -227,10 +233,10 @@ function HeadSink(e::MORK.Expr)
     if length(buf) >= 8 && byte_item(buf[1]) isa ExprArity
         num_tag = byte_item(buf[7])
         if num_tag isa ExprSymbol
-            num_str = String(buf[8 : 7 + Int(num_tag.size)])
-            parsed  = tryparse(Int, num_str)
+            num_str = String(buf[8:(7 + Int(num_tag.size))])
+            parsed = tryparse(Int, num_str)
             if parsed !== nothing
-                skip  = 1 + 1 + 4 + 1 + Int(num_tag.size)
+                skip = 1 + 1 + 4 + 1 + Int(num_tag.size)
                 max_n = parsed
             end
         end
@@ -238,14 +244,14 @@ function HeadSink(e::MORK.Expr)
     HeadSink(e, PathMap{UnitVal}(), skip, 0, max_n, UInt8[])
 end
 
-function sink_apply!(s::HeadSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
-    length(path) <= s.skip && return
-    mpath = path[s.skip+1:end]
+function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
+    length(path) <= s.skip && return nothing
+    mpath = path[(s.skip + 1):end]
     if s.count == s.max
         # At capacity: only accept if mpath < top (displaces current largest)
         if mpath >= s.top
-            return  # doesn't displace
+            return nothing  # doesn't displace
         end
         set_val_at!(s.head, mpath, UNIT_VAL)
         remove_val_at!(s.head, s.top)
@@ -263,7 +269,7 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar,ExprEnv},
     end
 end
 
-function sink_finalize!(s::HeadSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::HeadSink, btm::SinkBtm)::Bool
     s.head.root === nothing && return false   # empty head — nothing to join
     wz = write_zipper(btm)
     # wz_join_into! takes an AbstractNodeRef, not a TrieNodeODRc — passing the bare
@@ -295,35 +301,35 @@ Mirrors `CountSink` in sinks.rs. Three modes from upstream tests:
        Example: `(count (all stupid) \$k source)` → always emits `(all stupid)`
 """
 mutable struct CountSink <: AbstractSink
-    expr        ::MORK.Expr
+    expr::MORK.Expr
     # Groups: (template_bytes, count_var_bytes, unique_sources PathMap)
     # count_var_bytes = raw bytes of arg3 (literal or variable).
-    by_template ::Vector{Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}}
+    by_template::Vector{Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}}
 end
 
 CountSink(e::MORK.Expr) =
     CountSink(e, Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}[])
 
-function sink_apply!(s::CountSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
+function sink_apply!(s::CountSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
     # path = bound expression: (count <template> <count-var> <source>)
-    length(path) < 7 && return
+    length(path) < 7 && return nothing
     args = ExprEnv[]
     ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(path)), args)
-    length(args) < 4 && return
+    length(args) < 4 && return nothing
 
     tpl_start = Int(args[2].offset) + 1
-    tpl_end   = _expr_end_offset(path, tpl_start)
-    tpl_bytes = path[tpl_start : tpl_end-1]
+    tpl_end = _expr_end_offset(path, tpl_start)
+    tpl_bytes = path[tpl_start:(tpl_end - 1)]
 
     # arg3 = count-var or fixed guard value
     var_start = Int(args[3].offset) + 1
-    var_end   = _expr_end_offset(path, var_start)
-    var_bytes = path[var_start : var_end-1]
+    var_end = _expr_end_offset(path, var_start)
+    var_bytes = path[var_start:(var_end - 1)]
 
     src_start = Int(args[4].offset) + 1
-    src_end   = _expr_end_offset(path, src_start)
-    src_bytes = path[src_start : src_end-1]
+    src_end = _expr_end_offset(path, src_start)
+    src_bytes = path[src_start:(src_end - 1)]
 
     # Group by (template, count-var) — both vary with outer variable bindings
     entry = findfirst(t -> t[1] == tpl_bytes && t[2] == var_bytes, s.by_template)
@@ -334,19 +340,22 @@ function sink_apply!(s::CountSink, bindings::Dict{ExprVar,ExprEnv},
     set_val_at!(s.by_template[entry][3], src_bytes, UNIT_VAL)
 end
 
-function sink_finalize!(s::CountSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
     changed = false
     for (tpl_bytes, var_bytes, sources) in s.by_template
-        cnt      = val_count(sources)
-        cnt_str  = string(cnt)
+        cnt = val_count(sources)
+        cnt_str = string(cnt)
         cnt_mork = vcat(item_byte(ExprSymbol(UInt8(length(cnt_str)))),
-                        Vector{UInt8}(cnt_str))
+            Vector{UInt8}(cnt_str))
 
         # Mode 1 (fixed guard): var_bytes is a literal symbol, not a variable.
         # Only emit if actual count matches the literal exactly.
-        is_var = !isempty(var_bytes) &&
-                 (byte_item(var_bytes[1]) isa ExprNewVar ||
-                  byte_item(var_bytes[1]) isa ExprVarRef)
+        is_var =
+            !isempty(var_bytes) &&
+            (
+                byte_item(var_bytes[1]) isa ExprNewVar ||
+                byte_item(var_bytes[1]) isa ExprVarRef
+            )
 
         out = if is_var
             # Mode 2/3: substitute count into template variable, or emit as-is.
@@ -377,29 +386,32 @@ Sum matched big-endian integer values and store result.
 Mirrors `SumSink` in sinks.rs (simplified).
 """
 mutable struct SumSink <: AbstractSink
-    expr     ::MORK.Expr
-    unique   ::PathMap{UnitVal}
+    expr::MORK.Expr
+    unique::PathMap{UnitVal}
 end
 
 SumSink(e::MORK.Expr) = SumSink(e, PathMap{UnitVal}())
 
-function sink_apply!(s::SumSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
+function sink_apply!(s::SumSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
     set_val_at!(s.unique, path, UNIT_VAL)
 end
 
-function sink_finalize!(s::SumSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::SumSink, btm::SinkBtm)::Bool
     total = Int64(0)
-    rz    = read_zipper(s.unique)
+    rz = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
         p = collect(zipper_path(rz))
         # Try to interpret as big-endian integer symbol
         if !isempty(p)
             tag = byte_item(p[1])
             if tag isa ExprSymbol && Int(tag.size) <= 8
-                slice = p[2 : 1 + Int(tag.size)]
+                slice = p[2:(1 + Int(tag.size))]
                 v = Int64(0)
-                for b in slice; v = v << 8 | Int64(b); end
+                for b in slice
+                    ;
+                    v = v << 8 | Int64(b);
+                end
                 total += v
             end
         end
@@ -422,26 +434,26 @@ Logical AND of matched boolean flag values.
 Mirrors `AndSink` in sinks.rs (simplified).
 """
 mutable struct AndSink <: AbstractSink
-    expr   ::MORK.Expr
-    result ::Bool
+    expr::MORK.Expr
+    result::Bool
 end
 
 AndSink(e::MORK.Expr) = AndSink(e, true)
 
-function sink_apply!(s::AndSink, bindings::Dict{ExprVar,ExprEnv},
-                     path::Vector{UInt8}, btm::SinkBtm)
+function sink_apply!(s::AndSink, bindings::Dict{ExprVar, ExprEnv},
+    path::Vector{UInt8}, btm::SinkBtm)
     # Check if path ends in a "false" symbol
     if !isempty(path)
-        p    = collect(path)
-        tag  = byte_item(p[1])
+        p = collect(path)
+        tag = byte_item(p[1])
         if tag isa ExprSymbol
-            sym = String(p[2 : 1 + Int(tag.size)])
+            sym = String(p[2:(1 + Int(tag.size))])
             sym == "false" && (s.result = false)
         end
     end
 end
 
-function sink_finalize!(s::AndSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::AndSink, btm::SinkBtm)::Bool
     key = s.result ? Vector{UInt8}("true") : Vector{UInt8}("false")
     key_enc = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(key))))], key)
     old = get_val_at(btm, key_enc)
@@ -453,8 +465,14 @@ end
 # External-dep stubs — require wasmtime / Z3 (skip)
 # =====================================================================
 
-struct WASMSink <: AbstractSink; expr::MORK.Expr; end
-struct Z3Sink   <: AbstractSink; expr::MORK.Expr; end
+struct WASMSink <: AbstractSink
+    ;
+    expr::MORK.Expr;
+end
+struct Z3Sink <: AbstractSink
+    ;
+    expr::MORK.Expr;
+end
 
 for T in (WASMSink, Z3Sink)
     @eval sink_apply!(::$T, ::Dict, ::Vector{UInt8}, ::SinkBtm) =
@@ -470,22 +488,22 @@ end
 # =====================================================================
 
 mutable struct ACTSink <: AbstractSink
-    expr ::MORK.Expr
-    tmp  ::PathMap{UnitVal}
-    name ::String
-    skip ::Int
+    expr::MORK.Expr
+    tmp::PathMap{UnitVal}
+    name::String
+    skip::Int
 end
 
 function ACTSink(e::MORK.Expr)
-    buf  = e.buf
+    buf = e.buf
     name = ""
     # buf layout: [3] ACT <name_sym> <name_bytes> <content_expr>
     # bytes:       1    4     1          name_len
     if length(buf) >= 6
         name_tag = byte_item(buf[6])
         if name_tag isa ExprSymbol
-            nl   = Int(name_tag.size)
-            name = String(buf[7 : 6 + nl])
+            nl = Int(name_tag.size)
+            name = String(buf[7:(6 + nl)])
         end
     end
     # skip = arity(1) + sym_header(1) + "ACT"(3) + name_sym_header(1) + name_bytes
@@ -494,11 +512,11 @@ function ACTSink(e::MORK.Expr)
 end
 
 function sink_apply!(s::ACTSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
-    length(path) > s.skip || return
-    set_val_at!(s.tmp, path[s.skip+1:end], UNIT_VAL)
+    length(path) > s.skip || return nothing
+    set_val_at!(s.tmp, path[(s.skip + 1):end], UNIT_VAL)
 end
 
-function sink_finalize!(s::ACTSink, ::SinkBtm) :: Bool
+function sink_finalize!(s::ACTSink, ::SinkBtm)::Bool
     isempty(s.tmp) && return false
     tree = act_from_zipper(s.tmp, _ -> UInt64(0))
     filepath = joinpath(ACT_PATH[], s.name * ".act")
@@ -516,48 +534,49 @@ end
 # =====================================================================
 
 mutable struct USink <: AbstractSink
-    expr     ::MORK.Expr
-    buf      ::Union{Nothing, Vector{UInt8}}  # accumulated MGU bytes
-    conflict ::Bool
+    expr::MORK.Expr
+    buf::Union{Nothing, Vector{UInt8}}  # accumulated MGU bytes
+    conflict::Bool
 end
 
 USink(e::MORK.Expr) = USink(e, nothing, false)
 
 function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
-    length(path) > 3 || return
-    s.conflict && return
+    length(path) > 3 || return nothing
+    s.conflict && return nothing
     # Skip [2] U header (3 bytes: arity + sym_header + 'U')
     expr_bytes = path[4:end]
     if s.buf === nothing
         s.buf = copy(expr_bytes)
     else
         acc = s.buf::Vector{UInt8}
-        pairs = Tuple{ExprEnv,ExprEnv}[
+        pairs = Tuple{ExprEnv, ExprEnv}[
             (ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(acc)),
-             ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(expr_bytes)))
+            ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(expr_bytes)))
         ]
         result = expr_unify(pairs)
         if result isa UnificationFailure
             s.conflict = true
-            return
+            return nothing
         end
         # Apply bindings to accumulator to get concrete MGU bytes
-        ez  = ExprZipper(MORK.Expr(acc))
+        ez = ExprZipper(MORK.Expr(acc))
         out = sizehint!(Vector{UInt8}(), max(length(acc) * 2, 64))
         resize!(out, max(length(acc) * 2, 64))
-        oz  = ExprZipper(MORK.Expr(out))
+        oz = ExprZipper(MORK.Expr(out))
         expr_apply(ez, result, oz)
-        s.buf = out[1:oz.loc-1]
+        s.buf = out[1:(oz.loc - 1)]
     end
 end
 
-function sink_finalize!(s::USink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::USink, btm::SinkBtm)::Bool
     s.conflict && return false
     s.buf === nothing && return false
     buf = s.buf::Vector{UInt8}
     old = get_val_at(btm, buf)
     set_val_at!(btm, buf, UNIT_VAL)
-    s.buf = nothing; s.conflict = false   # reset
+    s.buf = nothing;
+    s.conflict = false   # reset
     old === nothing
 end
 
@@ -573,16 +592,16 @@ end
 # memo: (offset_in_e1, offset_in_e2) → variable_index (UInt8)
 # Memoizing ensures the same disagreement pair reuses the same variable (LGG correctness).
 mutable struct _AuState
-    next_var ::UInt8
-    memo     ::Dict{Tuple{Int,Int}, UInt8}   # (i1,i2) → var_idx
+    next_var::UInt8
+    memo::Dict{Tuple{Int, Int}, UInt8}   # (i1,i2) → var_idx
 end
-_AuState() = _AuState(UInt8(0), Dict{Tuple{Int,Int}, UInt8}())
+_AuState() = _AuState(UInt8(0), Dict{Tuple{Int, Int}, UInt8}())
 
 mutable struct AUSink <: AbstractSink
-    expr ::MORK.Expr
-    buf  ::Union{Nothing, Vector{UInt8}}  # accumulated LGG bytes
-    last ::Int                            # valid length in buf
-    st   ::_AuState                       # anti-unify memo (reset on finalize)
+    expr::MORK.Expr
+    buf::Union{Nothing, Vector{UInt8}}  # accumulated LGG bytes
+    last::Int                            # valid length in buf
+    st::_AuState                       # anti-unify memo (reset on finalize)
 end
 
 AUSink(e::MORK.Expr) = AUSink(e, nothing, 0, _AuState())
@@ -591,19 +610,22 @@ AUSink(e::MORK.Expr) = AUSink(e, nothing, 0, _AuState())
 # Returns (bytes_consumed_from_e1, bytes_consumed_from_e2).
 # Mirrors anti_unify_apply in mork_expr/src/lib.rs.
 function _au_merge!(e1::Vector{UInt8}, i1::Int,
-                    e2::Vector{UInt8}, i2::Int,
-                    out::Vector{UInt8},
-                    st::_AuState) :: Tuple{Int,Int}
-    (i1 > length(e1) || i2 > length(e2)) && (push!(out, item_byte(ExprNewVar())); return (0, 0))
-    b1 = e1[i1]; b2 = e2[i2]
-    t1 = byte_item(b1); t2 = byte_item(b2)
+    e2::Vector{UInt8}, i2::Int,
+    out::Vector{UInt8},
+    st::_AuState)::Tuple{Int, Int}
+    (i1 > length(e1) || i2 > length(e2)) &&
+        (push!(out, item_byte(ExprNewVar())); return (0, 0))
+    b1 = e1[i1];
+    b2 = e2[i2]
+    t1 = byte_item(b1);
+    t2 = byte_item(b2)
 
     # decomposable: same symbol content
     if t1 isa ExprSymbol && t2 isa ExprSymbol && t1.size == t2.size
         n = Int(t1.size)
         if i1+n <= length(e1)+1 && i2+n <= length(e2)+1 &&
-                view(e1, i1:i1+n) == view(e2, i2:i2+n)
-            append!(out, view(e1, i1:i1+n))
+            view(e1, i1:(i1 + n)) == view(e2, i2:(i2 + n))
+            append!(out, view(e1, i1:(i1 + n)))
             return (n+1, n+1)
         end
     end
@@ -611,10 +633,12 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     # decomposable: same arity — recurse into children
     if t1 isa ExprArity && t2 isa ExprArity && t1.arity == t2.arity
         push!(out, b1)
-        c1 = 1; c2 = 1
+        c1 = 1;
+        c2 = 1
         for _ in 1:Int(t1.arity)
             dc1, dc2 = _au_merge!(e1, i1+c1, e2, i2+c2, out, st)
-            c1 += dc1; c2 += dc2
+            c1 += dc1;
+            c2 += dc2
         end
         return (c1, c2)
     end
@@ -627,7 +651,7 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     else
         v = st.next_var
         st.memo[key] = v
-        st.next_var  = UInt8(v + 1)
+        st.next_var = UInt8(v + 1)
         push!(out, item_byte(ExprNewVar()))
     end
     s1 = _expr_end_offset(e1, i1) - i1
@@ -636,7 +660,7 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
 end
 
 function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
-    length(path) > 4 || return
+    length(path) > 4 || return nothing
     # Skip [2] AU header: arity(1) + sym_header(1) + 'A'(1) + 'U'(1) = 4 bytes
     expr_bytes = path[5:end]
     if s.buf === nothing
@@ -651,15 +675,17 @@ function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
     end
 end
 
-function sink_finalize!(s::AUSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::AUSink, btm::SinkBtm)::Bool
     s.buf === nothing && return false
-    buf  = s.buf::Vector{UInt8}
+    buf = s.buf::Vector{UInt8}
     last = s.last
     last == 0 && return false
     key = buf[1:last]
     old = get_val_at(btm, key)
     set_val_at!(btm, key, UNIT_VAL)
-    s.buf = nothing; s.last = 0; s.st = _AuState()   # reset
+    s.buf = nothing;
+    s.last = 0;
+    s.st = _AuState()   # reset
     old === nothing
 end
 
@@ -674,13 +700,13 @@ end
 # =====================================================================
 
 mutable struct HashSink <: AbstractSink
-    expr   ::MORK.Expr
-    unique ::PathMap{UnitVal}
-    skip   ::Int
+    expr::MORK.Expr
+    unique::PathMap{UnitVal}
+    skip::Int
 end
 
 function HashSink(e::MORK.Expr)
-    buf  = e.buf
+    buf = e.buf
     # layout: [4] hash <result-tpl> <context> <hash-expr>
     # skip = arity(1) + sym_header(1) + "hash"(4) = 6 bytes
     skip = 6
@@ -688,24 +714,27 @@ function HashSink(e::MORK.Expr)
 end
 
 function sink_apply!(s::HashSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
-    length(path) > s.skip || return
-    set_val_at!(s.unique, path[s.skip+1:end], UNIT_VAL)
+    length(path) > s.skip || return nothing
+    set_val_at!(s.unique, path[(s.skip + 1):end], UNIT_VAL)
 end
 
 # Compute a deterministic structural hash of all paths reachable from zipper z.
 # Julia-native equivalent of upstream fork_read_zipper().hash().
-function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc}) :: UInt64
+function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc})::UInt64
     fork = zipper_fork!(z)
     zipper_reset!(fork)
     h = UInt64(0xa9e17c4d3f8b21c5)   # fixed seed — deterministic across calls
     while zipper_to_next_val!(fork)
-        for b in zipper_path(fork); h = hash(b, h); end
+        for b in zipper_path(fork)
+            ;
+            h = hash(b, h);
+        end
         h = hash(UInt64(0xffffffff), h)  # path terminator
     end
     h
 end
 
-function sink_finalize!(s::HashSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::HashSink, btm::SinkBtm)::Bool
     isempty(s.unique) && return false
     changed = false
 
@@ -720,23 +749,27 @@ function sink_finalize!(s::HashSink, btm::SinkBtm) :: Bool
         # Scan path right-to-left for a symbol-size header byte
         i = length(path)
         while i >= 1
-            tag = try byte_item(path[i]) catch; i -= 1; continue end
+            tag = try
+                byte_item(path[i])
+            catch
+                ; i -= 1; continue
+            end
             tag isa ExprSymbol || (i -= 1; continue)
             sz = Int(tag.size)
             # Check that `sz` bytes follow the header
             i + sz > length(path) && (i -= 1; continue)
 
-            hash_bytes = path[i+1 : i+sz]
+            hash_bytes = path[(i + 1):(i + sz)]
 
             # Position zipper at the prefix (everything before the size header)
-            prefix = path[1:i-1]
+            prefix = path[1:(i - 1)]
             rz2 = read_zipper(s.unique)
             zipper_descend_to!(rz2, prefix)
             zipper_path_exists(rz2) || (i -= 1; continue)
 
             # Compute structural hash of the sub-trie at this prefix
             computed = _zipper_subtrie_hash(rz2)
-            cnt_str  = reinterpret(UInt8, [hton(computed)])   # big-endian
+            cnt_str = reinterpret(UInt8, [hton(computed)])   # big-endian
 
             # Verify: do the hash bytes equal the computed hash?
             if hash_bytes == cnt_str[1:sz]
@@ -763,8 +796,8 @@ end
 # =====================================================================
 
 mutable struct PureSink <: AbstractSink
-    expr    ::MORK.Expr
-    changed ::Bool
+    expr::MORK.Expr
+    changed::Bool
 end
 PureSink(e::MORK.Expr) = PureSink(e, false)
 
@@ -782,14 +815,14 @@ Args passed to `pure_apply` are stripped of their header (raw payloads).
 
 Mirrors EvalScope::eval in experiments/eval/src/lib.rs.
 """
-function _pure_eval_formula(buf::Vector{UInt8}, off::Int) :: Union{Vector{UInt8}, Nothing}
+function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, Nothing}
     off > length(buf) && return nothing
     tag = byte_item(buf[off])
 
     if tag isa ExprSymbol
         # Return complete MORK symbol (header + payload)
         n = Int(tag.size)
-        return buf[off : off+n]
+        return buf[off:(off + n)]
     end
 
     if tag isa ExprArity
@@ -801,7 +834,7 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int) :: Union{Vector{UInt8}
         fn_tag = byte_item(buf[fn_off])
         fn_tag isa ExprSymbol || return nothing
         fn_size = Int(fn_tag.size)
-        fn_name = String(buf[fn_off+1 : fn_off+fn_size])
+        fn_name = String(buf[(fn_off + 1):(fn_off + fn_size)])
 
         # Collect arg byte spans
         arg_spans = UnitRange{Int}[]
@@ -809,7 +842,7 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int) :: Union{Vector{UInt8}
         for _ in 1:n_args
             cur > length(buf) && break
             span_end = _expr_end_offset(buf, cur)
-            push!(arg_spans, cur:span_end-1)
+            push!(arg_spans, cur:(span_end - 1))
             cur = span_end
         end
 
@@ -846,7 +879,11 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int) :: Union{Vector{UInt8}
         if fn_name == "tuple" || fn_name == "explode_symbol"
             f = get(PURE_OPS, fn_name, nothing)
             f === nothing && return nothing
-            result_mork = try f(arg_results) catch; return nothing end
+            result_mork = try
+                f(arg_results)
+            catch
+                ; return nothing
+            end
             return result_mork isa Vector{UInt8} ? result_mork : nothing
         end
 
@@ -870,9 +907,13 @@ end
 Strip the leading ExprSymbol header byte from a scalar MORK expression to get
 raw payload bytes. For arity expressions (tuple etc.), return as-is.
 """
-function _pure_strip_header(mork_expr::Vector{UInt8}) :: Vector{UInt8}
+function _pure_strip_header(mork_expr::Vector{UInt8})::Vector{UInt8}
     isempty(mork_expr) && return mork_expr
-    tag = try byte_item(mork_expr[1]) catch; return mork_expr end
+    tag = try
+        byte_item(mork_expr[1])
+    catch
+        ; return mork_expr
+    end
     tag isa ExprSymbol ? mork_expr[2:end] : mork_expr
 end
 
@@ -881,7 +922,7 @@ end
 
 Return the offset just past the expression starting at `off` (exclusive end).
 """
-function _expr_end_offset(buf::Vector{UInt8}, off::Int) :: Int
+function _expr_end_offset(buf::Vector{UInt8}, off::Int)::Int
     off > length(buf) && return off
     tag = byte_item(buf[off])
     if tag isa ExprSymbol
@@ -901,32 +942,32 @@ end
 
 function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::SinkBtm)
     buf = s.expr.buf
-    length(buf) < 2 || byte_item(buf[1]) isa ExprArity || return
+    length(buf) < 2 || byte_item(buf[1]) isa ExprArity || return nothing
 
     # Parse (pure <template> <var> <formula>) — 4 children
     args = ExprEnv[]
     ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), s.expr), args)
-    length(args) < 4 && return
+    length(args) < 4 && return nothing
 
     # Extract sub-expression byte spans
-    tpl_ee     = args[2]
+    tpl_ee = args[2]
     formula_ee = args[4]
 
-    tpl_start     = Int(tpl_ee.offset) + 1
+    tpl_start = Int(tpl_ee.offset) + 1
     formula_start = Int(formula_ee.offset) + 1
-    tpl_buf     = tpl_ee.base.buf
+    tpl_buf = tpl_ee.base.buf
     formula_buf = formula_ee.base.buf
 
-    formula_start > length(formula_buf) && return
+    formula_start > length(formula_buf) && return nothing
 
     # Evaluate formula — returns a complete MORK sub-expression (header included)
     result_mork = _pure_eval_formula(formula_buf, formula_start)
-    result_mork === nothing && return
+    result_mork === nothing && return nothing
 
     # Substitute: walk template bytes, replace first VarRef/NewVar with result_mork
     tpl_end = _expr_end_offset(tpl_buf, tpl_start)
     out = _pure_substitute_first_var(tpl_buf, tpl_start, tpl_end - 1, result_mork)
-    out === nothing && return
+    out === nothing && return nothing
 
     old = get_val_at(btm, out)
     set_val_at!(btm, out, UNIT_VAL)
@@ -941,7 +982,7 @@ with `replacement` bytes. Returns the resulting byte vector, or `nothing`
 if no variable slot was found.
 """
 function _pure_substitute_first_var(buf::Vector{UInt8}, from::Int, to::Int,
-                                     replacement::Vector{UInt8}) :: Union{Vector{UInt8}, Nothing}
+    replacement::Vector{UInt8})::Union{Vector{UInt8}, Nothing}
     out = UInt8[]
     found = Ref(false)
     _pure_copy_subst!(buf, from, to, replacement, out, found)
@@ -949,18 +990,18 @@ function _pure_substitute_first_var(buf::Vector{UInt8}, from::Int, to::Int,
 end
 
 function _pure_copy_subst!(buf::Vector{UInt8}, from::Int, to::Int,
-                            repl::Vector{UInt8}, out::Vector{UInt8}, found::Ref{Bool})
-    from > to && return
+    repl::Vector{UInt8}, out::Vector{UInt8}, found::Ref{Bool})
+    from > to && return nothing
     tag = byte_item(buf[from])
     if (tag isa ExprNewVar || tag isa ExprVarRef) && !found[]
         append!(out, repl)
         found[] = true
-        return
+        return nothing
     end
     if tag isa ExprSymbol
         n = Int(tag.size)
-        append!(out, buf[from : from + n])
-        return
+        append!(out, buf[from:(from + n)])
+        return nothing
     end
     if tag isa ExprArity
         push!(out, buf[from])
@@ -971,12 +1012,12 @@ function _pure_copy_subst!(buf::Vector{UInt8}, from::Int, to::Int,
             _pure_copy_subst!(buf, cur, child_end, repl, out, found)
             cur = child_end + 1
         end
-        return
+        return nothing
     end
     push!(out, buf[from])
 end
 
-sink_finalize!(s::PureSink, ::SinkBtm) = (c = s.changed; s.changed = false; c)
+sink_finalize!(s::PureSink, ::SinkBtm) = (c=s.changed; s.changed=false; c)
 
 # Float reduction sinks
 # Mirrors FloatReductionSink<Sum/Min/Max/Prod> in sinks.rs.
@@ -985,34 +1026,35 @@ sink_finalize!(s::PureSink, ::SinkBtm) = (c = s.changed; s.changed = false; c)
 #   arg3 = key/context var  ($c — groups the reduction)
 #   arg4 = value            ($x — the numeric value, already substituted)
 mutable struct FloatReductionSink{R} <: AbstractSink
-    expr       ::MORK.Expr
-    op         ::Symbol   # :sum, :min, :max, :prod
+    expr::MORK.Expr
+    op::Symbol   # :sum, :min, :max, :prod
     # Groups: (key_bytes → Vector{Float64})
-    by_key     ::Vector{Tuple{Vector{UInt8}, Vector{Float64}}}
+    by_key::Vector{Tuple{Vector{UInt8}, Vector{Float64}}}
 end
 
-FloatReductionSink(e::MORK.Expr, op::Symbol) = FloatReductionSink{op}(e, op, Tuple{Vector{UInt8}, Vector{Float64}}[])
+FloatReductionSink(e::MORK.Expr, op::Symbol) =
+    FloatReductionSink{op}(e, op, Tuple{Vector{UInt8}, Vector{Float64}}[])
 
 function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     # path = bound expression bytes: (fXXX <tpl> <key> <value>)
-    length(path) < 5 && return
+    length(path) < 5 && return nothing
     args = ExprEnv[]
     ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(path)), args)
-    length(args) < 4 && return
+    length(args) < 4 && return nothing
 
     # Extract key bytes (arg3) — the group-by variable/value
     key_start = Int(args[3].offset) + 1
-    key_end   = _expr_end_offset(path, key_start)
-    key_bytes = path[key_start : key_end-1]
+    key_end = _expr_end_offset(path, key_start)
+    key_bytes = path[key_start:(key_end - 1)]
 
     # Extract value bytes (arg4) — should be a Symbol containing a float string
     val_start = Int(args[4].offset) + 1
-    val_start > length(path) && return
+    val_start > length(path) && return nothing
     vtag = byte_item(path[val_start])
-    vtag isa ExprSymbol || return
-    val_str = String(path[val_start+1 : val_start + Int(vtag.size)])
+    vtag isa ExprSymbol || return nothing
+    val_str = String(path[(val_start + 1):(val_start + Int(vtag.size))])
     fval = tryparse(Float64, val_str)
-    fval === nothing && return
+    fval === nothing && return nothing
 
     # Find or create the entry for this key
     idx = findfirst(t -> t[1] == key_bytes, s.by_key)
@@ -1023,7 +1065,7 @@ function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     push!(s.by_key[idx][2], fval)
 end
 
-function sink_finalize!(s::FloatReductionSink, btm::SinkBtm) :: Bool
+function sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool
     isempty(s.by_key) && return false
     changed = false
     op = s.op
@@ -1033,9 +1075,9 @@ function sink_finalize!(s::FloatReductionSink, btm::SinkBtm) :: Bool
     ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), s.expr), args)
     length(args) < 2 && return false
     tpl_start = Int(args[2].offset) + 1
-    tpl_buf   = args[2].base.buf
-    tpl_end   = _expr_end_offset(tpl_buf, tpl_start)
-    tpl_bytes = tpl_buf[tpl_start : tpl_end-1]
+    tpl_buf = args[2].base.buf
+    tpl_end = _expr_end_offset(tpl_buf, tpl_start)
+    tpl_bytes = tpl_buf[tpl_start:(tpl_end - 1)]
 
     for (key_bytes, values) in s.by_key
         isempty(values) && continue
@@ -1052,15 +1094,17 @@ function sink_finalize!(s::FloatReductionSink, btm::SinkBtm) :: Bool
         end
 
         # Format result as a MORK symbol
-        result_str  = string(result)
+        result_str = string(result)
         result_mork = vcat(item_byte(ExprSymbol(UInt8(length(result_str)))),
-                           Vector{UInt8}(result_str))
+            Vector{UInt8}(result_str))
 
         # Substitute result into the template:
         # If key_bytes is a variable (NewVar/VarRef), substitute result directly.
         # Otherwise, prepend key_bytes and append result (result stored as key→result).
-        if length(key_bytes) == 1 && (byte_item(key_bytes[1]) isa ExprNewVar ||
-                                       byte_item(key_bytes[1]) isa ExprVarRef)
+        if length(key_bytes) == 1 && (
+            byte_item(key_bytes[1]) isa ExprNewVar ||
+            byte_item(key_bytes[1]) isa ExprVarRef
+        )
             # Free context variable — substitute result into template's first var
             out = _pure_substitute_first_var(tpl_bytes, 1, length(tpl_bytes), result_mork)
             out === nothing && continue
@@ -1099,68 +1143,71 @@ end
 Construct the appropriate sink from the pattern expression.
 Mirrors `ASink::new` in sinks.rs.
 """
-function asink_new(e::MORK.Expr) :: AbstractSink
+function asink_new(e::MORK.Expr)::AbstractSink
     buf = e.buf
     length(buf) < 2 && return CompatSink(e)
 
-    a1 = buf[1]; a2 = buf[2]
+    a1 = buf[1];
+    a2 = buf[2]
 
     # [2] + → AddSink
     if a1 == item_byte(ExprArity(UInt8(2))) && a2 == item_byte(ExprSymbol(UInt8(1))) &&
-       length(buf) >= 3 && buf[3] == UInt8('+')
+        length(buf) >= 3 && buf[3] == UInt8('+')
         return AddSink(e)
     end
 
     # [2] - → RemoveSink
     if a1 == item_byte(ExprArity(UInt8(2))) && a2 == item_byte(ExprSymbol(UInt8(1))) &&
-       length(buf) >= 3 && buf[3] == UInt8('-')
+        length(buf) >= 3 && buf[3] == UInt8('-')
         return RemoveSink(e)
     end
 
     # [2] U → USink
     if a1 == item_byte(ExprArity(UInt8(2))) && a2 == item_byte(ExprSymbol(UInt8(1))) &&
-       length(buf) >= 3 && buf[3] == UInt8('U')
+        length(buf) >= 3 && buf[3] == UInt8('U')
         return USink(e)
     end
 
     # [2] AU → AUSink
     if a1 == item_byte(ExprArity(UInt8(2))) && a2 == item_byte(ExprSymbol(UInt8(2))) &&
-       length(buf) >= 4 && buf[3] == UInt8('A') && buf[4] == UInt8('U')
+        length(buf) >= 4 && buf[3] == UInt8('A') && buf[4] == UInt8('U')
         return AUSink(e)
     end
 
     # [3] head N <expr> → HeadSink
     if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
-       length(buf) >= 6 && buf[3:6] == UInt8[UInt8('h'), UInt8('e'), UInt8('a'), UInt8('d')]
+        length(buf) >= 6 &&
+        buf[3:6] == UInt8[UInt8('h'), UInt8('e'), UInt8('a'), UInt8('d')]
         return HeadSink(e)
     end
 
     # [4] count <r> <s> <p> → CountSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(5))) &&
-       length(buf) >= 7 && buf[3:7] == Vector{UInt8}("count")
+        length(buf) >= 7 && buf[3:7] == Vector{UInt8}("count")
         return CountSink(e)
     end
 
     # [4] hash → HashSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
-       length(buf) >= 6 && buf[3:6] == Vector{UInt8}("hash")
+        length(buf) >= 6 && buf[3:6] == Vector{UInt8}("hash")
         return HashSink(e)
     end
 
     # [4] sum → SumSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(3))) &&
-       length(buf) >= 5 && buf[3:5] == Vector{UInt8}("sum")
+        length(buf) >= 5 && buf[3:5] == Vector{UInt8}("sum")
         return SumSink(e)
     end
 
     # [4] and → AndSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(3))) &&
-       length(buf) >= 5 && buf[3:5] == Vector{UInt8}("and")
+        length(buf) >= 5 && buf[3:5] == Vector{UInt8}("and")
         return AndSink(e)
     end
 
     # [4] fsum / fmin / fmax → FloatReductionSink
-    if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(4))) && length(buf) >= 6
+    if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
+        length(buf) >= 6
         if buf[3] == UInt8('f') && buf[4] == UInt8('s')
             return FloatReductionSink(e, :sum)
         elseif buf[3] == UInt8('f') && buf[4] == UInt8('m') && buf[5] == UInt8('i')
@@ -1171,25 +1218,25 @@ function asink_new(e::MORK.Expr) :: AbstractSink
     end
 
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(5))) &&
-       length(buf) >= 7 && buf[3] == UInt8('f') && buf[4] == UInt8('p')
+        length(buf) >= 7 && buf[3] == UInt8('f') && buf[4] == UInt8('p')
         return FloatReductionSink(e, :prod)
     end
 
     # [4] pure → PureSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
-       length(buf) >= 6 && buf[3:6] == Vector{UInt8}("pure")
+        length(buf) >= 6 && buf[3:6] == Vector{UInt8}("pure")
         return PureSink(e)
     end
 
     # [3] ACT → ACTSink
     if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(3))) &&
-       length(buf) >= 5 && buf[3:5] == Vector{UInt8}("ACT")
+        length(buf) >= 5 && buf[3:5] == Vector{UInt8}("ACT")
         return ACTSink(e)
     end
 
     # [3] wasm → WASMSink
     if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
-       length(buf) >= 6 && buf[3:6] == Vector{UInt8}("wasm")
+        length(buf) >= 6 && buf[3:6] == Vector{UInt8}("wasm")
         return WASMSink(e)
     end
 

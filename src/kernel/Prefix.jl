@@ -24,23 +24,25 @@ end
 # Returns (comparison, n) where n = length of common prefix found.
 # =====================================================================
 
-function prefix_compare(left::Vector{UInt8}, right::Vector{UInt8}) :: Tuple{PrefixComparison, Int}
+function prefix_compare(
+    left::Vector{UInt8}, right::Vector{UInt8}
+)::Tuple{PrefixComparison, Int}
     ll = length(left)
     rl = length(right)
 
     ll == 0 && rl == 0 && return (PREFIX_BOTH_EMPTY, 0)
-    ll == 0             && return (PREFIX_FIRST_EMPTY, 0)
-    rl == 0             && return (PREFIX_SECOND_EMPTY, 0)
+    ll == 0 && return (PREFIX_FIRST_EMPTY, 0)
+    rl == 0 && return (PREFIX_SECOND_EMPTY, 0)
     left[1] != right[1] && return (PREFIX_DISJOINT, 0)
 
     n = 1
     while true
-        left_done  = n == ll
+        left_done = n == ll
         right_done = n == rl
-        left_done  && right_done && return (PREFIX_EQUALS, n)
-        left_done               && return (PREFIX_OF, n)
-        right_done              && return (PREFIX_PREFIXED_BY, n)
-        left[n+1] != right[n+1] && return (PREFIX_SHARING, n)
+        left_done && right_done && return (PREFIX_EQUALS, n)
+        left_done && return (PREFIX_OF, n)
+        right_done && return (PREFIX_PREFIXED_BY, n)
+        left[n + 1] != right[n + 1] && return (PREFIX_SHARING, n)
         n += 1
     end
 end

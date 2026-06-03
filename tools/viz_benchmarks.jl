@@ -20,18 +20,19 @@ using Statistics
 using MORK
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
-const ARGS_MAP = Dict{String,String}()
+const ARGS_MAP = Dict{String, String}()
 let i = 1
     while i <= length(ARGS)
         if ARGS[i] in ("--csv", "--suite") && i < length(ARGS)
-            ARGS_MAP[ARGS[i]] = ARGS[i+1]; i += 2
+            ARGS_MAP[ARGS[i]] = ARGS[i + 1];
+            i += 2
         else
             i += 1
         end
     end
 end
 const SUITE_NAME = get(ARGS_MAP, "--suite", "standard")
-const CSV_PATH   = get(ARGS_MAP, "--csv", "")
+const CSV_PATH = get(ARGS_MAP, "--csv", "")
 
 # ── Load suite definitions ────────────────────────────────────────────────────
 include(joinpath(@__DIR__, "..", "benchmark", "benchmarks.jl"))
@@ -90,11 +91,11 @@ for (label, samples) in flat
     n = length(samples)
     n < 2 && continue
 
-    mu  = mean(samples)
+    mu = mean(samples)
     med = median(samples)
-    sd  = std(samples)
-    mn  = minimum(samples)
-    mx  = maximum(samples)
+    sd = std(samples)
+    mn = minimum(samples)
+    mx = maximum(samples)
 
     # Normalise to sensible unit
     unit, scale = if mu < 1.0
@@ -106,27 +107,29 @@ for (label, samples) in flat
     end
 
     s = samples .* scale
-    mu_s  = mu  * scale
+    mu_s = mu * scale
     med_s = med * scale
-    sd_s  = sd  * scale
+    sd_s = sd * scale
 
     println("\n── $label ──")
-    println("  n=$n  median=$(round(med_s,digits=2)) $unit  mean=$(round(mu_s,digits=2)) $unit  σ=$(round(sd_s,digits=2)) $unit  range=[$(round(mn*scale,digits=2)), $(round(mx*scale,digits=2))]")
+    println(
+        "  n=$n  median=$(round(med_s,digits=2)) $unit  mean=$(round(mu_s,digits=2)) $unit  σ=$(round(sd_s,digits=2)) $unit  range=[$(round(mn*scale,digits=2)), $(round(mx*scale,digits=2))]"
+    )
 
     # Dot plot: samples as x, jittered y
     # Color each point by z-score distance: close to mean = bright, far = dim
     z_scores = abs.((samples .- mu) ./ max(sd, 1e-12))
     # Map z_scores → symbols (low z = dense dot, high z = sparse)
-    dot_chars = ['●','◉','◎','○','·']
-    dot_syms  = [dot_chars[clamp(Int(floor(z * 2)) + 1, 1, 5)] for z in z_scores]
+    dot_chars = ['●', '◉', '◎', '○', '·']
+    dot_syms = [dot_chars[clamp(Int(floor(z * 2)) + 1, 1, 5)] for z in z_scores]
 
     # UnicodePlots histogram — distribution shape
     nbins = max(3, min(10, n))
     plt = histogram(s; nbins=nbins,
-                    title="$label",
-                    xlabel="Time ($unit)",
-                    ylabel="count",
-                    width=50, height=5)
+        title="$label",
+        xlabel="Time ($unit)",
+        ylabel="count",
+        width=50, height=5)
     println(plt)
 
     # Annotated sample list (mirrors the colored scatter dots)
@@ -149,10 +152,16 @@ println(rpad("Benchmark", 38), rpad("Median", 12), rpad("Mean", 12), "σ")
 println("─"^70)
 for (label, samples) in flat
     length(samples) < 1 && continue
-    mu  = mean(samples)
+    mu = mean(samples)
     med = median(samples)
-    sd  = std(samples)
-    unit, scale = mu < 1.0 ? ("μs",1e3) : mu < 1000.0 ? ("ms",1.0) : ("s",1e-3)
+    sd = std(samples)
+    unit, scale = if mu < 1.0
+        ("μs", 1e3)
+    elseif mu < 1000.0
+        ("ms", 1.0)
+    else
+        ("s", 1e-3)
+    end
     fmt(x) = "$(round(x*scale, digits=1)) $unit"
     println(rpad(label, 38), rpad(fmt(med), 12), rpad(fmt(mu), 12), fmt(sd))
 end
@@ -165,10 +174,12 @@ if !isempty(CSV_PATH)
         # Rows: one row per sample index
         max_n = maximum(length(s) for (_, s) in flat)
         for i in 1:max_n
-            row = [i <= length(s) ? string(round(s[i], digits=4)) : "" for (_, s) in flat]
+            row = [i <= length(s) ? string(round(s[i]; digits=4)) : "" for (_, s) in flat]
             println(io, join(row, ","))
         end
     end
     println("\nCSV written to: $CSV_PATH")
-    println("  $(length(flat)) benchmarks × up to $(maximum(length(s) for (_,s) in flat)) samples")
+    println(
+        "  $(length(flat)) benchmarks × up to $(maximum(length(s) for (_,s) in flat)) samples"
+    )
 end

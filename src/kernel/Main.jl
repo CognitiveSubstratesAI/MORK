@@ -37,11 +37,11 @@ Mirrors `Commands::Run` in main.rs.
 - `verbose`      : print progress info
 """
 function mork_run(input_path::AbstractString;
-                  steps    ::Int     = typemax(Int),
-                  output_path       = nothing,
-                  aux_paths         = String[],
-                  timing   ::Bool   = false,
-                  verbose  ::Bool   = false) :: Int
+    steps::Int=typemax(Int),
+    output_path=nothing,
+    aux_paths=String[],
+    timing::Bool=false,
+    verbose::Bool=false)::Int
 
     s = new_space()
     s.timing = timing
@@ -89,12 +89,12 @@ Currently supported: metta → metta (pass-through, applies pattern/template).
 Mirrors `Commands::Convert` in main.rs.
 """
 function mork_convert(input_path::AbstractString,
-                      output_path::AbstractString;
-                      input_format  ::AbstractString = "metta",
-                      output_format ::AbstractString = "metta",
-                      pattern       ::AbstractString = "\$",
-                      template      ::AbstractString = "_1",
-                      verbose       ::Bool = false) :: Nothing
+    output_path::AbstractString;
+    input_format::AbstractString="metta",
+    output_format::AbstractString="metta",
+    pattern::AbstractString="\$",
+    template::AbstractString="_1",
+    verbose::Bool=false)::Nothing
 
     s = new_space()
 

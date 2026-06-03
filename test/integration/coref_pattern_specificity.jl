@@ -12,15 +12,19 @@ using MORK, Test
     # Pattern ($f) must match data ($a) where $a is a free NewVar in the trie.
     @testset "func_type_unification" begin
         s = new_space()
-        space_add_all_sexpr!(s, """
+        space_add_all_sexpr!(
+            s,
+            """
 (a (: \$a A))
 (b (: f (-> A)))
 (exec 0 (, (a (: (\$f) A))
            (b (: \$f (-> A))))
         (, (c OK)))
-""")
+"""
+        )
         steps = space_metta_calculus!(s, 10_000)  # bounded: 1 exec fires
-        io = IOBuffer(); space_dump_all_sexpr(s, io)
+        io = IOBuffer();
+        space_dump_all_sexpr(s, io)
         res = String(take!(io))
         @test steps >= 1
         @test contains(res, "(c OK)")

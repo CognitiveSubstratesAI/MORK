@@ -9,5 +9,5 @@ using MORK, Test
     @test steps < 100_000
     result = space_dump_all_sexpr(s)
     @test !occursin("A\n", result)
-    @test  occursin("B\n", result)
+    @test occursin("B\n", result)
 end

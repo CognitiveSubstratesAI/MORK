@@ -6,7 +6,7 @@ using MORK, PathMap, Test
 
     # ── Scenario 1: graft_map + write through zipper must not corrupt original ──
     m1 = PathMap.PathMap{UInt32}()
-    set_val_at!(m1, b"hello",       UInt32(42))
+    set_val_at!(m1, b"hello", UInt32(42))
     set_val_at!(m1, b"hello_world", UInt32(7))
 
     # Graft m1 into m2 under "prefix:"
@@ -16,7 +16,7 @@ using MORK, PathMap, Test
     wz_graft_map!(wz2, m1)
 
     # Verify graft is readable
-    @test get_val_at(m2, b"prefix:hello")       == UInt32(42)
+    @test get_val_at(m2, b"prefix:hello") == UInt32(42)
     @test get_val_at(m2, b"prefix:hello_world") == UInt32(7)
 
     # Now write through m2 — must NOT corrupt m1
@@ -25,7 +25,7 @@ using MORK, PathMap, Test
     wz_set_val!(wz3, UInt32(99))
 
     @test get_val_at(m2, b"prefix:hello") == UInt32(99)   # m2 updated
-    @test get_val_at(m1, b"hello")         == UInt32(42)  # m1 unchanged
+    @test get_val_at(m1, b"hello") == UInt32(42)  # m1 unchanged
 
     # ── Scenario 2: second value in shared subtrie also independent ──
     wz4 = write_zipper(m2)
@@ -33,7 +33,7 @@ using MORK, PathMap, Test
     wz_set_val!(wz4, UInt32(100))
 
     @test get_val_at(m2, b"prefix:hello_world") == UInt32(100)
-    @test get_val_at(m1, b"hello_world")         == UInt32(7)   # m1 still unchanged
+    @test get_val_at(m1, b"hello_world") == UInt32(7)   # m1 still unchanged
 
     # ── Scenario 3: join_map_into must not corrupt source ──
     m3 = PathMap.PathMap{UInt32}()

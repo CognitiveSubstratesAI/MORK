@@ -17,7 +17,9 @@ using MORK
 println("=== Transition System: Taxi on 3×3 grid ===\n")
 
 s = new_space()
-space_add_all_sexpr!(s, raw"""
+space_add_all_sexpr!(
+    s,
+    raw"""
 ; Grid adjacency (3×3, wrapping not allowed)
 (northoff (0 1) (0 0)) (northoff (1 1) (1 0)) (northoff (2 1) (2 0))
 (northoff (0 2) (0 1)) (northoff (1 2) (1 1)) (northoff (2 2) (2 1))
@@ -75,7 +77,8 @@ space_add_all_sexpr!(s, raw"""
 ; Simple BFS step counter
 (step-count 0)
 (exec 3 (, (new $s)) (, (reached $s)))
-""")
+"""
+)
 
 steps = space_metta_calculus!(s, 9999)
 result = space_dump_all_sexpr(s)
@@ -84,5 +87,8 @@ println("Steps: $steps")
 println("States reached: $(length(reached))")
 println("\nInitial state props:")
 init_props = filter(l -> startswith(l, "(state init"), split(result, "\n"))
-for p in init_props; println("  $p"); end
+for p in init_props
+    ;
+    println("  $p");
+end
 println("\nDone!")

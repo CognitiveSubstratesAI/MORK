@@ -72,7 +72,7 @@ include("expr/DyckZipper.jl")
 # Extend PathMap's ez_reset! for ExprZipper so both share a single function object.
 # Mirrors ExprZipper::reset in upstream Rust.
 import PathMap: ez_reset!
-ez_reset!(z::ExprZipper) = (z.loc = 1; z)
+ez_reset!(z::ExprZipper) = (z.loc=1; z)
 export ez_reset!
 
 """

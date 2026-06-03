@@ -33,8 +33,8 @@ Mirrors `ResourceRequest` in sources.rs.
 end
 
 struct ResourceRequest
-    kind ::ResourceRequestKind
-    name ::String   # ACT filename or Z3 instance name; empty for BTM
+    kind::ResourceRequestKind
+    name::String   # ACT filename or Z3 instance name; empty for BTM
 end
 
 ResourceRequest(k::ResourceRequestKind) = ResourceRequest(k, "")
@@ -74,7 +74,7 @@ Plain BTM read zipper with no prefix constraint.
 Mirrors `CompatSource` in sources.rs.
 """
 struct CompatSource
-    expr ::MORK.Expr
+    expr::MORK.Expr
 end
 
 source_requests(s::CompatSource) = [ResourceRequest(RREQ_BTM)]
@@ -92,7 +92,7 @@ BTM read zipper scoped to the `[2] BTM` prefix subtrie.
 Mirrors `BTMSource` in sources.rs.
 """
 struct BTMSource
-    expr ::MORK.Expr
+    expr::MORK.Expr
 end
 
 const _BTM_SOURCE_PREFIX = UInt8[
@@ -117,15 +117,15 @@ Reads from an ArenaCompactTree memory-mapped file.
 Mirrors `ACTSource` in sources.rs.
 """
 struct ACTSource
-    expr ::MORK.Expr
-    act  ::String
+    expr::MORK.Expr
+    act::String
 end
 
 source_requests(s::ACTSource) = [ResourceRequest(RREQ_ACT, s.act)]
 
 # 2-arg fallback (no mmaps cache) — opens the file fresh every call
 source_factor(s::ACTSource, btm::PathMap{UnitVal}) =
-    source_factor(s, btm, Dict{String,ArenaCompactTree}())
+    source_factor(s, btm, Dict{String, ArenaCompactTree}())
 
 """
     source_factor(s::ACTSource, btm, mmaps) → PrefixZipper{ACTZipper}
@@ -137,15 +137,17 @@ ACT_PATH constant mirrors the upstream `const ACT_PATH` (default ".").
 """
 const ACT_PATH = Ref{String}(".")
 
-function source_factor(s::ACTSource, btm::PathMap{UnitVal}, mmaps::Dict{String,ArenaCompactTree})
+function source_factor(
+    s::ACTSource, btm::PathMap{UnitVal}, mmaps::Dict{String, ArenaCompactTree}
+)
     # Build prefix: [3] ACT <symbol_size_byte> <name_bytes>
     # Mirrors CONSTANT_PREFIX + name encoding in ACTSource::source.
-    name   = s.act
+    name = s.act
     prefix = UInt8[
         item_byte(ExprArity(UInt8(3))),
         item_byte(ExprSymbol(UInt8(3))),
         UInt8('A'), UInt8('C'), UInt8('T'),
-        item_byte(ExprSymbol(UInt8(length(name)))),
+        item_byte(ExprSymbol(UInt8(length(name))))
     ]
     append!(prefix, codeunits(name))
 
@@ -168,8 +170,8 @@ Mirrors `CmpSource` in sources.rs.
 `==` matches paths equal to the primary; `!=` matches all paths except the primary.
 """
 struct CmpSource
-    expr ::MORK.Expr
-    cmp  ::Int   # 0 = ==, 1 = !=
+    expr::MORK.Expr
+    cmp::Int   # 0 = ==, 1 = !=
 end
 
 source_requests(s::CmpSource) = [ResourceRequest(RREQ_BTM)]
@@ -179,7 +181,7 @@ source_requests(s::CmpSource) = [ResourceRequest(RREQ_BTM)]
 # The DependentZipper extends the BTM read zipper's path with the secondary,
 # so origin_path = [3]== + (primary_path)(secondary_path).
 function source_factor(s::CmpSource, btm::PathMap{UnitVal})
-    cmp      = s.cmp
+    cmp = s.cmp
     map_clone = deepcopy(btm)   # for != : need full BTM copy to subtract from
 
     # Policy: (payload, path, c) → (payload, Union{nothing, ReadZipperCore})
@@ -201,13 +203,17 @@ function source_factor(s::CmpSource, btm::PathMap{UnitVal})
     end
 
     primary_rz = read_zipper_at_path(btm, UInt8[])
-    dpz        = DependentZipper(primary_rz, nothing, cmp_policy)
-    prefix     = cmp == 0 ? _EQ_PREFIX : _NE_PREFIX
+    dpz = DependentZipper(primary_rz, nothing, cmp_policy)
+    prefix = cmp == 0 ? _EQ_PREFIX : _NE_PREFIX
     PrefixZipper(prefix, dpz)
 end
 
-const _EQ_PREFIX = UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('='), UInt8('=')]
-const _NE_PREFIX = UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('!'), UInt8('=')]
+const _EQ_PREFIX = UInt8[
+    item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('='), UInt8('=')
+]
+const _NE_PREFIX = UInt8[
+    item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('!'), UInt8('=')
+]
 
 # =====================================================================
 # GroundedSource — Phase 2: Julia function registry
@@ -270,8 +276,8 @@ I-pattern source that calls a registered Julia function.
 `name` is the registered function name (extracted from `expr`).
 """
 struct GroundedSource
-    expr :: MORK.Expr
-    name :: String
+    expr::MORK.Expr
+    name::String
 end
 
 source_requests(s::GroundedSource) = ResourceRequest[]   # no trie resource needed
@@ -290,7 +296,9 @@ function source_factor(s::GroundedSource, btm::PathMap{UnitVal})
     args = _grounded_decode_args(s.expr)
 
     # Call the function; accept String, Vector, or nothing
-    raw = try f(args) catch e
+    raw = try
+        f(args)
+    catch e
         @warn "GroundedSource: $(s.name) threw: $e"
         nothing
     end
@@ -311,54 +319,61 @@ NOT a full zipper — never passed to `ProductZipperG`.
 before the `ProductZipperG` is constructed for trie sources.
 """
 mutable struct StaticZipper
-    paths :: Vector{Vector{UInt8}}
-    idx   :: Int
+    paths::Vector{Vector{UInt8}}
+    idx::Int
 end
 StaticZipper(paths::Vector{Vector{UInt8}}) = StaticZipper(paths, 0)
 
 # Simple iteration — not part of the PathMap zipper protocol
-function static_next!(z::StaticZipper) :: Bool
+function static_next!(z::StaticZipper)::Bool
     z.idx += 1
     z.idx <= length(z.paths)
 end
 
-static_current(z::StaticZipper) :: Vector{UInt8} =
+static_current(z::StaticZipper)::Vector{UInt8} =
     (z.idx > 0 && z.idx <= length(z.paths)) ? z.paths[z.idx] : UInt8[]
 
-static_reset!(z::StaticZipper) = (z.idx = 0; nothing)
+static_reset!(z::StaticZipper) = (z.idx=0; nothing)
 
 # ── Internal helpers ──────────────────────────────────────────────────
 
 """Decode argument S-expressions from a GroundedSource expr to strings."""
-function _grounded_decode_args(expr::MORK.Expr) :: Vector{String}
+function _grounded_decode_args(expr::MORK.Expr)::Vector{String}
     buf = expr.buf
     length(buf) < 1 && return String[]
 
     # expr layout: [arity] [functor-sym-bytes...] [arg1-bytes...] [arg2-bytes...] ...
     # Skip the functor (first sub-expression) to get args
     args = ExprEnv[]
-    ee   = ExprEnv(UInt8(0), UInt8(0), UInt32(0), expr)
+    ee = ExprEnv(UInt8(0), UInt8(0), UInt32(0), expr)
     ee_args!(ee, args)
     length(args) <= 1 && return String[]   # args[1] = functor, rest = arguments
 
     result = String[]
     for i in 2:length(args)
         ee_arg = args[i]
-        span   = expr_span(ee_arg.base, Int(ee_arg.offset) + 1)
+        span = expr_span(ee_arg.base, Int(ee_arg.offset) + 1)
         # Serialise bytes back to S-expression string
-        s = try expr_serialize(Vector{UInt8}(span))
-        catch; bytes2hex(Vector{UInt8}(span)); end
+        s = try
+            expr_serialize(Vector{UInt8}(span))
+        catch
+            ; bytes2hex(Vector{UInt8}(span));
+        end
         push!(result, s)
     end
     result
 end
 
 """Encode function return value(s) as byte paths for StaticZipper."""
-function _grounded_encode_results(raw) :: Vector{Vector{UInt8}}
+function _grounded_encode_results(raw)::Vector{Vector{UInt8}}
     raw === nothing && return Vector{UInt8}[]
-    strs = raw isa AbstractString ? [raw] :
-           raw isa AbstractVector  ? collect(String, raw) :
-           [string(raw)]
+    strs = if raw isa AbstractString
+        [raw]
+    elseif raw isa AbstractVector
+        collect(String, raw)
+    else
+        [string(raw)]
+    end
     paths = Vector{UInt8}[]
     for s in strs
         bytes = try
@@ -390,7 +405,7 @@ Construct the appropriate source for the given pattern expression.
 Mirrors `ASource::new` in sources.rs; checks GROUNDED_REGISTRY first
 so registered Julia functions take priority over BTM trie queries.
 """
-function asource_new(e::MORK.Expr) :: ASource
+function asource_new(e::MORK.Expr)::ASource
     buf = e.buf
     length(buf) >= 1 || return CompatSource(e)
 
@@ -414,28 +429,28 @@ function asource_new(e::MORK.Expr) :: ASource
 
     # [2] BTM ...
     if length(buf) >= 5 &&
-       buf[1] == item_byte(ExprArity(UInt8(2))) &&
-       buf[2] == item_byte(ExprSymbol(UInt8(3))) &&
-       buf[3] == UInt8('B') && buf[4] == UInt8('T') && buf[5] == UInt8('M')
+        buf[1] == item_byte(ExprArity(UInt8(2))) &&
+        buf[2] == item_byte(ExprSymbol(UInt8(3))) &&
+        buf[3] == UInt8('B') && buf[4] == UInt8('T') && buf[5] == UInt8('M')
         return BTMSource(e)
     end
 
     # [3] ACT <name> ...
     if length(buf) >= 5 &&
-       buf[1] == item_byte(ExprArity(UInt8(3))) &&
-       buf[2] == item_byte(ExprSymbol(UInt8(3))) &&
-       buf[3] == UInt8('A') && buf[4] == UInt8('C') && buf[5] == UInt8('T')
+        buf[1] == item_byte(ExprArity(UInt8(3))) &&
+        buf[2] == item_byte(ExprSymbol(UInt8(3))) &&
+        buf[3] == UInt8('A') && buf[4] == UInt8('C') && buf[5] == UInt8('T')
         name_tag = byte_item(buf[6])
         if name_tag isa ExprSymbol
-            act_name = String(buf[7 : 6 + Int(name_tag.size)])
+            act_name = String(buf[7:(6 + Int(name_tag.size))])
             return ACTSource(e, act_name)
         end
     end
 
     # [3] == ... or [3] != ...
     if length(buf) >= 4 &&
-       buf[1] == item_byte(ExprArity(UInt8(3))) &&
-       buf[2] == item_byte(ExprSymbol(UInt8(2)))
+        buf[1] == item_byte(ExprArity(UInt8(3))) &&
+        buf[2] == item_byte(ExprSymbol(UInt8(2)))
         if buf[3] == UInt8('=') && buf[4] == UInt8('=')
             return CmpSource(e, 0)
         elseif buf[3] == UInt8('!') && buf[4] == UInt8('=')

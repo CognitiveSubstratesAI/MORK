@@ -8,12 +8,21 @@
 #   echo 'include("/tmp/test.jl")' | julia --project=. tools/mork_repl.jl
 
 # Revise: optional hot-reload — src/ changes reload without restarting
-try; using Revise; catch; end
+try
+    ; using Revise;
+catch
+    ;
+end
 
 using MORK
 
-mc(src, n=999_999) = (s=new_space(); space_add_all_sexpr!(s,src); space_metta_calculus!(s,n); space_dump_all_sexpr(s))
-t(path=joinpath(@__DIR__,"..","test","runtests.jl")) = include(path)
+mc(src, n=999_999) = (
+    s=new_space();
+    space_add_all_sexpr!(s, src);
+    space_metta_calculus!(s, n);
+    space_dump_all_sexpr(s)
+)
+t(path=joinpath(@__DIR__, "..", "test", "runtests.jl")) = include(path)
 
 if isinteractive()
     println("MORK v", MORK.version(), " loaded.")

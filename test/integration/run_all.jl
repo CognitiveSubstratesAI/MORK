@@ -7,7 +7,9 @@
 
 const INTEGRATION_DIR = @__DIR__
 
-pass = 0; fail = 0; err = 0
+pass = 0;
+fail = 0;
+err = 0
 for f in sort(readdir(INTEGRATION_DIR))
     f == "run_all.jl" && continue
     endswith(f, ".jl") || continue

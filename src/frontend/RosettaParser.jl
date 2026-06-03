@@ -13,15 +13,15 @@ functions from rosetta_parser.rs.
 abstract type RSExp end
 
 struct RSExpF64 <: RSExp
-    val ::Float64
+    val::Float64
 end
 
 struct RSExpList <: RSExp
-    items ::Vector{RSExp}
+    items::Vector{RSExp}
 end
 
 struct RSExpStr <: RSExp
-    val ::String
+    val::String
 end
 
 function Base.show(io::IO, s::RSExpF64)
@@ -40,7 +40,7 @@ function Base.show(io::IO, s::RSExpList)
 end
 
 # buffer_encode — mirrors SExp::buffer_encode
-function rs_buffer_encode(s::RSExp) :: String
+function rs_buffer_encode(s::RSExp)::String
     io = IOBuffer()
     rs_encode(s, io)
     String(take!(io))
@@ -81,9 +81,12 @@ end
 
 abstract type RSToken end
 struct RSListStart <: RSToken end
-struct RSListEnd   <: RSToken end
-struct RSLiteral   <: RSToken; val::RSExp; end
-struct RSEof       <: RSToken end
+struct RSListEnd <: RSToken end
+struct RSLiteral <: RSToken
+    ;
+    val::RSExp;
+end
+struct RSEof <: RSToken end
 
 # =====================================================================
 # Tokens — mirrors Tokens<'a> struct in rosetta_parser.rs
@@ -96,13 +99,13 @@ Iterator over a string yielding Token values.
 Mirrors `Tokens<'a>` in rosetta_parser.rs.
 """
 mutable struct RSTokens
-    string ::String   # remaining text to parse
+    string::String   # remaining text to parse
 end
 
 RSTokens(s::AbstractString) = RSTokens(String(s))
 
 # parse_literal — mirrors parse_literal fn in rosetta_parser.rs
-function _rs_parse_literal(s::String) :: RSExp
+function _rs_parse_literal(s::String)::RSExp
     isempty(s) && return RSExpStr(s)
     b = UInt8(s[1])
     if (b >= UInt8('0') && b <= UInt8('9')) || b == UInt8('-')
@@ -113,7 +116,7 @@ function _rs_parse_literal(s::String) :: RSExp
 end
 
 # next_token — mirrors Tokens::next_token in rosetta_parser.rs
-function rs_next_token!(t::RSTokens) :: Union{RSToken, RSError}
+function rs_next_token!(t::RSTokens)::Union{RSToken, RSError}
     while true
         isempty(t.string) && return RSEof()
 
@@ -129,10 +132,10 @@ function rs_next_token!(t::RSTokens) :: Union{RSToken, RSError}
 
         elseif c == '"'
             rest = t.string[2:end]
-            idx  = findfirst('"', rest)
+            idx = findfirst('"', rest)
             idx === nothing && return RS_UNTERMINATED_STRING
-            interior = rest[1:idx-1]
-            t.string  = rest[idx+1:end]
+            interior = rest[1:(idx - 1)]
+            t.string = rest[(idx + 1):end]
             return RSLiteral(RSExpStr(interior))
 
         elseif isspace(c)
@@ -146,7 +149,8 @@ function rs_next_token!(t::RSTokens) :: Union{RSToken, RSError}
             while i <= ncodeunits(t.string)
                 ch = t.string[i]
                 if ch == ')' || ch == '('
-                    end_ch = ch; break
+                    end_ch = ch;
+                    break
                 elseif isspace(ch)
                     break
                 end
@@ -170,9 +174,9 @@ end
 # Uses a stack instead of arena allocation (Julia GC handles memory).
 # =====================================================================
 
-function rs_parse(input::String) :: Union{RSExp, RSError}
+function rs_parse(input::String)::Union{RSExp, RSError}
     tokens = RSTokens(input)
-    stack  = Vector{RSExp}[]
+    stack = Vector{RSExp}[]
 
     tok = rs_next_token!(tokens)
     tok isa RSError && return tok
@@ -217,7 +221,7 @@ end
 
 # SExp::parse_multiple — mirrors SExp::parse_multiple in rosetta_parser.rs
 # Parses one s-expression from an existing token stream (no EOF check).
-function rs_parse_multiple!(tokens::RSTokens) :: Union{RSExp, RSError}
+function rs_parse_multiple!(tokens::RSTokens)::Union{RSExp, RSError}
     stack = Vector{RSExp}[]
 
     tok = rs_next_token!(tokens)
