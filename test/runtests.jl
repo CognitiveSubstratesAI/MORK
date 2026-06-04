@@ -1,16 +1,22 @@
 using Test
 using MORK
 using PathMap
-using Aqua
+# Aqua is test-only [extras]: present under Pkg.test/CI but NOT in a plain
+# `julia --project=. test/runtests.jl` run (no sandbox). Load optionally.
+const _HAS_AQUA = try; @eval using Aqua; true; catch; false; end
 # PathMap module and PathMap type share the same name — alias the type
 const PM = PathMap.PathMap
 
 @testset "MORK" begin
-    @testset "Aqua quality" begin
-        # deps_compat check_extras=false: [extras] are dev/test tools; runtime [deps]
-        # (Base64, PathMap, PrecompileTools) carry [compat]. PathMap is dev-linked via
-        # [sources] so deps_compat skips it.
-        Aqua.test_all(MORK; deps_compat=(check_extras=false,))
+    if _HAS_AQUA
+        @testset "Aqua quality" begin
+            # deps_compat check_extras=false: [extras] are dev/test tools; runtime [deps]
+            # (Base64, PathMap, PrecompileTools) carry [compat]. PathMap is dev-linked via
+            # [sources] so deps_compat skips it.
+            Aqua.test_all(MORK; deps_compat=(check_extras=false,))
+        end
+    else
+        @info "Aqua not loadable (plain julia --project=.) — runs under Pkg.test/CI"
     end
 
     @testset "Phase 0 skeleton" begin
