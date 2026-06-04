@@ -108,6 +108,15 @@ Base.isempty(e::Expr) = isempty(e.buf)
 expr_tag_at(e::Expr, offset::Int=1) = byte_item(e.buf[offset])
 
 """Span (all bytes) of the sub-expression starting at `offset`."""
+# E-1 (audit 2026-06-04): traced + VERIFIED CORRECT (the audit's "correct-by-coincidence"
+# is refuted). Standard flat-arity expression-end walk: `depth` tracks pending
+# sub-expressions. A leaf consumes one (depth -= 1); an Arity(n) header introduces n
+# children (depth += n) then is itself consumed (depth -= 1) — net +(n-1). The expression
+# ends exactly when depth returns to 0. Produces spans identical to the recursive
+# `_expr_end_offset` (Sinks.jl) on flat + nested shapes. DUPLICATION NOTE: the two compute
+# the same thing; a future cleanup should move `_expr_end_offset` up to the expr layer and
+# have both use it — deferred (not worth a backward expr→kernel dependency or a behavioural
+# change to this hot, correct walker now).
 function expr_span(e::Expr, offset::Int=1)
     i = offset
     depth = 0

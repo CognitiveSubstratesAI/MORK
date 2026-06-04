@@ -3,7 +3,14 @@ using MORK
 using PathMap
 # Aqua is test-only [extras]: present under Pkg.test/CI but NOT in a plain
 # `julia --project=. test/runtests.jl` run (no sandbox). Load optionally.
-const _HAS_AQUA = try; @eval using Aqua; true; catch; false; end
+const _HAS_AQUA = try
+    ;
+    @eval using Aqua;
+    true;
+catch
+    ;
+    false;
+end
 # PathMap module and PathMap type share the same name — alias the type
 const PM = PathMap.PathMap
 
@@ -4411,6 +4418,51 @@ const PM = PathMap.PathMap
         # overflow case: 2^62 + 2^62 = 2^63 overflows Int64 but fits Int128
         a = collect(reinterpret(UInt8, [hton(Int128(2)^62)]))
         @test MORK._read_i128(MORK.pure_apply("sum_i128", [a, a])) == Int128(2)^63
+
+        # D-P1 regression (audit 2026-06-04): sub/mod/div/one/from_string/to_string + the
+        # *_as_i128 conversions ALSO used _read_i64/Int64 and were silently truncating
+        # |x| ≥ 2^63. Lock them with operands beyond Int64 range.
+        be128(x) = collect(reinterpret(UInt8, [hton(Int128(x))]))
+        big = Int128(2)^80 + 123
+        @test MORK._read_i128(MORK.pure_apply("sub_i128", [be128(big), be128(5)])) ==
+            big - 5
+        @test MORK._read_i128(MORK.pure_apply("mod_i128", [be128(big), be128(1000)])) ==
+            rem(big, Int128(1000))
+        @test MORK._read_i128(MORK.pure_apply("div_i128", [be128(big), be128(7)])) ==
+            div(big, Int128(7))
+        @test length(MORK.pure_apply("i128_one", [UInt8[]])) == 16
+        @test MORK._read_i128(MORK.pure_apply("i128_one", [UInt8[]])) == Int128(1)
+        # i64_as_i128 must widen to 16 bytes (was returning Int64 → 8 bytes)
+        res128 = MORK.pure_apply(
+            "i64_as_i128", [collect(reinterpret(UInt8, [hton(Int64(-9))]))]
+        )
+        @test length(res128) == 16
+        @test MORK._read_i128(res128) == Int128(-9)
+        # round-trip through string
+        @test MORK._read_i128(
+            MORK.pure_apply("i128_from_string",
+                [Vector{UInt8}(string(big))])
+        ) == big
+    end
+
+    # SP-3 (audit 2026-06-04): space_transform_multi_multi! reads `read_btm = s.btm`
+    # directly (no copy) — sound ONLY because ReadZipperCore captures an Rc snapshot at
+    # construction and COW writes during the match fork s.btm's spine independently. A
+    # self-feeding rule (output re-matches its own pattern) is where a COW regression would
+    # silently corrupt in-flight reads. COVERAGE ALREADY EXISTS: the integration test
+    # `wiki: transitive.mm2` (test/integration/test_wiki_examples.jl) runs the self-feeding
+    # rule `(exec 1 (, (edge $x $y) (edge $y $z)) (, (edge $x $z)))` to a bounded fixpoint —
+    # exactly the read_btm=s.btm path. (A bespoke deep-closure marker test was dropped: at
+    # uniform priority it doesn't reliably derive a specific deep pair — a priority/iteration
+    # nuance of the dialect, NOT a COW issue.) Below: a minimal single-step self-feed guard.
+    @testset "SP-3: self-feeding edge rule runs over the COW read-snapshot" begin
+        s = new_space()
+        space_add_all_sexpr!(s,
+            "(exec 1 (, (edge \$x \$y) (edge \$y \$z)) (, (edge \$x \$z)))\n" *
+            "(edge a b)\n(edge b c)\n")
+        steps = space_metta_calculus!(s, 100_000)
+        @test steps < 100_000                         # terminates (no COW-corruption loop)
+        @test occursin("(edge a c)", space_dump_all_sexpr(s))  # self-feed derived a→c
     end
 
     @testset "Pure ternarylogic — honors selector + full width (audit P-2)" begin

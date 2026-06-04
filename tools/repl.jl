@@ -21,10 +21,10 @@ using PathMap
 # ── Shortcuts ─────────────────────────────────────────────────────────────────
 
 # Run the full test suite
-t(path = joinpath(@__DIR__, "..", "test", "runtests.jl")) = include(path)
+t(path=joinpath(@__DIR__, "..", "test", "runtests.jl")) = include(path)
 
 # Evaluate MeTTa in a fresh space; return the dump string
-function run(src::AbstractString, steps::Int = 999_999)
+function run(src::AbstractString, steps::Int=999_999)
     s = new_space()
     space_add_all_sexpr!(s, src)
     space_metta_calculus!(s, steps)

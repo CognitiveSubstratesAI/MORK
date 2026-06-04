@@ -518,12 +518,12 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
 
         pzg_child_count(prz) != 0 && (empty!(bindings_scratch); continue)
 
-        result = try
-            _expr_unify_inplace!(pairs_scratch, bindings_scratch)
-        catch
-            ;
-            nothing
-        end
+        # SP-1 fix (audit 2026-06-04): was `try …unify… catch; nothing end`, which
+        # swallowed EVERY exception as a benign no-match. `_expr_unify_inplace!` returns
+        # its failure as a VALUE (≠ true) on genuine non-unification and only THROWS on a
+        # real bug (malformed expr / BoundsError) — so the catch could only hide bugs.
+        # The root paths (`_space_query_multi_inner!`) call it directly; match them.
+        result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
         if result !== true
             empty!(bindings_scratch)
             continue

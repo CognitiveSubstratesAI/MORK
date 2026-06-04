@@ -257,8 +257,15 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
             (h, o, a) -> (h, false),
             (h, o, x, y) -> (h, x || y),
             (h, o, acc) -> (h, acc))
-        # found may be nothing for leaf-only expressions — treat as false
-        found === nothing ? false : (found isa Tuple ? found[2] : found)::Bool
+        # EA-1 fix (audit 2026-06-04): `expr_traverseh` returns (h, value, j) and every
+        # occurs-check callback's value component is a strict Bool (f||eq, b, false, x||y,
+        # acc); the only non-Bool is `nothing` when no callback fires (leaf-only expression —
+        # the var genuinely does NOT occur, so `false` is correct). `found` is therefore
+        # never a Tuple — dropped the dead `found isa Tuple ? found[2] : found` coalescing
+        # that papered over unexpected shapes. The `::Bool` now makes any non-Bool surface
+        # loudly instead of silently defaulting an occurs-check to the unsound (allow-binding)
+        # direction.
+        found === nothing ? false : found::Bool
     end
 
     # is_unbound: follow variable chain, true if ultimately unbound

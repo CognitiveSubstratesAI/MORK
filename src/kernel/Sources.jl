@@ -182,19 +182,22 @@ source_requests(s::CmpSource) = [ResourceRequest(RREQ_BTM)]
 # so origin_path = [3]== + (primary_path)(secondary_path).
 function source_factor(s::CmpSource, btm::PathMap{UnitVal})
     cmp = s.cmp
-    map_clone = deepcopy(btm)   # for != : need full BTM copy to subtract from
+    # SRC-1 fix (audit 2026-06-04): removed the setup `deepcopy(btm)` AND the per-path
+    # `deepcopy(map_clone)` inside the policy closure — a full O(space) copy for EVERY
+    # enrolled path, the opposite of the COW discipline the stack is built on. `psubtract`
+    # is non-mutating and COW-shares structure, so `btm \ {path}` costs the touched spine
+    # only, not a whole-space copy.
 
     # Policy: (payload, path, c) → (payload, Union{nothing, ReadZipperCore})
     # Mirrors CmpSource::policy in sources.rs
     function cmp_policy(payload, path::Vector{UInt8}, c::Int)
         if c == 0
+            single = PathMap{UnitVal}()
+            set_val_at!(single, path, UNIT_VAL)
             if cmp == 0  # ==: secondary = single-entry PathMap at this path
-                single = PathMap{UnitVal}()
-                set_val_at!(single, path, UNIT_VAL)
                 return (payload, read_zipper(single))
-            else          # !=: secondary = BTM clone minus this path
-                complement = deepcopy(map_clone)
-                remove_val_at!(complement, path)
+            else          # !=: secondary = btm minus this path (COW-shared, no deepcopy)
+                complement = psubtract(btm, single)
                 return (payload, read_zipper(complement))
             end
         else

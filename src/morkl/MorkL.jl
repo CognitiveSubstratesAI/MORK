@@ -226,7 +226,13 @@ end
 
 function _binary_space_op!(space_reg::Vector{PathMap{UnitVal}}, pc::Int,
     arg0::Int, arg1::Int, op::Symbol)
-    a = deepcopy(space_reg[arg0 + 1])
+    # ML-1 fix (audit 2026-06-04): dropped `deepcopy(space_reg[arg0+1])`. pjoin / pmeet /
+    # psubtract / prestrict are NON-MUTATING and return COW-shared results, so no input
+    # copy is needed — the deepcopy was a full O(space) copy fighting the COW design.
+    # (The subroutine-snapshot deepcopies at lines ~127/201/469/502 could become COW
+    # `copy()` too, but that widens the sharing surface and is gated on a per-snapshot COW
+    # discipline check — deferred to MorkL's promotion pass; tracked in the audit doc.)
+    a = space_reg[arg0 + 1]
     b = space_reg[arg1 + 1]
     result = if op == :union
         ;
