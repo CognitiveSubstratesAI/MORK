@@ -130,16 +130,24 @@ Mirrors `DyckStructureZipperU64` in dyck_zipper.rs.
 mutable struct DyckStructureZipperU64
     structure::UInt64
     current_depth::UInt8
-    stack::NTuple{32, SubtreeSlice}   # DYCK_MAX_LEAVES = 32
+    # D-1 fix (audit 2026-06-04): was NTuple{32,SubtreeSlice} (immutable) — every
+    # navigation step rebuilt all 32 slots via `ntuple(...)` (O(32)/move) to change one.
+    # A length-32 Vector{SubtreeSlice} (isbits elements stored inline) gives O(1) in-place
+    # `stack[i] = s` sets. The only place a zipper is built from another's stack
+    # (`dsz_breadth_first_leaves`) now `copy`s it (the NTuple was value-copied there); the
+    # leaf const below is never navigated. (Avoided MVector/StaticArrays — no new dep for
+    # this server-branch zipper.)
+    stack::Vector{SubtreeSlice}   # length DYCK_MAX_LEAVES = 32
 end
 
-const _ZERO_STACK = NTuple{32, SubtreeSlice}(ntuple(_ -> SubtreeSlice(), 32))
+# Build a fresh length-32 stack with slot 1 = `s0`, the rest default. O(1)-set thereafter.
+_dsz_new_stack(s0::SubtreeSlice) =
+    SubtreeSlice[i == 1 ? s0 : SubtreeSlice() for i in 1:32]
 
 """LEAF constant — a single-leaf zipper."""
-const DYCK_ZIPPER_LEAF = let
-    stk = ntuple(i -> i == 1 ? SubtreeSlice(UInt8(1), UInt8(0)) : SubtreeSlice(), 32)
-    DyckStructureZipperU64(UInt64(1), UInt8(0), stk)
-end
+const DYCK_ZIPPER_LEAF = DyckStructureZipperU64(
+    UInt64(1), UInt8(0), _dsz_new_stack(SubtreeSlice(UInt8(1), UInt8(0)))
+)
 
 """
     DyckStructureZipperU64(structure) → Union{DyckStructureZipperU64, Nothing}
@@ -149,16 +157,18 @@ Mirrors `DyckStructureZipperU64::new`.
 """
 function DyckStructureZipperU64(structure::UInt64)::Union{DyckStructureZipperU64, Nothing}
     structure == 0 && return nothing
-    word = dyck_valid_non_empty(structure) ? structure : structure  # debug-checked in upstream
+    # D-2 fix (audit 2026-06-04): was `word = valid ? structure : structure` — both branches
+    # identical (a dead `cond?x:x` standing in for Rust's release-stripped debug_assert!(valid)).
+    word = structure
     terminal = UInt8(64 - leading_zeros(structure))
-    stk = ntuple(i -> i == 1 ? SubtreeSlice(terminal, UInt8(0)) : SubtreeSlice(), 32)
-    DyckStructureZipperU64(word, UInt8(0), stk)
+    DyckStructureZipperU64(word, UInt8(0), _dsz_new_stack(SubtreeSlice(terminal, UInt8(0))))
 end
 
 function DyckStructureZipperU64(dw::DyckWord)::DyckStructureZipperU64
     terminal = UInt8(64 - leading_zeros(dw.word))
-    stk = ntuple(i -> i == 1 ? SubtreeSlice(terminal, UInt8(0)) : SubtreeSlice(), 32)
-    DyckStructureZipperU64(dw.word, UInt8(0), stk)
+    DyckStructureZipperU64(
+        dw.word, UInt8(0), _dsz_new_stack(SubtreeSlice(terminal, UInt8(0)))
+    )
 end
 
 # ── Internal helpers ──────────────────────────────────────────────────
@@ -168,13 +178,11 @@ function _dsz_cur(z::DyckStructureZipperU64)::SubtreeSlice
 end
 
 function _dsz_set_cur!(z::DyckStructureZipperU64, s::SubtreeSlice)
-    stk = z.stack
-    z.stack = ntuple(i -> i == z.current_depth + 1 ? s : stk[i], 32)
+    @inbounds z.stack[z.current_depth + 1] = s   # D-1: O(1) in-place, was O(32) ntuple rebuild
 end
 
 function _dsz_set_at!(z::DyckStructureZipperU64, depth::Int, s::SubtreeSlice)
-    stk = z.stack
-    z.stack = ntuple(i -> i == depth + 1 ? s : stk[i], 32)
+    @inbounds z.stack[depth + 1] = s             # D-1: O(1) in-place
 end
 
 function _left_subtree_head(s::SubtreeSlice, structure::UInt64)::UInt64
@@ -386,7 +394,10 @@ Mirrors `current_breadth_first_indicies`.
 """
 function dsz_breadth_first_leaves(z::DyckStructureZipperU64)::Vector{Int}
     MAX_DEFERED = DYCK_MAX_LEAVES
-    tmp = DyckStructureZipperU64(z.structure, UInt8(0), z.stack)
+    # D-1 note: stack is now a mutable Vector, so `tmp` must get its OWN copy — sharing
+    # z.stack would let tmp's BFS navigation corrupt the source zipper (the old NTuple was
+    # value-copied here, so this aliasing is new with the Vector field).
+    tmp = DyckStructureZipperU64(z.structure, UInt8(0), copy(z.stack))
     tmp.current_depth = UInt8(0)
 
     ring = Vector{SubtreeSlice}(undef, MAX_DEFERED)
@@ -397,7 +408,10 @@ function dsz_breadth_first_leaves(z::DyckStructureZipperU64)::Vector{Int}
     result = Int[]
     while front != tail
         tmp.current_depth = UInt8(0)   # mirrors tmp.accend_to_root() in upstream
-        tmp.stack = ntuple(i -> i == 1 ? ring[front] : SubtreeSlice(), 32)
+        # D-1: O(1) in-place reset of slot 1. Slots 2..32 are left stale but are always
+        # overwritten by `dsz_descend_left!` (writes the new slot right after incrementing
+        # depth, before any read) — so a full clear is unnecessary.
+        @inbounds tmp.stack[1] = ring[front]
         front = mod1(front + 1, MAX_DEFERED)
 
         if dsz_descend_left!(tmp)
