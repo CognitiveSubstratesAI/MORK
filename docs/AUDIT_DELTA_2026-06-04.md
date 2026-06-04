@@ -27,20 +27,33 @@ Verified: warm-REPL/`runtests` **1723/1724** (1 broken = threads-only test).
   deep-closure marker test was dropped — uniform-priority full closure to a specific deep
   pair is a dialect iteration nuance, not a COW issue.)
 
-## DEFERRED / DOCUMENTED (Low — minor, not correctness-critical)
-- **SP-2 (Low):** `space_query_coref` computes a dead `bindings_out = copy(...)` per match.
-- **SP-4 (Low):** Space.jl header still calls coref DFS "deferred" — stale (it's implemented).
-- **D-1 (Med-perf):** DyckZipper `NTuple{32}` stack rebuilt O(32)/move → `MVector{32}`
-  (server-branch experiment, off PRIMUS critical path).
-- **SNK-1 (Low-Med):** PureSink `ifnz` brittle positional keyword parse (no validation).
-- **D-2 / MAIN-1 (Low):** DyckZipper `cond?x:x` no-op; `paths` input branch silent-empty.
+## FIXED — second pass (Tier-4 cleanup, 2026-06-04)
+- **D-1 (Med-perf):** DyckZipper `NTuple{32}` stack rebuilt O(32)/move → length-32
+  `Vector{SubtreeSlice}` (O(1) in-place sets). Julia-native, no StaticArrays dep. Aliasing
+  in `dsz_breadth_first_leaves` (now `copy(z.stack)`) handled. (commit `163c07e`)
+- **D-2 (trivial):** removed the dead `word = valid ? structure : structure` `cond?x:x` no-op.
+- **SP-2 (Low):** removed the dead `bindings_out = copy(...)` per-match allocation in
+  `space_query_coref` (the effect contract is `effect(loc)`, doesn't take bindings).
+- **SP-4 (Low):** Space.jl header corrected — coref DFS is IMPLEMENTED, not "deferred".
+- **MAIN-1 (Low):** `paths` INPUT branch now `error()`s (fail-loud), symmetric with the
+  OUTPUT branch — was a silent-empty load.
+- **SNK-1 (Low-Med):** PureSink `ifnz` now VALIDATES the `then`/`else` keyword positions
+  `(ifnz COND then THEN [else ELSE])` and returns `nothing` on a malformed shape — was
+  skipping the keywords unchecked, so `(ifnz cond X Y)` could silently mis-branch.
+
+## DEFERRED / DOCUMENTED (genuinely not-now)
 - **ML-1 tail:** MorkL subroutine-snapshot deepcopies → COW `copy()` when MorkL is promoted
-  (sharing-surface gate required).
+  (sharing-surface gate required — not a fix to apply blind).
 - **ML-2 (Low):** `parse_routine_with_args_paths` is a declared stub (upstream `todo!()`) —
-  MorkL argument-passing unimplemented.
-- **Cross-cutting float/number-format (SNK-2, PUR-NEW1, FP-1):** Julia default
-  `string()`/`parse()` may not round-trip / match Rust formatting — document a numeric-format
-  contract if outputs cross the Julia↔Rust / Julia↔MeTTa-consumer boundary.
+  MorkL argument-passing unimplemented (functional limitation, tracked).
+- **Float/number-format contract (SNK-2 FloatReductionSink/SumSink, PUR-NEW1 Pure
+  `*_to_string`, FP-1 JSON WriteTranscriber) — CONTRACT DECIDED:** MORK uses Julia's default
+  `string()`/`parse()` for numeric text. This is self-round-trippable WITHIN Julia and is the
+  correct behaviour as long as numeric output stays inside the Julia stack. It is NOT changed
+  now (no demonstrated break). IF/WHEN a numeric value crosses the Julia↔Rust or
+  Julia↔external-MeTTa-consumer boundary, those specific sites switch to a Rust-`format!`-
+  matching formatter. Documented here so it doesn't get "fixed" speculatively (the audit's
+  own guidance: implement only at an actual boundary).
 
 ## CONFIRMED FIXED (prior close-outs spot-checked) — no action
 I-1/I-2/I-3 (interning, incl. the `with_write_permit` RAII that PathMap's ZT-1 mirrors),

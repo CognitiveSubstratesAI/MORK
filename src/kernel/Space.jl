@@ -11,8 +11,10 @@ Julia translation notes
   - `#[cfg(feature="interning")]` path → raw-bytes (no-interning) variant
     (symbols stored as raw UTF-8 truncated to 63 bytes, matching the
     `#[cfg(not(feature="interning"))]` code path in upstream)
-  - `coreferential_transition` (250-line DFS) → deferred; `query_multi`
-    uses the `#[cfg(feature="no_search")]` ProductZipper + unify path
+  - `coreferential_transition` (DFS) → IMPLEMENTED (`_coreferential_transition!` +
+    `space_query_coref`, single- and multi-source; ports upstream e551924). `query_multi`
+    additionally has the `#[cfg(feature="no_search")]` ProductZipper + unify fast path.
+    (SP-4 fix 2026-06-04: header previously called the coref DFS "deferred" — stale.)
   - `setjmp`/`longjmp` early-exit → Julia `throw`/`catch` (BreakQuery)
   - `subprocess::Popen` (Z3 integration) → stubbed
   - `memmap2::Mmap` (ACT memory-mapped files) → stubbed
@@ -1083,7 +1085,9 @@ function space_query_coref(btm::PathMap{UnitVal},
             result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
             if result === true
                 count[] += 1
-                bindings_out = copy(bindings_scratch)
+                # SP-2 fix (audit 2026-06-04): removed a dead `bindings_out = copy(...)`
+                # per match — the coref effect contract is `effect(loc)` (it takes the
+                # zipper, not bindings), so the copy was pure per-match allocation waste.
                 empty!(bindings_scratch)
                 effect(loc)
             else

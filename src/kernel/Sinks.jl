@@ -850,15 +850,29 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
         end
 
         # ── ifnz: short-circuit conditional ──────────────────────────
+        # Contract: (ifnz COND then THEN-EXPR [else ELSE-EXPR]) — `then`/`else` are literal
+        # keyword symbols. SNK-1 (audit 2026-06-04): the keyword positions were SKIPPED
+        # without validation, so a malformed shape like `(ifnz cond X Y)` (no keywords)
+        # silently evaluated the wrong branch. Now validate the keyword bytes and return
+        # `nothing` (skip) on a mismatch instead of mis-branching.
         if fn_name == "ifnz" && length(arg_spans) >= 3
+            _ifnz_kw(span) = begin
+                o = first(span)
+                o <= length(buf) || return ""
+                t = byte_item(buf[o])
+                t isa ExprSymbol || return ""
+                n = Int(t.size)
+                (o + n) <= length(buf) ? String(@view buf[(o + 1):(o + n)]) : ""
+            end
+            _ifnz_kw(arg_spans[2]) == "then" || return nothing   # arg[2] must be `then`
             cond = _pure_eval_formula(buf, first(arg_spans[1]))
             cond === nothing && return nothing
             cond_payload = _pure_strip_header(cond)
             is_nz = !all(==(0x00), cond_payload)
-            # arg_spans[2] is the "then" keyword — skip it
             if is_nz
                 return _pure_eval_formula(buf, first(arg_spans[3]))
             elseif length(arg_spans) == 5
+                _ifnz_kw(arg_spans[4]) == "else" || return nothing   # arg[4] must be `else`
                 return _pure_eval_formula(buf, first(arg_spans[5]))
             else
                 return nothing

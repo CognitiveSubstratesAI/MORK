@@ -108,7 +108,9 @@ function mork_convert(input_path::AbstractString,
             verbose && println("Note: pattern/template application not yet ported")
         end
     elseif input_format == "paths"
-        verbose && println("paths format deserialization not yet integrated")
+        # MAIN-1 fix (audit 2026-06-04): was a verbose note then silent-empty load — fail
+        # loud instead, symmetric with the `paths` OUTPUT branch's error() below.
+        error("paths input format not yet ported")
     else
         error("Unsupported input format: $input_format")
     end
