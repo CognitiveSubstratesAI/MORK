@@ -19,6 +19,11 @@ SKIP = {"bench_flybase", "bench_lr", "bench_tile_puzzle_states", "bench_pattern_
         "ip_sudoku", "meta_ana", "meta_ana_exec", "pattern_mining", "pattern_mining_lensy",
         "formula_execution", "process_calculus_reverse", "basic", "roman_disjoin_initial",
         "roman_disjoin_final", "source_map_oom",
+        # ACT-file tests: build a separate space, backup_tree() it to a .act mmap, then read it
+        # via (ACT …) sources. NOT replicable by feeding a single string to run_julia (needs the
+        # file-backup/mmap infra), and the extractor only captures the first string literal (the
+        # data), missing the exec — so they "FAIL" trivially. Need a dedicated ACT-aware harness.
+        "source_act_two_bipolar_equal_crossed", "source_space_act_two_bipolar_equal_crossed",
         # heavy backward-chaining / lens — not quick conformance, run separately if needed:
         "bc0", "bc1", "bc2", "bc3", "lens_composition"}
 

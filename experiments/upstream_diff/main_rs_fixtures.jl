@@ -16,8 +16,6 @@ const MAIN_RS_FIXTURES = [
     (name = "func_type_unification", input = "(a (: \$a A))\n(b (: f (-> A)))\n(exec 0 (, (a (: (\$f) A))\n           (b (: \$f (-> A))))\n        (, (c OK)))\n    ", asserts = ["(c OK)\n"], wip = true),
     (name = "top_level_match", input = "(\$f)\nf\n(exec 0 (, (\$f) \$f) (, OK))\n    ", asserts = ["OK\n"], wip = false),
     (name = "source_space_two_bipolar_equal_crossed", input = "(exec 0 (I (BTM (Something \$x \$y)) (BTM (Else \$x \$y))) (, (MATCHED \$x \$y) ))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
-    (name = "source_act_two_bipolar_equal_crossed", input = "(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
-    (name = "source_space_act_two_bipolar_equal_crossed", input = "(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
     (name = "source_cmp_eq", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (, (REM \$o) ))\n    ", asserts = ["(REM (RHS (\$a bar)))\n"], wip = false),
     (name = "source_sink_cmp_eq_remove", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (O (- \$o) (+ (RES \$p)) ))\n    ", asserts = ["(RES (foo bar))\n"], wip = false),
     (name = "source_sink_cmp_eq_remove_both", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (== (LHS \$p) \$lhs) (== (RHS \$p) \$rhs) ) (O (- \$lhs) (- \$rhs) (+ (RES \$p)) ))\n    ", asserts = ["(RES (foo bar))\n"], wip = false),

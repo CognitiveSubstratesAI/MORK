@@ -80,7 +80,22 @@ for anything else, and the `source_map_reverse()` test is **defined but never ca
 nothing (no crash). Reclassified as **wip** (defined-but-never-wired = unimplemented/aspirational),
 not a port regression. Extractor `WIP` set updated to mark defined-but-uncalled tests.
 
-Remaining **real-computation** FAILs (4 → 2 genuine): `source_act_two_bipolar`,
-`source_space_act_two_bipolar` — the multi-result/bipolar-unification family (the deep B-phase area
-upstream itself is still stabilizing). `source_cmp_ne`/`source_cmp_eq` = serialize-format artifacts
-(correct computation, see above).
+## Update 2026-06-11 (e) — the `source_act*_two_bipolar` "FAILs" are extraction artifacts → 0 genuine FAILs
+
+`source_act_two_bipolar_equal_crossed` and `source_space_act_two_bipolar_equal_crossed` are **ACT-file
+tests**: the upstream test builds a *separate* space, `backup_tree()`s it to a `.act` mmap file, then
+runs an exec whose sources are `(ACT <file> <pat>)` reading that file. Two problems make the fixture
+meaningless: (1) the extractor captures only the first `r#"…"#` literal — the **data**, missing the
+exec entirely; (2) even with the exec, `run_julia(string)` can't replicate the `backup_tree`/mmap
+file setup. So the harness fed just `(Something …)(Else …)` with no exec → trivially no `MATCHED` →
+"FAIL". **This says nothing about the port.** Removed from the fixtures + added to the extractor SKIP
+set (same rationale as `source_map_oom`). Verifying the ACT-source path needs a dedicated ACT-aware
+test (backup_tree + ACT sources + dump) — an OPEN question, not a known bug.
+
+### Final state: **24 PASS · 2 FAIL · 0 CRASH** — 0 genuine unexplained FAILs.
+Both remaining FAILs are serialize-format artifacts with **correct computation**:
+- `source_cmp_ne` — harness full-dump vs upstream's projected `dump_sexpr` (OUT-unwrap).
+- `source_cmp_eq` — port `$`/`_N` vs upstream `VARNAMES` (`$a`) variable naming.
+
+The core matching/unification engine **conforms to 100% of upstream's runnable asserts.** Open items
+are not engine bugs: the ACT-source path (untested here) and the optional serialize alignment.
