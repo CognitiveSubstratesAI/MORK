@@ -91,14 +91,34 @@ printf 'include("experiments/mm2_programs/diag_pathmap.jl"); exit()\n'  | julia 
 #   → MINIMAL: add 2 / remove 1 / conj matches=1  (the isolated bug)
 ```
 
-## Next step (fix) — two candidates, cross-check upstream first
-1. **Query-layer gate (localized, lower risk):** in `_space_query_multi_inner!` (and the `_i` sibling),
-   require the matched factor leaf to carry a value before emitting — mirror what `to_next_val` already
-   does. Every real atom has a value, so this only drops dangling-path phantoms.
-2. **Prune on remove (uniform, higher risk):** make `remove_val_at!` prune now-empty branches so no
-   dangling path exists for any traversal — but this touches PathMap COW/sharing and needs the
-   COW-soundness gate.
+## Fix site located
+The `(-)` removal is `RemoveSink.sink_finalize!` (`src/kernel/Sinks.jl:201`) calling
+`remove_val_at!(btm, path)`. The port's `remove_val_at!(m, path, prune=false)` (`PathMap
+WriteZipper.jl:483`) makes pruning **opt-in and off by default**, so the value is cleared but the
+**dangling path-node survives** — and `path_exists()`-gated queries match it. Upstream `space.rs`
+`query_multi_impl` gates on `rz.path_exists()` (lines 1852, 1874), i.e. it relies on the invariant
+*"a reachable path has a value"* — which the port breaks by not pruning on remove.
 
-Check upstream MORK's PathMap remove + query semantics (does Rust prune on remove, or gate the query
-on value?) to pick the port-faithful option before patching. Until fixed this is a **known, isolated,
-reproducible** non-termination; it does **not** crash, and the other 32 corpus programs are unaffected.
+## Fix candidates — cross-check upstream first
+1. **Query-layer gate (localized):** in `_space_query_multi_inner!` (and the `_i` sibling), require
+   the matched factor leaf to carry a value before emitting. Every real atom has a value, so this only
+   drops dangling-path phantoms. Slightly diverges from upstream's `path_exists()` gating but doesn't
+   touch trie structure.
+2. **Prune on remove (port-faithful):** pass `prune=true` at the Space-layer removals (`Sinks.jl:201`
+   RemoveSink + forward `prune` through the `PrefixBtm` wrapper at `Sinks.jl:78`).
+
+### ⚠️ Fix-attempt log (2026-06-11)
+**Candidate 2 ATTEMPTED → reverted.** Passing `prune=true` at `RemoveSink` (+ `PrefixBtm` wrapper
+forwarding) removes the dangling path, but the **next step's query crashes**:
+`BoundsError: access 15-element Vector{UInt8} at index [16]` in `ExprAlg.jl:50`, reached via the
+ProductZipper enumeration (`Space.jl:751 ← 373/402 ← 1279/1283`). So the `prune=true` code path —
+never exercised before, since every call site defaulted to `false` — has its **own latent bug in the
+prune↔query interaction** (pruning leaves the trie in a shape whose `origin_path` the product zipper
+reads out of bounds). Prune-on-remove is therefore **not a one-line fix**; it needs the prune path
+itself debugged (likely PathMap `wz_prune_path!` / node-collapse vs the read zipper's path
+reconstruction). Reverted to keep `main` green.
+
+**Recommendation:** try **candidate 1** (query-layer value gate) next — it's localized, avoids the
+buggy prune path, and gives correct semantics; OR debug the `prune=true` path if exact upstream parity
+is required. Until fixed this is a **known, isolated, reproducible** non-termination; it does **not**
+crash on the default path, and the other 32 corpus programs are unaffected.
