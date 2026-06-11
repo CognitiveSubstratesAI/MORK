@@ -1,24 +1,46 @@
 # Upstream-ASSERT differential — 2026-06-11
 
-Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec), not self-recorded dumps.
+Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec). `(wip)` = upstream comments the test out in its own `main()` (WIP/known-faulty), not a port regression.
 
-**12 PASS · 0 FAIL · 2 FAIL(wip, upstream-disabled) · 0 CRASH** of 14
+**22 PASS · 5 FAIL · 2 CRASH** (real)  +  1 PASS(wip) · 2 FAIL(wip)  of 32
 
-| case | status | missing |
+| case | status | missing assert |
 |---|---|---|
+| `variable_priority` | FAIL(wip) | `(B Z)
+` |
+| `variables_in_priority` | FAIL(wip) | `(B Z)
+` |
 | `lookup` | PASS |  |
 | `positive` | PASS |  |
 | `positive_equal` | PASS |  |
 | `negative` | PASS |  |
 | `negative_equal` | PASS |  |
 | `bipolar` | PASS |  |
+| `bipolar_equal` | PASS |  |
 | `two_positive_equal` | PASS |  |
 | `two_positive_equal_crossed` | PASS |  |
 | `two_bipolar_equal_crossed` | PASS |  |
-| `variable_priority` | FAIL(wip) | `(B Z)
-` |
-| `variables_in_priority` | FAIL(wip) | `(B Z)
-` |
-| `func_type_unification` | PASS |  |
+| `func_type_unification` | PASS(wip) |  |
+| `top_level_match` | PASS |  |
 | `source_space_two_bipolar_equal_crossed` | PASS |  |
+| `source_act_two_bipolar_equal_crossed` | FAIL | `(MATCHED (foo bar) (foo bar))
+` |
+| `source_space_act_two_bipolar_equal_crossed` | FAIL | `(MATCHED (foo bar) (foo bar))
+` |
+| `source_cmp_eq` | FAIL | `(REM (RHS ($a bar)))
+` |
+| `source_sink_cmp_eq_remove` | PASS |  |
+| `source_sink_cmp_eq_remove_both` | PASS |  |
+| `source_sink_annihilate` | PASS |  |
+| `source_cmp_ne` | CRASH | `MethodError: no method matching read_zipper(::AlgResElement{PathMap.PathMap{UnitVal, GlobalAlloc}})` |
+| `source_cmp_rel` | CRASH | `MethodError: no method matching read_zipper(::AlgResElement{PathMap.PathMap{UnitVal, GlobalAlloc}})` |
+| `source_map_reverse` | FAIL | `(res Z) (res R)
+` |
 | `sink_two_bipolar_equal_crossed` | PASS |  |
+| `sink_two_positive_equal_crossed` | PASS |  |
+| `sink_add_remove` | PASS |  |
+| `sink_add_remove_var` | PASS |  |
+| `sink_sum_literal` | FAIL | `correct` |
+| `sink_exec_remove_trigger` | PASS |  |
+| `sink_count_double` | PASS |  |
+| `sink_count_double_repeated` | PASS |  |
