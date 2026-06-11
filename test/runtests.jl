@@ -4041,6 +4041,22 @@ const PM = PathMap.PathMap
             @test n[] == 0
         end
 
+        @testset "!= comparison source (CmpSource, ports source_cmp_ne)" begin
+            # The `!=` source builds its secondary as `btm minus this path` via psubtract,
+            # which returns an AlgebraicResult (not a bare PathMap). Regression for two bugs:
+            # (1) read_zipper on the raw AlgResElement (Sources.jl), and (2) psubtract over a
+            # node with an empty-child rc crashing on node_is_empty(::Nothing) (PathMap).
+            result = _mc(
+                "(VAL X) (VAL Y) (VAL Z)\n" *
+                "(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (OUT (\$x != \$y)) ))\n"
+            )
+            for p in ["(OUT (X != Y))", "(OUT (X != Z))", "(OUT (Y != X))",
+                      "(OUT (Y != Z))", "(OUT (Z != X))", "(OUT (Z != Y))"]
+                @test occursin(p, result)
+            end
+            @test !occursin("(X != X)", result)   # an element is never != itself
+        end
+
         @testset "positive — variable pattern matches ground fact" begin
             result = _mc(
                 "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n"

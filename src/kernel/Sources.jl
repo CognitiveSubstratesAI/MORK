@@ -197,7 +197,15 @@ function source_factor(s::CmpSource, btm::PathMap{UnitVal})
             if cmp == 0  # ==: secondary = single-entry PathMap at this path
                 return (payload, read_zipper(single))
             else          # !=: secondary = btm minus this path (COW-shared, no deepcopy)
-                complement = psubtract(btm, single)
+                # psubtract returns an AlgebraicResult, not a bare PathMap: Element holds
+                # the subtracted map; Identity (SELF_IDENT) means btm was unchanged (path
+                # ∉ btm); None means the result is empty (btm ⊆ {path}). Mirror the
+                # three-way unwrap PathMap's own prestrict uses. (Was: `read_zipper` on the
+                # raw AlgResElement → MethodError; source_cmp_ne / source_cmp_rel crashed.)
+                res = psubtract(btm, single)
+                complement = res isa AlgResElement ? res.value :
+                             res isa AlgResIdentity ? btm :
+                             PathMap{UnitVal}()
                 return (payload, read_zipper(complement))
             end
         else
