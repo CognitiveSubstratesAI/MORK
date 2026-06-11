@@ -2,7 +2,7 @@
 
 Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec). `(wip)` = upstream comments the test out in its own `main()` (WIP/known-faulty), not a port regression.
 
-**22 PASS · 5 FAIL · 2 CRASH** (real)  +  1 PASS(wip) · 2 FAIL(wip)  of 32
+**23 PASS · 6 FAIL · 0 CRASH** (real)  +  1 PASS(wip) · 2 FAIL(wip)  of 32
 
 | case | status | missing assert |
 |---|---|---|
@@ -32,8 +32,14 @@ Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec). `(wip)` 
 | `source_sink_cmp_eq_remove` | PASS |  |
 | `source_sink_cmp_eq_remove_both` | PASS |  |
 | `source_sink_annihilate` | PASS |  |
-| `source_cmp_ne` | CRASH | `MethodError: no method matching read_zipper(::AlgResElement{PathMap.PathMap{UnitVal, GlobalAlloc}})` |
-| `source_cmp_rel` | CRASH | `MethodError: no method matching read_zipper(::AlgResElement{PathMap.PathMap{UnitVal, GlobalAlloc}})` |
+| `source_cmp_ne` | FAIL | `(X != Y)
+(X != Z)
+(Y != X)
+(Y != Z)
+(Z != X)
+(Z != Y)
+` |
+| `source_cmp_rel` | PASS |  |
 | `source_map_reverse` | FAIL | `(res Z) (res R)
 ` |
 | `sink_two_bipolar_equal_crossed` | PASS |  |

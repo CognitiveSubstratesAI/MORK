@@ -23,3 +23,29 @@ Other upstream-disabled cases to be aware of when expanding fixtures:
 2. Variable-priority execs: track as a shared WIP gap; don't treat the FAIL as a regression.
 3. When recording new fixtures from the wiki/main.rs, note each case's upstream `main()` status
    here so the diff stays interpretable.
+
+---
+
+## Update 2026-06-11 — full 32-fixture run (23 PASS / 6 FAIL / 0 CRASH)
+
+**Both CRASHes fixed.** `source_cmp_ne` and `source_cmp_rel` crashed with
+`MethodError: no read_zipper(::AlgResElement)`. Root cause was two layered bugs, both fixed:
+- **MORK** `CmpSource` `!=` path passed `psubtract`'s `AlgebraicResult` straight to `read_zipper`
+  instead of unwrapping it (Element→`.value`, Identity→`btm`, None→empty). Fixed in `Sources.jl`.
+- **PathMap** `psubtract` over a node with an empty-child rc crashed on `node_is_empty(::Nothing)`
+  (the `nothing` EmptyNode sentinel). Fixed by adding `node_is_empty(::Nothing) = true`.
+
+Result: `source_cmp_rel` now **PASSES** upstream's assert. `source_cmp_ne` is **correct** but shows
+as **FAIL** — a **harness artifact**: upstream asserts on a *projected* dump
+(`dump_sexpr(expr!("[2] OUT $"), "_1")`, which unwraps `(OUT …)` → bare `(X != Y)`), while our
+`run_asserts` harness uses the full `space_dump_all_sexpr` (keeps the `(OUT …)` wrapper). The port
+emits the correct `(OUT (X != Y))` for all 6 pairs. **To clear it, teach the harness upstream's
+projected-dump form; not a port bug.** Regression-tested in MORK `runtests.jl` (`!=` comparison source).
+
+**`two_bipolar_equal_crossed` — earlier "REAL divergence" verdict (rows above) is RETRACTED**
+(see `experiments/upstream_diff/findings/two_bipolar_equal_crossed.md`): the port satisfies upstream's
+*actual* `assert!(res.contains("(MATCHED (foo bar) (foo bar))"))`; the "dropped" second result is a
+nondeterministic extra upstream does not assert. Not a confirmed bug.
+
+Remaining real FAILs to triage next: `source_cmp_eq`, `source_map_reverse`,
+`source_act*_two_bipolar`, `sink_sum_literal` (still fails after the SumSink encoding fix — revisit).
