@@ -98,4 +98,16 @@ Both remaining FAILs are serialize-format artifacts with **correct computation**
 - `source_cmp_eq` — port `$`/`_N` vs upstream `VARNAMES` (`$a`) variable naming.
 
 The core matching/unification engine **conforms to 100% of upstream's runnable asserts.** Open items
-are not engine bugs: the ACT-source path (untested here) and the optional serialize alignment.
+are not engine bugs: the optional serialize alignment, and the deep bipolar/multi-result unification
+(B-phase) — which also affects the in-memory 2-source crossed case, not just ACT.
+
+## Update 2026-06-11 (f) — ACT-source path VERIFIED sound; found+fixed a backup_tree misport
+
+Wrote a dedicated ACT test (the differential's string harness can't). Result: the ACT-source
+infrastructure **works** — a simple `backup_tree → (ACT …) read` yields `(got a/b/c)`, and
+backup→restore round-trips. Along the way found a real bug: `space_backup_tree` wrote `serialize_paths`
+(that's `backup_PATHS`) instead of an `ArenaCompactTree`, so ACT reads of a backup_tree file crashed
+("Invalid ACTree magic"). Fixed both `backup_tree`/`restore_tree!` to mirror upstream
+(`ArenaCompactTree::dump_from_zipper` / `open_mmap`). The `source_act*_two_bipolar` cases still don't
+match — but that's the **deep bipolar/multi-result** gap (the in-memory 2-source crossed case has it
+too), NOT an ACT issue. See MORK `test/runtests.jl` "ACT backup_tree → (ACT …) source read".
