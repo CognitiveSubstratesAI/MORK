@@ -6,8 +6,12 @@ now gates each emitted factor match on value-presence (`_space_query_multi_inner
 full suite 1729 pass / 0 fail; two regression tests added. The ProductZipper could land on a
 **dangling path-node** (value cleared by a non-pruning `remove_val_at!`); the gate restores the
 "a reachable path has a value" invariant upstream's `path_exists()`-gated `query_multi` relies on,
-without touching the COW trie. **Follow-up (separate):** the port's `prune=true` path
-(`PathMap wz_prune_path!`) has its own latent crash — see fix-attempt log below.
+without touching the COW trie. **Follow-up (separate, deferred):** the port-faithful alternative —
+prune on remove — is blocked by a real **prune↔COW↔ProductZipper** bug: with prune enabled and the
+gate disabled, the next-step ProductZipper reports `pz_is_val=true` at a path that is one byte short
+(`BoundsError ExprAlg.jl:50`). The gate masks it, but enabling prune is unsafe until that bug is
+fixed. Prune is **not needed** — the gate fully fixes correctness. Tracked as **PathMap KI-1**
+(`PathMap docs/KNOWN_ISSUES.md`).
 
 > **History (two wrong hypotheses, corrected by diagnostics — kept as a caution):** first guessed
 > "hidden var-source-id state"; then "O-sink `(-)` write-back isn't mutating `s.btm`". **Both wrong.**
