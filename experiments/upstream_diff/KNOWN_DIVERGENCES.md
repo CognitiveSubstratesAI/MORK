@@ -70,5 +70,17 @@ as `source_cmp_ne`'s OUT-projection). Aligning the port's serializer to upstream
 both and make dumps byte-identical, but it changes the port's canonical dump format and would touch
 many existing `$`/`_N`-asserting tests — a deliberate, separate decision, not a bug fix.
 
-Remaining **real-computation** FAILs to triage: `source_map_reverse`, `source_act_two_bipolar`,
-`source_space_act_two_bipolar`. (`source_cmp_ne`, `source_cmp_eq` = serialize/harness artifacts, correct.)
+## Update 2026-06-11 (d) — `source_map_reverse` is an unimplemented-upstream feature, not a bug
+
+`source_map_reverse` exercises a `reverse` **source operator**. It is unimplemented in upstream too:
+`ASource::new` (sources.rs) dispatches only `BTM`/`ACT`/`z3`/`==`/`!=` and falls to `unreachable!()`
+for anything else, and the `source_map_reverse()` test is **defined but never called** in upstream
+`main()` (not even commented). So `reverse` would *panic* if run upstream. The Julia port handles it
+**more gracefully** — `asource_new` falls through to `CompatSource`, which matches nothing and emits
+nothing (no crash). Reclassified as **wip** (defined-but-never-wired = unimplemented/aspirational),
+not a port regression. Extractor `WIP` set updated to mark defined-but-uncalled tests.
+
+Remaining **real-computation** FAILs (4 → 2 genuine): `source_act_two_bipolar`,
+`source_space_act_two_bipolar` — the multi-result/bipolar-unification family (the deep B-phase area
+upstream itself is still stabilizing). `source_cmp_ne`/`source_cmp_eq` = serialize-format artifacts
+(correct computation, see above).

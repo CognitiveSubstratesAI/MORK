@@ -5,9 +5,14 @@ import re, subprocess, os, sys
 MORK = os.path.expanduser("~/JuliaAGI/dev-zone/MORK")
 src = subprocess.check_output(["git", "-C", MORK, "show", "main:kernel/src/main.rs"]).decode("utf-8", "replace")
 
-# tests upstream comments out in main() (WIP / failing / known-faulty) — mark, don't treat as bugs
+# tests upstream comments out in main() (WIP / failing / known-faulty) — mark, don't treat as bugs.
+# Also includes tests DEFINED but NEVER wired into main() = unimplemented/aspirational:
+#   source_map_reverse — the `reverse` source operator is unimplemented in ASource::new (would
+#   hit `unreachable!()`); the test is never called in main(). The Julia port no-ops gracefully
+#   (falls through to CompatSource → matches nothing). Shared unimplemented feature, not a regression.
 WIP = {"variable_priority", "variables_in_priority", "func_type_unification", "logic_query",
-       "source_cmp_eq_var_constraint", "sink_hash_spaces", "bench_pattern_mining_lensy"}
+       "source_cmp_eq_var_constraint", "sink_hash_spaces", "bench_pattern_mining_lensy",
+       "source_map_reverse"}
 # skip the heavy/benchmark/IO tests (huge inputs, file/perf, not engine conformance)
 SKIP = {"bench_flybase", "bench_lr", "bench_tile_puzzle_states", "bench_pattern_mining_lensy",
         "bench_taxi_lts",
