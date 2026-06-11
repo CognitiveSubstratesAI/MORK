@@ -383,8 +383,11 @@ end
 """
     SumSink
 
-Sum matched big-endian integer values and store result.
-Mirrors `SumSink` in sinks.rs (simplified).
+Sum matched DECIMAL-STRING integer values and store the result as a decimal-string symbol.
+Matches `SumSink` in sinks.rs (`u32::from_str_radix(…, 10)` in, `total.to_string()` out).
+NOTE (port fix 2026-06-11): the prior port read/wrote big-endian *binary* instead, which
+mis-parsed the decimal-string number symbols every other sink uses (e.g. "5" → 53) and
+emitted an 8-byte binary symbol no other sink could read. (simplified structure)
 """
 mutable struct SumSink <: AbstractSink
     expr::MORK.Expr
@@ -403,22 +406,20 @@ function sink_finalize!(s::SumSink, btm::SinkBtm)::Bool
     rz = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
         p = collect(zipper_path(rz))
-        # Try to interpret as big-endian integer symbol
+        # Each matched value is a DECIMAL-STRING symbol (upstream sinks.rs:
+        # `u32::from_str_radix(str::from_utf8(...), 10)`), NOT a big-endian binary int.
         if !isempty(p)
             tag = byte_item(p[1])
-            if tag isa ExprSymbol && Int(tag.size) <= 8
+            if tag isa ExprSymbol
                 slice = p[2:(1 + Int(tag.size))]
-                v = Int64(0)
-                for b in slice
-                    ;
-                    v = v << 8 | Int64(b);
-                end
-                total += v
+                v = tryparse(Int64, String(slice))
+                v !== nothing && (total += v)
             end
         end
     end
-    sum_bytes = reinterpret(UInt8, [hton(total)])
-    key = vcat(UInt8[item_byte(ExprSymbol(UInt8(8)))], collect(sum_bytes))
+    # Output as a DECIMAL-STRING symbol (upstream: `total.to_string()`).
+    sum_str = string(total)
+    key = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(sum_str))))], Vector{UInt8}(sum_str))
     old = get_val_at(btm, key)
     set_val_at!(btm, key, UNIT_VAL)
     old === nothing
