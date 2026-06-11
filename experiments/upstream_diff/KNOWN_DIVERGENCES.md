@@ -58,5 +58,17 @@ recognizer (so it sums across matches). `(foo 1/2/3)` → `(sum (correct) 6 $x)`
 `(sum (incorrect) 5 $x)` stays silent. Regression-tested end-to-end (replaces the old placeholder
 unit test). Commit in MORK.
 
-Remaining real FAILs to triage next: `source_cmp_eq`, `source_map_reverse`,
-`source_act*_two_bipolar` (`source_cmp_ne` = harness artifact, see above).
+## Update 2026-06-11 (c) — `source_cmp_eq` is a serialize-format divergence, not a bug
+
+`source_cmp_eq` computes the **correct** result — the port emits `(REM (RHS ($ bar)))`, structurally
+identical to upstream's expected `(REM (RHS ($a bar)))`. The only difference is how the free variable
+is *printed*: the port's `expr_serialize` renders NewVar as `$` and VarRef as `_N`, while upstream's
+`dump_all_sexpr` uses `serialize2(…, |i,_intro| Expr::VARNAMES[i])` with
+`VARNAMES = ["$a","$b",…,"$j","$x10",…]` — i.e. every variable is named by index. So `$` (port) vs
+`$a` (upstream) for the first variable. **Computation correct; serialize format differs** (same class
+as `source_cmp_ne`'s OUT-projection). Aligning the port's serializer to upstream's VARNAMES would clear
+both and make dumps byte-identical, but it changes the port's canonical dump format and would touch
+many existing `$`/`_N`-asserting tests — a deliberate, separate decision, not a bug fix.
+
+Remaining **real-computation** FAILs to triage: `source_map_reverse`, `source_act_two_bipolar`,
+`source_space_act_two_bipolar`. (`source_cmp_ne`, `source_cmp_eq` = serialize/harness artifacts, correct.)
