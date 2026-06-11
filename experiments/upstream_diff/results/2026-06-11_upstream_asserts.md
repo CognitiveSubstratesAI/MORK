@@ -2,7 +2,7 @@
 
 Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec). `(wip)` = upstream comments the test out in its own `main()` (WIP/known-faulty), not a port regression.
 
-**23 PASS · 6 FAIL · 0 CRASH** (real)  +  1 PASS(wip) · 2 FAIL(wip)  of 32
+**24 PASS · 5 FAIL · 0 CRASH** (real)  +  1 PASS(wip) · 2 FAIL(wip)  of 32
 
 | case | status | missing assert |
 |---|---|---|
@@ -46,7 +46,7 @@ Checks upstream `main.rs` `assert!(res.contains(...))` (the real spec). `(wip)` 
 | `sink_two_positive_equal_crossed` | PASS |  |
 | `sink_add_remove` | PASS |  |
 | `sink_add_remove_var` | PASS |  |
-| `sink_sum_literal` | FAIL | `correct` |
+| `sink_sum_literal` | PASS |  |
 | `sink_exec_remove_trigger` | PASS |  |
 | `sink_count_double` | PASS |  |
 | `sink_count_double_repeated` | PASS |  |

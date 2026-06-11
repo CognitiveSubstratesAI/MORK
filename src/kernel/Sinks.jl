@@ -381,13 +381,21 @@ end
 # =====================================================================
 
 """
-    SumSink
+    SumSink — `(sum <result> <expected> <x>)`
 
-Sum matched DECIMAL-STRING integer values and store the result as a decimal-string symbol.
-Matches `SumSink` in sinks.rs (`u32::from_str_radix(…, 10)` in, `total.to_string()` out).
-NOTE (port fix 2026-06-11): the prior port read/wrote big-endian *binary* instead, which
-mis-parsed the decimal-string number symbols every other sink uses (e.g. "5" → 53) and
-emitted an 8-byte binary symbol no other sink could read. (simplified structure)
+Ports `SumSink` in sinks.rs (the literal branch of `SumSink::finalize`). Template form is
+`(sum <result-expr> <expected> <x>)`: accumulate the DECIMAL-STRING value `<x>` over every match,
+grouped by `(<result-expr> <expected>)`, and emit `<result-expr>` **iff** the accumulated sum equals
+the `<expected>` literal. So `(foo 1)(foo 2)(foo 3)` under `(sum (correct) 6 \$x)` sums to 6, equals
+the literal `6`, and emits `(correct)`; `(sum (incorrect) 5 \$x)` sums to 6 ≠ 5 and emits nothing.
+
+This REQUIRES `sum` to be an accumulating sink (`_is_accumulating_sink`, Space.jl) so all matches
+land in one `unique` before finalize — a per-match sink could never sum across matches.
+
+Numbers are decimal-string symbols (`u32::from_str_radix(…,10)` in, `total.to_string()` out),
+consistent with CountSink and the float reductions. (Prior port was a placeholder that flat-summed
+the raw symbol bytes and emitted a bare number, ignoring `<result>`/`<expected>` — `sink_sum_literal`
+emitted nothing.)
 """
 mutable struct SumSink <: AbstractSink
     expr::MORK.Expr
@@ -396,33 +404,59 @@ end
 
 SumSink(e::MORK.Expr) = SumSink(e, PathMap{UnitVal}())
 
+# Bytes of the `(sum` keyword prefix to strip from each instantiated template: the arity byte +
+# the 3-char symbol "sum" + its size byte. Mirrors upstream's `path[5+root..]`.
+const _SUM_KEYWORD_PREFIX_LEN = 5
+
 function sink_apply!(s::SumSink, bindings::Dict{ExprVar, ExprEnv},
     path::Vector{UInt8}, btm::SinkBtm)
-    set_val_at!(s.unique, path, UNIT_VAL)
+    # Store the args after `(sum` (i.e. `<result> <expected> <x>`); finalize groups + sums them.
+    length(path) > _SUM_KEYWORD_PREFIX_LEN || return nothing
+    set_val_at!(s.unique, path[(_SUM_KEYWORD_PREFIX_LEN + 1):end], UNIT_VAL)
+end
+
+# Parse one accumulated entry `<result-expr> <expected-sym> <x-sym>` → (result_bytes, expected_str, x).
+# Returns nothing if the layout isn't a complete expr followed by two symbols.
+function _sum_parse_entry(p::Vector{UInt8})
+    isempty(p) && return nothing
+    rspan = expr_span(MORK.Expr(p), 1)          # first complete sub-expression = <result>
+    i = length(rspan) + 1                        # <expected> symbol tag position
+    i <= length(p) || return nothing
+    te = byte_item(p[i]); te isa ExprSymbol || return nothing
+    esz = Int(te.size); i + esz <= length(p) || return nothing
+    expected = String(p[(i + 1):(i + esz)])
+    j = i + esz + 1                              # <x> symbol tag position
+    j <= length(p) || return nothing
+    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
+    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+    xval = tryparse(Int64, String(p[(j + 1):(j + xsz)]))
+    xval === nothing && return nothing
+    (Vector{UInt8}(rspan), expected, xval)
 end
 
 function sink_finalize!(s::SumSink, btm::SinkBtm)::Bool
-    total = Int64(0)
+    # group key = result ++ expected bytes → (result_bytes, expected_str, running_sum)
+    groups = Dict{Vector{UInt8}, Tuple{Vector{UInt8}, String, Int64}}()
     rz = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
-        p = collect(zipper_path(rz))
-        # Each matched value is a DECIMAL-STRING symbol (upstream sinks.rs:
-        # `u32::from_str_radix(str::from_utf8(...), 10)`), NOT a big-endian binary int.
-        if !isempty(p)
-            tag = byte_item(p[1])
-            if tag isa ExprSymbol
-                slice = p[2:(1 + Int(tag.size))]
-                v = tryparse(Int64, String(slice))
-                v !== nothing && (total += v)
-            end
+        parsed = _sum_parse_entry(collect(zipper_path(rz)))
+        parsed === nothing && continue
+        (rbytes, expected, xval) = parsed
+        gkey = vcat(rbytes, Vector{UInt8}(expected))
+        g = get(groups, gkey, nothing)
+        groups[gkey] = g === nothing ? (rbytes, expected, xval) : (g[1], g[2], g[3] + xval)
+    end
+    changed = false
+    for (_, (rbytes, expected, total)) in groups
+        # Emit <result> iff the literal <expected> equals the decimal sum (upstream's
+        # `fixed_number == cnt_str`).
+        if expected == string(total)
+            old = get_val_at(btm, rbytes)
+            set_val_at!(btm, rbytes, UNIT_VAL)
+            old === nothing && (changed = true)
         end
     end
-    # Output as a DECIMAL-STRING symbol (upstream: `total.to_string()`).
-    sum_str = string(total)
-    key = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(sum_str))))], Vector{UInt8}(sum_str))
-    old = get_val_at(btm, key)
-    set_val_at!(btm, key, UNIT_VAL)
-    old === nothing
+    changed
 end
 
 # =====================================================================

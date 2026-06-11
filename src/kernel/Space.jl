@@ -1197,7 +1197,7 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     sz = Int(t2.size)
     3 + sz > length(raw_bytes) && return false
     name = String(raw_bytes[3:(3 + sz - 1)])
-    name in ("AU", "count", "fsum", "fmin", "fmax", "fprod") && return true
+    name in ("AU", "count", "fsum", "fmin", "fmax", "fprod", "sum") && return true
     false
 end
 

@@ -47,5 +47,16 @@ projected-dump form; not a port bug.** Regression-tested in MORK `runtests.jl` (
 *actual* `assert!(res.contains("(MATCHED (foo bar) (foo bar))"))`; the "dropped" second result is a
 nondeterministic extra upstream does not assert. Not a confirmed bug.
 
+## Update 2026-06-11 (b) — `sink_sum_literal` FIXED → 24 PASS / 5 FAIL / 0 CRASH
+
+`sum` was a placeholder: not in `_is_accumulating_sink`, and its finalize flat-summed raw symbol
+bytes and emitted a bare number — ignoring the `(sum <result> <expected> $x)` structure entirely
+(an earlier commit only fixed its number *encoding*, unit-tested on bare symbols). Ported the real
+`SumSink::finalize` literal branch: accumulate `$x` grouped by `(<result> <expected>)`, emit
+`<result>` iff the decimal sum equals the `<expected>` literal. Added `sum` to the accumulating-sink
+recognizer (so it sums across matches). `(foo 1/2/3)` → `(sum (correct) 6 $x)` emits `(correct)`,
+`(sum (incorrect) 5 $x)` stays silent. Regression-tested end-to-end (replaces the old placeholder
+unit test). Commit in MORK.
+
 Remaining real FAILs to triage next: `source_cmp_eq`, `source_map_reverse`,
-`source_act*_two_bipolar`, `sink_sum_literal` (still fails after the SumSink encoding fix — revisit).
+`source_act*_two_bipolar` (`source_cmp_ne` = harness artifact, see above).

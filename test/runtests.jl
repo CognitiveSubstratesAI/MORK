@@ -4241,21 +4241,22 @@ const PM = PathMap.PathMap
             @test sink_finalize!(sink, btm) == false   # conflict → nothing written
         end
 
-        @testset "SumSink — decimal-string sum (port-fix: upstream is decimal, not binary-BE)" begin
-            # Upstream sinks.rs sums DECIMAL-STRING values (u32::from_str_radix(…,10)) and emits
-            # total.to_string(). The prior Julia port read/wrote big-endian binary, mis-parsing
-            # the decimal number symbols every other sink uses ("5" → 53, not 5). This regresses it.
-            btm = new_space().btm
-            sink = SumSink(MORK.Expr(_sym("sum")))   # expr bytes don't matter for apply/finalize
-            # SumSink's sink_apply! demands the concretely-typed binding dict (Dict is invariant —
-            # Dict() = Dict{Any,Any} won't match and would box the hot-path bindings anyway).
-            binds = Dict{MORK.ExprVar, MORK.ExprEnv}()
-            sink_apply!(sink, binds, _sym("5"), btm)
-            sink_apply!(sink, binds, _sym("3"), btm)
-            @test sink_finalize!(sink, btm) == true
-            # decimal-string result "8" — NOT the old binary misread (53+51=104 as 8 raw bytes)
-            @test get_val_at(btm, _sym("8")) === UNIT_VAL
-            @test get_val_at(btm, _sym("104")) === nothing
+        @testset "SumSink — (sum <result> <expected> \$x): emit iff sum == expected (ports sink_sum_literal)" begin
+            # Upstream sink_sum_literal: accumulate $x over matches grouped by (<result> <expected>),
+            # emit <result> iff the decimal sum equals the <expected> literal. (foo 1/2/3) sums to 6:
+            # (sum (correct) 6 $x) emits (correct); (sum (incorrect) 5 $x) emits nothing (6 ≠ 5).
+            # Replaces the prior unit test of the placeholder sink (which flat-summed bare symbols and
+            # ignored <result>/<expected>); requires `sum` ∈ _is_accumulating_sink to sum across matches.
+            s = new_space()
+            space_add_all_sexpr!(s,
+                "(foo 1) (foo 2) (foo 3)\n" *
+                "(exec 0 (, (foo \$x)) (O (sum (correct) 6 \$x)))\n" *
+                "(exec 0 (, (foo \$x)) (O (sum (incorrect) 5 \$x)))\n")
+            steps = space_metta_calculus!(s, 1000)
+            @test steps < 1000
+            result = space_dump_all_sexpr(s)
+            @test occursin("(correct)", result)        # sum 1+2+3 == 6 → emit
+            @test !occursin("incorrect", result)        # sum 6 ≠ 5 → no emit
         end
 
         @testset "HeadSink — finalize joins head map into btm (regression: was MethodError)" begin
