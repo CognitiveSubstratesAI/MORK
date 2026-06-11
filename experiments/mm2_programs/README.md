@@ -26,6 +26,8 @@ The engine runs the entire corpus with **zero crashes**. The two CAPs:
 ## Layout
 - `programs/` — 34 unmodified `.mm2` files from the upstream tutorial.
 - `run.jl` — the smoke/robustness runner.
-- `probe_control08.jl` — minimal repro isolating the `Control_08` phantom-match bug.
+- `probe_control08.jl` — repro at the metta-calculus level (decrement vs fresh + binding dump).
+- `diag_remove.jl` — read-only diagnostic: shows the `(-)` removal IS durable (`val_count`/`get_val_at`).
+- `diag_pathmap.jl` — minimal substrate repro: add 2 / `remove_val_at!` 1 / conjunction still matches it.
 - `findings/` — written-up divergences.
 - `results/` — dated run tables.

@@ -1,9 +1,16 @@
-# `Control_08_Halts_on_fail` never halts — removed atoms stay queryable
+# `Control_08_Halts_on_fail` never halts — multi-factor query matches value-removed atoms
 
-**Date:** 2026-06-11 · **Status:** 🔴 **Confirmed reproducible port bug, root cause PINNED.**
-A metta-calculus `(- …)` removal disappears from `space_dump_all_sexpr` but is still enumerated
-by `space_query_multi` on the next step. Fix-level mechanism (COW/snapshot) localized below;
-the exact patch is not yet written.
+**Date:** 2026-06-11 · **Status:** 🔴 **Confirmed reproducible port bug, root cause PINNED to a
+minimal substrate repro.** `remove_val_at!` is correct and the removal IS durable; the bug is that
+the **multi-factor conjunction query (`space_query_multi` / `_space_query_multi_inner!`) emits a match
+for an atom whose value was removed** — it leaves a dangling path-node and the product-zipper
+enumeration doesn't gate the emitted match on value-presence.
+
+> **History (two wrong hypotheses, corrected by diagnostics — kept as a caution):** first guessed
+> "hidden var-source-id state"; then "O-sink `(-)` write-back isn't mutating `s.btm`". **Both wrong.**
+> A read-only diagnostic (`diag_remove.jl`) showed `space_val_count(s.btm) == 2` and `get_val_at`
+> ABSENT for the three decremented atoms — i.e. removal *is* durable. The minimal repro below pins it
+> to the query layer. Always diagnose substrate state before patching.
 
 > **Upstream-confirmation caveat (two_bipolar lesson):** "should halt" is inferred from the
 > corpus author's name (`Halts_on_fail`), the program's logic (counter→`Z` makes `(counter (S $N))`
@@ -20,7 +27,7 @@ longer match, so the exec should **fail-and-halt** in ~4 steps. Its sibling
 The data is correct: the counter decrements `(S(S(S Z)))→(S(S Z))→(S Z)→Z` over steps 1–3 and
 then sits at `Z`. But the engine keeps stepping — the exec keeps firing and re-adding itself.
 
-## The smoking gun — query results depend on hidden state
+## Symptom contrast — same visible state, different query result
 Take the state at `counter=Z` two ways and compare. **Their `space_dump_all_sexpr` is byte-identical**
 (`(counter Z)` + the one exec atom):
 
@@ -40,46 +47,58 @@ match 3: (counter (S Z))             ← $N = Z
 ```
 
 These are **exactly the three historical counter values that were removed** by the exec's
-`(- (counter (S $N)))` effect as the counter decremented `(S(S(S Z)))→Z`. They are **gone from the
-dump** but **still enumerated by the query**. So it is *not* a conjunction-logic bug and *not*
-hidden var-source-id state — it is a **read/write consistency bug on removal**: a metta-calculus
-`(-)` removal is invisible to `space_dump_all_sexpr` yet visible to `space_query_multi` on the next
-step. Fresh-built never added-then-removed those atoms, so it has nothing stale to re-match → 0.
+`(- (counter (S $N)))` effect as the counter decremented `(S(S(S Z)))→Z`. They are gone from the
+dump but still matched by the conjunction query. Fresh-built never added-then-removed those atoms,
+so it has nothing stale to re-match → 0.
 
-Two independent lines of evidence agree: direct (conj=3 vs 0) and indirect (`space_metta_calculus!`
-loops vs halts).
+## Root cause — minimal substrate repro (PINNED)
+`diag_remove.jl` then `diag_pathmap.jl` strip away the metta-calculus entirely. Add two atoms,
+`remove_val_at!` one, then query a 2-factor conjunction:
 
-## Where (fix-level localization)
-Control_08 is the `comma` pattern / `O`-sink template path →
-`space_transform_multi_multi!(…, no_source=true, no_sink=false)` (`src/kernel/Space.jl:1196`). Its
-pattern contains `(exec LOOP $p $t)`, so `_pat_overlaps_exec_prefix` is **true** → the **meta-pattern
-slow path** runs: `read_btm = pjoin(s.btm, _exec_singleton)` (a snapshot), while `+`/`-` O-sink
-writes target `sink_btm = s.btm` (`Space.jl:1243-1251`, 1210). For halting, each `(-)` must persist
-into `s.btm` so the *next* step's freshly-rebuilt `read_btm` no longer contains it. The evidence
-shows the removed atoms survive — so the O-sink `(-)` removal is **not durably mutating `s.btm`**
-(written to a discarded COW fork, or the O-sink applies `-` only to its snapshot/accumulator, not the
-backing trie). That `(-)` write-back is the fix site. Confirm by instrumenting the O-sink minus
-branch to assert `remove_val_at!(s.btm, …)` runs and that the atom is absent from `s.btm` immediately
-after the step.
+```
+space_add_all_sexpr!(s, "(counter (S Z))\n(marker a)\n")
+remove_val_at!(s.btm, sexpr_to_expr("(counter (S Z))").buf)
+```
+
+| check | result |
+|---|---|
+| `space_val_count(s.btm)` | **1** |
+| `get_val_at(s.btm, "(counter (S Z))")` | **ABSENT** |
+| `dump` | `(marker a)` only |
+| raw `zipper_to_next_val!` over `s.btm` | `(marker a)` only ✓ |
+| `space_query_multi(s, "(, (counter (S $N)) (marker $x))")` | **matches the removed atom (1)** ✗ |
+
+Five value-checks agree the atom is gone; **only the multi-factor conjunction query still emits it.**
+So `remove_val_at!` is correct (durable; even the raw value-iterating zipper skips it). The bug is in
+the multi-factor query enumeration: `remove_val_at!` clears the value but leaves a **dangling
+path-node** (no pruning), and `_space_query_multi_inner!` / the ProductZipper emit a match when the
+pattern is fully consumed **without a final value-presence check** — the `pzg_child_count(prz) != 0`
+gate at `src/kernel/Space.jl:521` passes for a childless, *valueless* leaf. The raw zipper gates on
+value (`to_next_val`); the product-zipper path does not.
 
 ## Why it matters for E1
-Core's interpreter will wire onto this same engine. A `(-)` removal that isn't durable in the query
-path means any client that deletes-then-queries (retraction, garbage rules, the whole metta-calculus
-fixed-point loop) can re-read deleted data. Fix the O-sink `(-)` write-back before/with E1.
+Core wires onto this exact query engine. Any delete-then-query (retraction, garbage rules, the
+metta-calculus fixed-point loop) can re-match deleted data. Fix before/with E1.
 
 ## Repro (warm REPL)
 ```
 cd ~/code/CognitiveSubstratesAI/MORK
 printf 'include("experiments/mm2_programs/probe_control08.jl"); exit()\n' | julia --project=. -i tools/repl.jl
-# → DECREMENT-REACHED conj=3  / FRESH-BUILT conj=0  / dump == ? true
-#   match 1..3 bind (counter (S $N)) to the three REMOVED counter values
+#   → DECREMENT-REACHED conj=3 / FRESH-BUILT conj=0 / dump(A)==dump(B)? true  + binding dump
+printf 'include("experiments/mm2_programs/diag_remove.jl"); exit()\n'   | julia --project=. -i tools/repl.jl
+#   → val_count=2, get_val_at ABSENT for the removed atoms (removal IS durable)
+printf 'include("experiments/mm2_programs/diag_pathmap.jl"); exit()\n'  | julia --project=. -i tools/repl.jl
+#   → MINIMAL: add 2 / remove 1 / conj matches=1  (the isolated bug)
 ```
-(Single-factor `space_query_multi` probes are unreliable — that API is for `(, …)` conjunctions;
-the conj=3-vs-0 comparison on dump-equal spaces is the valid apples-to-apples test.)
 
-## Next step (fix)
-Instrument the O-sink `(-)` branch in `space_transform_multi_multi!` to confirm it calls
-`remove_val_at!(s.btm, …)` durably (not on a COW fork / snapshot that's discarded after the step),
-then re-run `Control_08` — it should halt in ~4 steps. Cross-check upstream Rust `(-)` semantics
-once `cargo` is available. Until fixed this is a **known, isolated, reproducible** non-termination;
-it does **not** crash, and the other 32 corpus programs are unaffected.
+## Next step (fix) — two candidates, cross-check upstream first
+1. **Query-layer gate (localized, lower risk):** in `_space_query_multi_inner!` (and the `_i` sibling),
+   require the matched factor leaf to carry a value before emitting — mirror what `to_next_val` already
+   does. Every real atom has a value, so this only drops dangling-path phantoms.
+2. **Prune on remove (uniform, higher risk):** make `remove_val_at!` prune now-empty branches so no
+   dangling path exists for any traversal — but this touches PathMap COW/sharing and needs the
+   COW-soundness gate.
+
+Check upstream MORK's PathMap remove + query semantics (does Rust prune on remove, or gate the query
+on value?) to pick the port-faithful option before patching. Until fixed this is a **known, isolated,
+reproducible** non-termination; it does **not** crash, and the other 32 corpus programs are unaffected.
