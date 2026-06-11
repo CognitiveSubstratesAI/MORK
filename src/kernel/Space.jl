@@ -1923,16 +1923,19 @@ space_dump_sexpr(s::Space, pattern::MORK.Expr, template::MORK.Expr) =
 # =====================================================================
 
 function space_backup_tree(s::Space, path::AbstractString)
-    open(path, "w") do io
-        ;
-        serialize_paths(s.btm, io);
-    end
+    # Upstream Space::backup_tree = ArenaCompactTree::dump_from_zipper — an ACT-format file that
+    # `(ACT …)` sources mmap-read. The prior port used serialize_paths (that's backup_PATHS), so
+    # ACT reads of a backup_tree file crashed with "Invalid ACTree magic". Mirror upstream: write
+    # the ArenaCompactTree via the same act_from_zipper/act_save the ACTSink uses.
+    act_save(act_from_zipper(s.btm, _ -> UInt64(0)), path)
 end
 
 function space_restore_tree!(s::Space, path::AbstractString)
-    open(path, "r") do io
-        ;
-        deserialize_paths(s.btm, io, UNIT_VAL);
+    # Upstream Space::restore_tree = open_mmap + insert each path. Mirrors backup_tree's ACT format.
+    tree = act_open_mmap(path)
+    rz = ACTZipper(tree)
+    while zipper_to_next_val!(rz)
+        set_val_at!(s.btm, collect(zipper_path(rz)), UNIT_VAL)
     end
 end
 

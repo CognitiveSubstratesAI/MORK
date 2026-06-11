@@ -4057,6 +4057,33 @@ const PM = PathMap.PathMap
             @test !occursin("(X != X)", result)   # an element is never != itself
         end
 
+        @testset "ACT backup_tree → (ACT …) source read + restore round-trip" begin
+            # Regression: space_backup_tree wrote serialize_paths (that's backup_PATHS), but
+            # (ACT …) sources mmap-read an ArenaCompactTree — so ACT reads of a backup_tree file
+            # crashed ("Invalid ACTree magic"). Upstream backup_tree = ArenaCompactTree dump.
+            dir = mktempdir()
+            old = MORK.ACT_PATH[]
+            try
+                MORK.ACT_PATH[] = dir
+                act_s = new_space()
+                space_add_all_sexpr!(act_s, "(fact a)\n(fact b)\n(fact c)\n")
+                space_backup_tree(act_s, joinpath(dir, "simple.act"))
+                # (ACT …) source reads the backed-up tree
+                s = new_space()
+                space_add_all_sexpr!(s, "(exec 0 (I (ACT simple (fact \$x))) (, (got \$x)))\n")
+                space_metta_calculus!(s, 1000)
+                d = space_dump_all_sexpr(s)
+                @test occursin("(got a)", d) && occursin("(got b)", d) && occursin("(got c)", d)
+                # backup_tree → restore_tree! round-trip
+                s2 = new_space()
+                space_restore_tree!(s2, joinpath(dir, "simple.act"))
+                d2 = space_dump_all_sexpr(s2)
+                @test occursin("(fact a)", d2) && occursin("(fact b)", d2) && occursin("(fact c)", d2)
+            finally
+                MORK.ACT_PATH[] = old
+            end
+        end
+
         @testset "positive — variable pattern matches ground fact" begin
             result = _mc(
                 "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n"
