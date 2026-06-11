@@ -1,6 +1,35 @@
-# Root cause — `two_bipolar_equal_crossed` (port drops a nondeterministic match)
+# `two_bipolar_equal_crossed` — port drops a nondeterministic match (CORRECTED)
 
-**Date:** 2026-06-11 · **Status:** confirmed real port divergence (upstream `main.rs` runs+asserts it) · **Verdict:** DEEP query-engine gap, not a localized bug.
+**Date:** 2026-06-11 · **Status:** ⚠️ **DOWNGRADED after checking upstream's actual assert.**
+
+## CORRECTION (read first)
+My initial verdict ("confirmed real port divergence, upstream runs+asserts it") was **overstated**.
+Two facts I missed:
+1. **The golden fixtures are auto-recorded from the PORT itself** (`tools/diff_upstream.jl` `record_fixtures()` runs `run_julia` = the Julia port). So the full-dump golden is the **port's own earlier output**, NOT upstream Rust. A FAIL = the port disagreeing with **its own recorded baseline** (a self-regression detector), not a confirmed upstream divergence.
+2. **Upstream's actual `main.rs` test asserts only `res.contains("(MATCHED (foo bar) (foo bar))")`** — the ground match. **The port produces that → the port PASSES upstream's real test.** The dropped `(MATCHED (foo $) (foo _1))` is a nondeterministic extra upstream **does not assert**, and we **cannot confirm upstream emits it** (no cargo to run the Rust binary).
+
+So the accurate statement: the port **self-regressed** on a nondeterministic output relative to its own recorded fixture; it still satisfies upstream's actual assertion. **Lower severity; NOT a confirmed upstream divergence.** Lesson: the self-recorded full-dump fixtures only catch regressions — port-vs-upstream must use upstream's own `assert!(res.contains(...))`.
+
+## EMPIRICAL CONFIRMATION (`run_asserts.jl`, 2026-06-11)
+Built the correct differential (upstream's `assert!(res.contains(...))`) and ran it:
+**12 PASS · 0 FAIL · 2 FAIL(wip, upstream-disabled) of 14.** The port satisfies **100% of
+upstream's real assertions** — including `two_bipolar_equal_crossed`, `source_space_…`, and
+`sink_two_bipolar_…` (all emit the ground `(MATCHED (foo bar) (foo bar))` upstream requires).
+The only fails are `variable_priority`/`variables_in_priority`, which upstream itself comments
+out (WIP).
+
+## RETRACTION of the E1→B claim
+My "this reshapes E1→B; MORK's engine drops nondeterministic results" conclusion is **RETRACTED**.
+The MORK engine **conforms to upstream's own test spec** on these matching/unification cases — E1
+can build on it. **Caveat:** upstream's asserts are *partial* (`contains`, ground-match only), so
+they do not fully pin down nondeterministic multi-result *completeness* — that remains unverified
+for BOTH the port and upstream's tests, and would need the live Rust binary or richer assertions to
+settle. But it is **not a confirmed port bug**, and **not a blocker for E1**.
+
+---
+
+(original analysis below — the query-side trace is still valid as a characterization of *where* the
+second result is enumerated, but its severity framing is superseded by the correction above)
 
 ## Symptom
 ```
