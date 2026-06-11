@@ -14,14 +14,14 @@ printf 'include("experiments/mm2_programs/run.jl"); exit()\n' | julia --project=
 `results/`. Status: **OK** (terminated) · **CAP** (hit the step cap) · **CRASH** (port error).
 
 ## Latest result — 2026-06-11
-**32 OK · 2 CAP · 0 CRASH** of 34 — see [`results/2026-06-11_mm2_smoke.md`](results/2026-06-11_mm2_smoke.md).
+**33 OK · 1 CAP · 0 CRASH** of 34 — see [`results/2026-06-11_mm2_smoke.md`](results/2026-06-11_mm2_smoke.md).
 
-The engine runs the entire corpus with **zero crashes**. The two CAPs:
+The engine runs the entire corpus with **zero crashes**. The one remaining CAP is by design:
 
 | program | verdict |
 |---|---|
 | `Control_07_Recursive` | **expected** — a self-replicating quine `(exec 0 (, (exec 0 $p $t)) (, (exec 0 $p $t)))`; intentional infinite loop, the cap bounds it. |
-| `Control_08_Halts_on_fail` | 🔴 **bug** — should fail-and-halt at `counter=Z` (~4 steps) but loops forever. Phantom conjunction matches; state-dependent. See [`findings/control_08_phantom_conjunction.md`](findings/control_08_phantom_conjunction.md). Repro: [`probe_control08.jl`](probe_control08.jl). |
+| `Control_08_Halts_on_fail` | ✅ **FIXED** (`16981af`) — was looping on value-removed dangling paths; the multi-factor query now gates matches on value-presence. Halts in 4 steps. See [`findings/control_08_phantom_conjunction.md`](findings/control_08_phantom_conjunction.md). |
 
 ## Layout
 - `programs/` — 34 unmodified `.mm2` files from the upstream tutorial.

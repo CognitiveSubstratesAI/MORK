@@ -1,10 +1,13 @@
 # `Control_08_Halts_on_fail` never halts — multi-factor query matches value-removed atoms
 
-**Date:** 2026-06-11 · **Status:** 🔴 **Confirmed reproducible port bug, root cause PINNED to a
-minimal substrate repro.** `remove_val_at!` is correct and the removal IS durable; the bug is that
-the **multi-factor conjunction query (`space_query_multi` / `_space_query_multi_inner!`) emits a match
-for an atom whose value was removed** — it leaves a dangling path-node and the product-zipper
-enumeration doesn't gate the emitted match on value-presence.
+**Date:** 2026-06-11 · **Status:** ✅ **FIXED (candidate 1, `16981af`).** The multi-factor query
+now gates each emitted factor match on value-presence (`_space_query_multi_inner!`,
+`get_val_at !== nothing`, prefix-aware). Control_08 halts in 4 steps; decrement-state conjunction 0;
+full suite 1729 pass / 0 fail; two regression tests added. The ProductZipper could land on a
+**dangling path-node** (value cleared by a non-pruning `remove_val_at!`); the gate restores the
+"a reachable path has a value" invariant upstream's `path_exists()`-gated `query_multi` relies on,
+without touching the COW trie. **Follow-up (separate):** the port's `prune=true` path
+(`PathMap wz_prune_path!`) has its own latent crash — see fix-attempt log below.
 
 > **History (two wrong hypotheses, corrected by diagnostics — kept as a caution):** first guessed
 > "hidden var-source-id state"; then "O-sink `(-)` write-back isn't mutating `s.btm`". **Both wrong.**
