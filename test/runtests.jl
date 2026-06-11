@@ -4018,6 +4018,29 @@ const PM = PathMap.PathMap
             @test occursin("MATCHED", result)
         end
 
+        @testset "halt-on-fail — removed atom must not re-match (Control_08)" begin
+            # Counter decrements (S(S(S Z)))→Z via `-` removals; once at Z the conjunct
+            # (counter (S $N)) is unsatisfiable, so the exec must fail-and-halt. Regression
+            # for the dangling-path bug: a non-pruning remove_val_at! left removed atoms
+            # queryable, so the conjunction kept matching them and the loop never halted.
+            src = "(counter (S (S (S Z))))\n" *
+                  "(exec LOOP (, (counter (S \$N)) (exec LOOP \$p \$t)) " *
+                  "(O (+ (exec LOOP \$p \$t)) (+ (counter \$N)) (- (counter (S \$N)))))\n"
+            result = _mc(src, 1000)          # _mc asserts steps < cap (no infinite loop)
+            @test occursin("(counter Z)", result)
+        end
+
+        @testset "multi-factor query skips value-removed dangling paths" begin
+            # Minimal: add 2 atoms, remove one, a 2-factor conjunction must NOT match it.
+            s = new_space()
+            space_add_all_sexpr!(s, "(counter (S Z))\n(marker a)\n")
+            MORK.remove_val_at!(s.btm, MORK.sexpr_to_expr("(counter (S Z))").buf)
+            pat = MORK.sexpr_to_expr("(, (counter (S \$N)) (marker \$x))")
+            n = Ref(0)
+            MORK.space_query_multi(s, pat, (a...) -> (n[] += 1; true))
+            @test n[] == 0
+        end
+
         @testset "positive — variable pattern matches ground fact" begin
             result = _mc(
                 "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n(Something (very specific))\n"

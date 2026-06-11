@@ -732,17 +732,32 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
             empty!(pairs_scratch)
             # Slice the combined path for each source
             boundaries = vcat(0, fps, length(combined))
+            all_valued = true
             for (k, src) in enumerate(sources)
                 lo = boundaries[k] + 1
                 hi = boundaries[k + 1]
                 (lo > hi || lo > length(combined)) && break
-                expr = MORK.Expr(combined[lo:hi])
+                subpath = combined[lo:hi]
+                # Value gate: the matched factor must be a REAL stored atom (a value
+                # at its path), not a dangling path-node left behind by a non-pruning
+                # remove_val_at! (e.g. RemoveSink / the `-` O-sink). The ProductZipper
+                # can land on such a valueless path; without this check a removed atom
+                # keeps matching, and Control_08_Halts_on_fail never terminates. This
+                # restores the value-presence invariant upstream's path_exists()-gated
+                # query_multi relies on. See experiments/mm2_programs.
+                lookup = isempty(prefix) ? subpath : vcat(prefix, subpath)
+                if get_val_at(btm, lookup) === nothing
+                    all_valued = false
+                    break
+                end
+                expr = MORK.Expr(subpath)
                 push!(pairs_scratch,
                     (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), expr)))
             end
 
-            # Skip spurious enrollment-only yields (secondary path is empty)
-            if length(pairs_scratch) < length(sources)
+            # Skip spurious enrollment-only yields (secondary path empty) or a match
+            # that touched a value-removed dangling path.
+            if !all_valued || length(pairs_scratch) < length(sources)
                 empty!(bindings_scratch)
                 continue
             end
