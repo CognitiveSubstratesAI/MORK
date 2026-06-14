@@ -14,7 +14,7 @@ using MORK, Test
 (edge eagle bird)
 (edge dog mammal)
 (exec 0 (, (edge \$x bird))
-        (, (count (bird-count \$n) \$n (edge \$x bird))))
+        (O (count (bird-count \$n) \$n (edge \$x bird))))
 """
         )
         steps = space_metta_calculus!(s, 10_000)
@@ -22,10 +22,9 @@ using MORK, Test
         io = IOBuffer();
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
-        # CountSink should have written (bird-count 3)
-        @test occursin("bird-count", res)
-        println("  CountSink result excerpt: ",
-            first(filter(l->occursin("bird-count", l), split(res, "\n")), 1))
+        # CountSink writes (bird-count 3): robin/sparrow/eagle are bird edges, dog isn't.
+        # Firing form is `(O (count …))`; a `(, (count …))` wrapper makes it a literal.
+        @test occursin("(bird-count 3)", res)
     end
 
     # ── AUSink: least-general generalisation ──────────────────────────
@@ -37,7 +36,7 @@ using MORK, Test
 (= (likes alice pizza) True)
 (= (likes bob pizza) True)
 (exec 0 (, (= (likes \$a pizza) True) (= (likes \$b pizza) True))
-        (, (O (AU (likes \$x pizza)))))
+        (O (AU (likes \$x pizza))))
 """
         )
         steps = space_metta_calculus!(s, 10_000)
@@ -45,39 +44,41 @@ using MORK, Test
         io = IOBuffer();
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
-        # AUSink should have written a generalised (likes $X pizza) atom
-        @test occursin("likes", res)
-        println("  AUSink result excerpt: ",
-            first(
-                filter(l->occursin("likes", l) && !occursin("exec", l), split(res, "\n")), 1
-            ))
+        # AUSink writes the least-general generalisation of the matched (likes …)
+        # terms: alice/bob differ → a variable in that slot → (likes _1 pizza).
+        @test occursin("(likes _1 pizza)", res)
     end
 
     # ── HeadSink: top-k by lexicographic order ────────────────────────
-    @testset "HeadSink — top-k patterns" begin
+    # NB the firing form is `(O (head N $x))` — the template functor must be `O`
+    # (no_sink=false) to dispatch to the sink. A `(, (O …))` wrapper makes the
+    # template functor `,` (direct set) and the sink never runs (the old test here
+    # did that and passed vacuously, keeping 0). head/tail also had to be added to
+    # `_is_accumulating_sink` or they cap nothing (fresh-per-match).
+    kept_letters(out) = sort([strip(l) for l in split(out, '\n') if strip(l) in ["a","b","c","d","e"]])
+    function run_topk(sink, n)
         s = new_space()
-        space_add_all_sexpr!(
-            s,
-            """
-(pattern alpha)
-(pattern beta)
-(pattern gamma)
-(pattern delta)
-(pattern epsilon)
-(exec 0 (, (pattern \$x))
-        (, (O (head 3 \$x))))
-"""
-        )
+        space_add_all_sexpr!(s, """
+(pattern a) (pattern b) (pattern c) (pattern d) (pattern e)
+(exec 0 (, (pattern \$x)) (O ($sink $n \$x)))
+""")
         steps = space_metta_calculus!(s, 10_000)
         @test steps >= 1
-        io = IOBuffer();
-        space_dump_all_sexpr(s, io)
-        res = String(take!(io))
-        # HeadSink should have kept top-3 lexicographically
-        n_patterns = count(l -> occursin(r"^(alpha|beta|gamma|delta|epsilon)$", strip(l)),
-            split(res, "\n"))
-        @test n_patterns <= 3
-        println("  HeadSink kept $n_patterns of 5 patterns (expect ≤ 3)")
+        io = IOBuffer(); space_dump_all_sexpr(s, io)
+        kept_letters(String(take!(io)))
+    end
+
+    @testset "HeadSink — keep N lexicographically smallest" begin
+        @test run_topk("head", 3) == ["a", "b", "c"]
+        @test run_topk("head", 2) == ["a", "b"]
+        @test run_topk("head", 1) == ["a"]
+    end
+
+    @testset "TailSink — keep N lexicographically largest" begin
+        @test run_topk("tail", 3) == ["c", "d", "e"]
+        @test run_topk("tail", 2) == ["d", "e"]   # fill→capacity transition (max≥2)
+        @test run_topk("tail", 1) == ["e"]
+        @test run_topk("tail", 4) == ["b", "c", "d", "e"]
     end
 
     # ── Combined: WILLIAM.gain via MORK primitives ────────────────────
@@ -92,18 +93,15 @@ using MORK, Test
 (event click btn-c)
 (event hover menu-1)
 (exec 0 (, (event click \$x))
-        (, (count (click-count \$n) \$n (event click \$x))))
+        (O (count (click-count \$n) \$n (event click \$x))))
 """
         )
         steps = space_metta_calculus!(s, 10_000)
         io = IOBuffer();
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
-        @test occursin("click-count", res)
-        # Extract count value
-        count_line = filter(l->occursin("click-count", l), split(res, "\n"))
-        println("  click-count line: ", isempty(count_line) ? "none" : first(count_line))
-        @test !isempty(count_line)
+        # 3 click events (btn-a/b/c), hover is not click → (click-count 3).
+        @test occursin("(click-count 3)", res)
     end
 
 end

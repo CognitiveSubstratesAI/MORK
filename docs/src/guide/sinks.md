@@ -156,6 +156,35 @@ space_metta_calculus!(s, 10_000)
 
 ---
 
+## Head and Tail Sinks
+
+`head` keeps the **N lexicographically-smallest** matched paths; `tail` keeps the
+**N largest**. Both accumulate across all matches of a rule and write the kept
+set once.
+
+```
+(head N <expr>)
+(tail N <expr>)
+```
+
+**Example** — keep the 2 smallest / largest patterns:
+
+```julia
+space_add_all_sexpr!(s, """
+    (pattern a) (pattern b) (pattern c) (pattern d) (pattern e)
+    (exec 0 (, (pattern \$x)) (O (head 2 \$x)))
+""")
+space_metta_calculus!(s, 10_000)
+# => kept: a, b           (head: the 2 smallest)
+# (tail 2 \$x) instead keeps: d, e
+```
+
+The kept template `<expr>` is built per match from the bindings; the top/bottom-N
+by byte path are retained. The firing form is `(O (head|tail N …))` — the `O`
+output functor is what routes to the sink (a `(, …)` wrapper asserts a literal).
+
+---
+
 ## Bipolar Sinks
 
 Bipolar sinks manage **positive** and **negative** evidence separately,

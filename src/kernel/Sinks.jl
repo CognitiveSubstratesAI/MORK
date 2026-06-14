@@ -216,18 +216,25 @@ Keep at most `max` lexicographically smallest paths.
 Mirrors `HeadSink` in sinks.rs.
 """
 # Upstream: collects paths into an internal PathMap (not Vector).
-# top tracks the lexicographically largest path in head (for O(1) displacement check).
+# `top` is the eviction boundary; `is_head` selects head vs tail (mirrors upstream
+# HeadTailSink<const head: bool>, sinks.rs): head keeps the N lexicographically
+# SMALLEST paths (Unix `head`, boundary = max kept), tail keeps the N LARGEST
+# (`tail`, boundary = min kept).
 # finalize uses wz_join_into! (one trie-level merge instead of N individual inserts).
 mutable struct HeadSink <: AbstractSink
     expr::MORK.Expr
+    is_head::Bool           # true = head (keep N smallest); false = tail (keep N largest)
     head::PathMap{UnitVal}  # collected paths — mirrors upstream PathMap<()>
     skip::Int
     count::Int
     max::Int
-    top::Vector{UInt8}     # largest path in head (mirrors upstream top: Vec<u8>)
+    top::Vector{UInt8}      # eviction boundary: max kept (head) | min kept (tail)
 end
 
-function HeadSink(e::MORK.Expr)
+# Shared builder for the head/tail family. The `(head|tail <N>` prefix is the
+# same byte length either way (both heads are 4 chars), so the skip offset math
+# is identical — only `is_head` differs.
+function _headtail_sink(e::MORK.Expr, is_head::Bool)
     buf = e.buf
     skip = 6
     max_n = 10
@@ -242,28 +249,45 @@ function HeadSink(e::MORK.Expr)
             end
         end
     end
-    HeadSink(e, PathMap{UnitVal}(), skip, 0, max_n, UInt8[])
+    HeadSink(e, is_head, PathMap{UnitVal}(), skip, 0, max_n, UInt8[])
 end
+
+HeadSink(e::MORK.Expr) = _headtail_sink(e, true)
+TailSink(e::MORK.Expr) = _headtail_sink(e, false)
 
 function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
     path::Vector{UInt8}, btm::SinkBtm)
     length(path) <= s.skip && return nothing
     mpath = path[(s.skip + 1):end]
     if s.count == s.max
-        # At capacity: only accept if mpath < top (displaces current largest)
-        if mpath >= s.top
+        # At capacity. head: ignore mpath ≥ boundary(=max kept), else displace the
+        # max. tail: ignore mpath ≤ boundary(=min kept), else displace the min.
+        # (upstream sinks.rs: `if head { extremum <= mpath } else { extremum >= mpath }`)
+        if s.is_head ? (mpath >= s.top) : (mpath <= s.top)
             return nothing  # doesn't displace
         end
         set_val_at!(s.head, mpath, UNIT_VAL)
         remove_val_at!(s.head, s.top)
-        # find new top: descend to last path in head trie
+        # recompute the boundary from the kept set: head → last/max path,
+        # tail → first/min value (upstream: descend_last_path vs to_next_val).
         rz = read_zipper(s.head)
-        zipper_descend_last_path!(rz)
+        if s.is_head
+            zipper_descend_last_path!(rz)
+        else
+            zipper_to_next_val!(rz)
+        end
         s.top = collect(zipper_path(rz))
     else
         if set_val_at!(s.head, mpath, UNIT_VAL) === nothing  # newly inserted
             s.count += 1
-            if isempty(s.top) || mpath > s.top
+            # Track the eviction boundary while filling: head keeps it at the MAX
+            # inserted, tail at the MIN. NB upstream's fill branch is shared and
+            # tracks the max for BOTH — fine for head, but leaves tail's boundary
+            # stale at the fill→capacity transition (wrong eviction for max≥2). We
+            # split it here so tail is correct from the first capacity decision;
+            # head is byte-identical to before. (Verified by discriminating test;
+            # flag upstream sinks.rs HeadTailSink shared fill branch.)
+            if isempty(s.top) || (s.is_head ? (mpath > s.top) : (mpath < s.top))
                 s.top = copy(mpath)
             end
         end
@@ -1235,6 +1259,13 @@ function asink_new(e::MORK.Expr)::AbstractSink
         return HeadSink(e)
     end
 
+    # [3] tail N <expr> → TailSink (HeadSink with is_head=false)
+    if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
+        length(buf) >= 6 &&
+        buf[3:6] == UInt8[UInt8('t'), UInt8('a'), UInt8('i'), UInt8('l')]
+        return TailSink(e)
+    end
+
     # [4] count <r> <s> <p> → CountSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(5))) &&
         length(buf) >= 7 && buf[3:7] == Vector{UInt8}("count")
@@ -1304,7 +1335,7 @@ asink_compat(e::MORK.Expr) = CompatSink(e)
 # =====================================================================
 
 export AbstractSink, sink_apply!, sink_finalize!
-export CompatSink, AddSink, RemoveSink, HeadSink
+export CompatSink, AddSink, RemoveSink, HeadSink, TailSink
 export CountSink, SumSink, AndSink
 export ACTSink, WASMSink, PureSink, Z3Sink, USink, AUSink, HashSink
 export _pure_eval_formula, _expr_end_offset
