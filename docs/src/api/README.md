@@ -34,7 +34,8 @@ for the substrate API.
 | `space_atom_count(s)` | Number of atoms in space |
 | `space_metta_calculus!(s, max_steps)` | Run calculus to fixed point |
 | `space_query_sexpr(s, pattern)` | Match a pattern, return bindings |
-| `space_query_multi_i(s, patterns)` | Multi-pattern query |
+| `space_query_multi_i(s, patterns)` | Multi-pattern query (`I`-source clause) |
+| `space_query_multi_at(s, prefix, …)` | Prefix-scoped query — a subspace `s(p)` |
 | `space_backup(s)` | Snapshot the space |
 | `space_restore!(s, snapshot)` | Restore a snapshot |
 
@@ -60,17 +61,24 @@ for the substrate API.
 | `RemoveSink` | `-` operator — removes matched atoms |
 | `AddSink` | `+` operator — asserts atoms |
 | `FloatReductionSink` | `fmin`/`fmax`/`fsum`/`fprod` aggregators |
-| `CountSink` | Counting sink |
+| `CountSink` | `count` — counting sink |
+| `HeadSink` / `TailSink` | `head`/`tail` — keep the N smallest / largest paths |
 | `BipolarSink` | Dual +/- sink |
 
 ---
 
 ## Sources
 
+Source combinators for the `(I …)` match clause — see the
+[Sources and Sinks](../guide/sinks.md) guide.
+
 | Symbol | Description |
 |--------|-------------|
-| `CmpSource` | Comparison source (deferred) |
-| `space_query_multi_i` | Multi-source query driver |
+| `CompatSource` / `BTMSource` | default BTM trie read (plain / `(BTM …)` prefix subtrie) |
+| `ACTSource` | `(ACT <name> …)` — match a memory-mapped `.act` file without loading it |
+| `CmpSource` | `(== …)` / `(!= …)` — equality / inequality comparison source |
+| `GroundedSource` | `(<registered-fn> …)` — dispatch to a registered Julia grounded function |
+| `space_query_multi_i` | Multi-source query driver (the `I`-source clause) |
 
 ---
 

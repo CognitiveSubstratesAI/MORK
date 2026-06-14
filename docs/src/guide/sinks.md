@@ -1,10 +1,50 @@
-# Sink Operators
+# Sources and Sinks
 
-A **sink** is a special output combinator in the `O` clause of a rule.
-Instead of simply asserting new atoms, sinks perform **stateful
-aggregation** over multiple rule firings.
+MORK's exec calculus has two extension points around plain pattern matching:
+**sources** process the *match* side at query time (the `I` input clause), and
+**sinks** process the *output* side at rewrite time (the `O` output clause).
 
-All sinks appear as part of the `O` output combinator:
+```
+(exec PRIORITY (I SOURCE1 SOURCE2 ...) (O SINK1 SINK2 ...))
+```
+
+A plain `(, …)` match clause reads the space's trie directly; an `(I …)` clause
+lets each pattern be served by a *source* other than the default trie read.
+
+---
+
+## Sources
+
+A **source** supplies the matches for one pattern in an `(I …)` clause. The
+functor of the sub-expression selects which source is used (dispatched by
+`asource_new` in `src/kernel/Sources.jl`):
+
+| Source | Pattern form | Matches |
+|--------|--------------|---------|
+| *(default)* | a plain pattern in a `(, …)` clause | the space's BTM trie |
+| `BTM` | `(BTM …)` | the `[2] BTM` prefix subtrie |
+| `ACT` | `(ACT <name> …)` | a memory-mapped `<name>.act` ArenaCompactTree file (read without loading it into the live space) |
+| `==` | `(== <primary> <secondary>)` | secondary paths **equal** to the primary binding |
+| `!=` | `(!= <primary> <secondary>)` | secondary paths **not equal** to the primary binding |
+| *(grounded)* | `(<registered-fn> …)` | a registered Julia grounded function — checked **first**, so registered functions take priority over a trie query (see `GroundedSource`) |
+
+The comparison sources `==` / `!=` are backed by a `DependentZipper`: the
+secondary pattern is constrained by the primary's binding — `==` to the single
+matching path, `!=` to the COW-shared complement (`btm \ {path}`). The multi-
+source query driver is `space_query_multi_i`.
+
+```
+;; form: an (I …) clause whose patterns are served by sources
+(exec 0 (I (== \$x \$y) (rel \$y \$z)) (O (linked \$x \$z)))
+```
+
+---
+
+## Sinks
+
+A **sink** is an output combinator in the `O` clause of a rule. Instead of
+simply asserting new atoms, sinks perform **stateful aggregation** over
+multiple rule firings.
 
 ```
 (exec PRIORITY MATCH (O SINK1 SINK2 ...))

@@ -20,7 +20,7 @@ makedocs(;
             "Expressions" => "guide/expressions.md",
             "Zipper Queries" => "guide/zipper_queries.md",
             "Space Rules" => "guide/space_rules.md",
-            "Sinks" => "guide/sinks.md",
+            "Sources and Sinks" => "guide/sinks.md",
             "Server" => "guide/server.md"
         ],
         "API Reference" => "api/README.md"
