@@ -156,17 +156,20 @@ that makes this practical for large datasets.
 
 ## Worked example — full FAFB v783 connectome
 
-A complete realisation of this pattern lives in
-[`packages/Core/examples/connectome/`](../../../Core/examples/connectome/):
+A complete realisation of this pattern lives in the **Core** repo at
+`examples/connectome/` — see the
+[Connectome substrate](https://cognitivesubstratesai.github.io/Core/dev/connectome/)
+docs page. It builds the FAFB v783 fly connectome as persisted per-Space `.act`
+snapshots (`S_rule.act` = 3.73 M synapse edges, 41.7 MB, ~0.25 ms cold-open) and
+runs the Fig-6 information-flow over them:
 
-- `info_flow_zipper.jl` — single-modality reach-flow on the in-RAM
-  trie (3.73 M edges, ~3 min load, then µs-scale per query).
-- `info_flow_all_modalities.jl` — all 7 afferent modalities on an
-  mmap'd `.act` snapshot.  41.7 MB on disk, 0.25 ms cold-open,
-  ~14 s total across all modalities.
+- `info_flow.jl` — `info_flow(m, modality)` (single modality, seeds derived from
+  the `S_ent` ontology Space) and `all_modalities(m)` (all 7 afferent modalities
+  on the mmap'd snapshot, ~14 s total + the Fig-6 d/e Jaccard overlap).
 
-Both files use the same `read_zipper_at_path` / `zipper_to_next_val!`
-core loop documented above, differing only in the backend they open.
+The `flow_ranks` core loop is exactly the `read_zipper_at_path` /
+`zipper_to_next_val!` prefix-narrowed walk documented above, over the cold-mmap'd
+`S_rule.act` snapshot.
 
 ---
 
