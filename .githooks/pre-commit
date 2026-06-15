@@ -1,38 +1,52 @@
 #!/usr/bin/env bash
-# pre-commit hook — blocks commits containing hardcoded local paths.
+# pre-commit hook — block hardcoded local paths and the committer's own email.
+#
+# No hardcoded usernames/emails live in THIS file (it's a public repo):
+#   1. a generic /home|/Users/<user> path is blocked in CODE files (docs may
+#      legitimately show example placeholders like /home/username/);
+#   2. the committer's ACTUAL home dir ($HOME) is blocked everywhere — derived
+#      at runtime, so it catches real paths in docs too without flagging
+#      placeholders, and nothing personal is stored here;
+#   3. the committer's `git config user.email` is blocked everywhere — also
+#      derived at runtime.
+#
 # Install: git config core.hooksPath .githooks
-
 set -euo pipefail
 
-# Patterns that must never appear in committed source files.
-BLOCKED_PATTERNS=(
-    "/home/shivaji1012"
-    "/home/sivaji1012"
-    "/Users/shivaji"
-    "shivaji10@gmail.com"
-)
+CODE_EXT="\.(jl|toml|yml|yaml|sh|py|json)$"          # path regex: code only
+ALL_EXT="\.(jl|toml|md|yml|yaml|sh|py|json|txt)$"    # $HOME / email: all source
 
-# File extensions to check (skip binaries, lock files, etc.)
-CHECKED_EXTENSIONS="\.(jl|toml|md|yml|yaml|sh|py|json|txt)$"
+staged() { git diff --cached --name-only --diff-filter=ACMR | grep -E "$1" || true; }
 
 EXIT=0
+report() {  # $1 = label, $2 = matching files
+    echo ""
+    echo "❌  COMMIT BLOCKED — $1"
+    echo "    Found in:"; echo "$2" | sed 's/^/      /'
+    echo "    Use ~, \$HOME, @__DIR__, or env vars instead.  Bypass: git commit --no-verify"
+    EXIT=1
+}
 
-for pattern in "${BLOCKED_PATTERNS[@]}"; do
-    # Search staged files only (--cached), skip deleted files
-    matches=$(git diff --cached --name-only --diff-filter=ACMR | \
-              grep -E "$CHECKED_EXTENSIONS" | \
-              xargs grep -l "$pattern" 2>/dev/null || true)
+CODE=$(staged "$CODE_EXT")
+ALL=$(staged "$ALL_EXT")
 
-    if [[ -n "$matches" ]]; then
-        echo ""
-        echo "❌  COMMIT BLOCKED — hardcoded local path detected: '$pattern'"
-        echo "    Found in:"
-        echo "$matches" | sed 's/^/      /'
-        echo ""
-        echo "    Use relative paths or environment variables instead."
-        echo "    To bypass (e.g. legitimate mention in a comment): git commit --no-verify"
-        EXIT=1
-    fi
-done
+# 1. generic hardcoded home path in code (no username hardcoded here)
+if [[ -n "$CODE" ]]; then
+    h=$(echo "$CODE" | xargs grep -lE '(/home|/Users)/[A-Za-z0-9._-]+' 2>/dev/null || true)
+    [[ -n "$h" ]] && report "hardcoded local home path in code" "$h"
+fi
+
+# 2. the committer's actual home dir, anywhere (runtime $HOME, not stored here)
+if [[ -n "${HOME:-}" && "$HOME" == /* && "$HOME" != "/" && -n "$ALL" ]]; then
+    h=$(echo "$ALL" | xargs grep -lF "$HOME" 2>/dev/null || true)
+    [[ -n "$h" ]] && report "your home dir ('$HOME') in source" "$h"
+fi
+
+# 3. the committer's email, anywhere (runtime git config, not stored here)
+EMAIL=$(git config user.email 2>/dev/null || true)
+if [[ -n "$EMAIL" && -n "$ALL" ]]; then
+    h=$(echo "$ALL" | xargs grep -lF "$EMAIL" 2>/dev/null || true)
+    [[ -n "$h" ]] && report "your git email ('$EMAIL') in source" "$h"
+fi
 
 exit $EXIT
