@@ -22,9 +22,8 @@ operator-precedence transpilation defects).
 
 A full real-world build — the **FAFB v783 _Drosophila_ connectome** (≈139 k
 neurons, 3.73 M synapses) organized as persisted per-Space `.act` snapshots, with
-the *Nature* 2024 Fig-6 information-flow model run over them — lives in the
-**Core** package:
-[**Fly connectome (FAFB v783)**](https://cognitivesubstratesai.github.io/Core/dev/connectome/).
+the *Nature* 2024 Fig-6 information-flow model run over them:
+[**Fly connectome (FAFB v783)**](examples/fly_connectome.md).
 
 It showcases the substrate end-to-end: prefix-scoped multi-Space queries,
 cold-mmap `.act` reads (~0.25 ms open of a 41.7 MB snapshot), and the

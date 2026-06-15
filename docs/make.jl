@@ -23,6 +23,9 @@ makedocs(;
             "Sources and Sinks" => "guide/sinks.md",
             "Server" => "guide/server.md"
         ],
+        "Examples" => [
+            "Fly connectome (FAFB v783)" => "examples/fly_connectome.md",
+        ],
         "API Reference" => "api/README.md"
     ],
     warnonly=true

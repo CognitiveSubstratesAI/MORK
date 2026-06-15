@@ -156,12 +156,11 @@ that makes this practical for large datasets.
 
 ## Worked example — full FAFB v783 connectome
 
-A complete realisation of this pattern lives in the **Core** repo at
-`examples/connectome/` — see the
-[Connectome substrate](https://cognitivesubstratesai.github.io/Core/dev/connectome/)
-docs page. It builds the FAFB v783 fly connectome as persisted per-Space `.act`
-snapshots (`S_rule.act` = 3.73 M synapse edges, 41.7 MB, ~0.25 ms cold-open) and
-runs the Fig-6 information-flow over them:
+A complete realisation of this pattern is the
+[Fly connectome (FAFB v783)](../examples/fly_connectome.md) example
+(`examples/connectome/`). It builds the FAFB v783 fly connectome as persisted
+per-Space `.act` snapshots (`S_rule.act` = 3.73 M synapse edges, 41.7 MB,
+~0.25 ms cold-open) and runs the Fig-6 information-flow over them:
 
 - `info_flow.jl` — `info_flow(m, modality)` (single modality, seeds derived from
   the `S_ent` ontology Space) and `all_modalities(m)` (all 7 afferent modalities
