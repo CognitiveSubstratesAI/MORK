@@ -1106,12 +1106,15 @@ sink_finalize!(s::PureSink, ::SinkBtm) = (c=s.changed; s.changed=false; c)
 mutable struct FloatReductionSink{R} <: AbstractSink
     expr::MORK.Expr
     op::Symbol   # :sum, :min, :max, :prod
-    # Groups: (key_bytes → Vector{Float64})
-    by_key::Vector{Tuple{Vector{UInt8}, Vector{Float64}}}
+    # Groups: key_bytes → Vector{Float64}. A Dict (hashed), NOT a Vector + per-value `findfirst`:
+    # the old linear key-scan was O(#keys) PER inserted value ⇒ O(N²) group-by, which made `fsum`
+    # super-linear (measured 6s @ 50k edges) and untractable at connectome scale. Hashing the key
+    # gives O(1) insert ⇒ O(E) total. (sink_finalize! iterates `(k,v) in by_key` — works unchanged.)
+    by_key::Dict{Vector{UInt8}, Vector{Float64}}
 end
 
 FloatReductionSink(e::MORK.Expr, op::Symbol) =
-    FloatReductionSink{op}(e, op, Tuple{Vector{UInt8}, Vector{Float64}}[])
+    FloatReductionSink{op}(e, op, Dict{Vector{UInt8}, Vector{Float64}}())
 
 function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     # path = bound expression bytes: (fXXX <tpl> <key> <value>)
@@ -1134,13 +1137,8 @@ function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     fval = tryparse(Float64, val_str)
     fval === nothing && return nothing
 
-    # Find or create the entry for this key
-    idx = findfirst(t -> t[1] == key_bytes, s.by_key)
-    if idx === nothing
-        push!(s.by_key, (key_bytes, Float64[]))
-        idx = length(s.by_key)
-    end
-    push!(s.by_key[idx][2], fval)
+    # Accumulate the value under its group key — O(1) hashed insert (was an O(#keys) linear scan).
+    push!(get!(() -> Float64[], s.by_key, key_bytes), fval)
 end
 
 function sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool
