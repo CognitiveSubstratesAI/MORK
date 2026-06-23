@@ -938,13 +938,17 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
         e.n == 0 && pop!(references)
 
     elseif tag isa ExprVarRef
-        i = Int(tag.idx)
-        # Upstream fix e551924: guard against sentinel typemax(Int) —
-        # references[i+1] == typemax(Int) means this variable was first bound at
-        # a free (NewVar) data position → VarRef should match anything.
-        # Old: e.n == 0 && i < length(references)
-        # New: e.n == 0 && i < length(references) && references[i+1] != typemax(Int)
-        new_ee = if e.n == 0 && i < length(references) && references[i + 1] != typemax(Int)
+        i = Int(tag.idx)   # 0-based De Bruijn index (kept raw; `references` access shifts +1)
+        # Upstream HEAD = the REVERT of e551924 (`4807e2f`, kernel/src/space.rs:166-188):
+        # NO typemax sentinel guard. An out-of-range coreference (the referenced var is
+        # not yet bound on this path) ABORTS this branch via a bounds-check early-return;
+        # an in-range one (e.n==0) resolves to the recorded path offset. `references`
+        # holds only real 0-based path offsets (push on entering a NewVar, pop on exit).
+        if e.n == 0 && i >= length(references)
+            push!(stack, e)        # restore the popped element, then abandon this branch
+            return
+        end
+        new_ee = if e.n == 0
             ref_off = references[i + 1]
             path = _coref_path(loc)
             resolved_buf = Vector{UInt8}(path[(ref_off + 1):end])
@@ -954,7 +958,8 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
             ExprEnv(UInt8(255), UInt8(0), UInt32(0), MORK.Expr([static_nv]))
         end
 
-        # vs!(e, true) — variable context: no sentinel push for NewVar children.
+        # vs!(e, false) — match stored variable children. No sentinel push: the e551924
+        # NewVar-sentinel block is commented out in upstream HEAD (space.rs:104-108).
         push!(stack, new_ee)
         m_vars = _var_children(loc)
         for b in m_vars
@@ -967,15 +972,10 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
 
     elseif tag isa ExprSymbol
         size = Int(tag.size)
-        # vs!(e, false) — non-variable context: push sentinel typemax(Int) when
-        # the trie has a free (NewVar) child.  Mirrors upstream fix e551924
-        # ("Allow decreasing pattern specificity in coreferential transition").
-        nv_byte = item_byte(ExprNewVar())
+        # vs!(e, false) — match stored variable children; upstream HEAD (revert of e551924)
+        # pushes NO typemax sentinel here (that block is commented out in space.rs:104-108).
         m_vars = _var_children(loc)
         for b in m_vars
-            if b == nv_byte && e.n == 0
-                push!(references, typemax(Int))
-            end
             _coref_descend_byte!(loc, b)
             _coreferential_transition!(loc, stack, references, f)
             _coref_ascend_byte!(loc)
@@ -990,14 +990,10 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
 
     elseif tag isa ExprArity
         arity = Int(tag.arity)
-        # vs!(e, false) — non-variable context: push sentinel typemax(Int) when
-        # the trie has a free (NewVar) child.  Mirrors upstream fix e551924.
-        nv_byte = item_byte(ExprNewVar())
+        # vs!(e, false) — match stored variable children; no typemax sentinel
+        # (upstream HEAD = revert of e551924; space.rs:104-108 commented out).
         m_vars = _var_children(loc)
         for b in m_vars
-            if b == nv_byte && e.n == 0
-                push!(references, typemax(Int))
-            end
             _coref_descend_byte!(loc, b)
             _coreferential_transition!(loc, stack, references, f)
             _coref_ascend_byte!(loc)
