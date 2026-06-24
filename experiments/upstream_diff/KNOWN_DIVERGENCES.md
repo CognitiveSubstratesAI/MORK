@@ -145,3 +145,17 @@ deliberate, none a port regression:**
 
 PathMap side of the same sync is recorded in `PathMap/docs/UPSTREAM_DELTA_2026-06-24.md` (PR #38
 read-APIs deferred, no consumer).
+
+### Bipolar case re-verified LIVE 2026-06-24 — PASSES (correcting a misread)
+
+Re-ran `two_bipolar_equal_crossed` on the current port (`run_julia`, post-sync). Output:
+`(MATCHED (foo bar) (foo bar))` IS emitted (ground=true) — exactly one MATCHED line. The
+authoritative `results/2026-06-24_upstream_asserts.md` marks `two_bipolar_equal_crossed`,
+`source_space_…`, and `sink_…` all **PASS**. (A streaming-console misread briefly labelled it FAIL;
+the commit `b8e873a` message inherited that error — superseded by this note.) First-principles
+confirms the port: unifying rule `$x` against both `(foo $a)` and `($b bar)` forces `$a=bar,$b=foo`
+⇒ the **single** ground solution `(foo bar)`. The hypothetical extra `(MATCHED (foo $) (foo _1))`
+is unverified (no Rust binary), unasserted by upstream, and not clearly a valid additional unifier.
+**Net: NO confirmed port divergence.** The only non-wip FAILs are `source_cmp_eq`/`source_cmp_ne`
+— projected-dump harness artifacts (port emits the correct wrapped result). The port conforms to
+100% of upstream's actual `assert!(res.contains(...))` assertions.
