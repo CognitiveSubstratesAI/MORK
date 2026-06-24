@@ -111,3 +111,37 @@ backup→restore round-trips. Along the way found a real bug: `space_backup_tree
 (`ArenaCompactTree::dump_from_zipper` / `open_mmap`). The `source_act*_two_bipolar` cases still don't
 match — but that's the **deep bipolar/multi-result** gap (the in-memory 2-source crossed case has it
 too), NOT an ACT issue. See MORK `test/runtests.jl` "ACT backup_tree → (ACT …) source read".
+
+---
+
+## Update 2026-06-24 — upstream core delta `2e0d6f9..9a3c5bd` verified (NO silent gap)
+
+Fresh upstream pulled to `~/JuliaAGI/dev-zone/MORK` (HEAD `9a3c5bd` "add einsum sink", 2026-06-15).
+Diffed the core kernel since the ~2026-06-09 baseline (`2e0d6f9`): +874/−61 over
+`kernel/src/{sinks,sources,space,main}.rs`. Classified — **all of it is in-scope-elsewhere or
+deliberate, none a port regression:**
+
+- **Tensor / einsum sinks & sources — NOT PORTED, BY DESIGN.** `EinsumSink`, `TensorCubesSink`,
+  `TensorNonzerosSource`, `TensorGetSource` + tensor helpers (`infer_einsum_output_shapes`,
+  `tensor_coordinate`, `add_tensor_cube`, …). The sink body is `use linalg::jit::{einsum_jit, …}`
+  — a thin wrapper that delegates the contraction to upstream's **`linalg` crate** (a hand-rolled
+  einsum-JIT + optional **OpenBLAS** bindings). Upstream built that crate because **Rust has no
+  native tensor-contraction stack**. In our ecosystem this capability already exists, more capably
+  and architecturally separated: **MORKTensorNetworks** (deps **KernelAbstractions.jl**; + Reactant
+  in the stack) already does semiring/tensor contraction on GPU AND already bridges MORK trie data
+  (`SemiringKernels.jl`, `PathAlgebra.jl`, `GPULayout.jl`, `ShardZipper.jl`). Porting `EinsumSink`
+  would be redundant (we have the compute), architecturally wrong (duplicates MORKTensorNetworks
+  inside the kernel), and inferior (hand-rolled Rust einsum vs Julia's einsum/GPU/XLA stack).
+  **Decision: superseded by MORKTensorNetworks; do not port.** The only sanctioned future variant is
+  a *thin* MORK sink that DELEGATES to MORKTensorNetworks/KernelAbstractions, and only when a
+  consumer needs einsum-in-the-transform-loop (none today).
+- **`HeadTailSink<const head: bool>` unification — CAPTURED (cosmetic).** Upstream merged
+  Head/Tail into one const-generic struct; our port keeps separate `HeadSink`/`TailSink`
+  (Julia-idiomatic), explicitly mapped in `kernel/Sinks.jl`. Same behavior.
+- **2× `wip` commits + connectome example + linalg benches — deferred/not-ported** (incomplete
+  upstream work; examples/benchmarks never ported).
+- No general (non-tensor) kernel change is unported. The two "non-tensor-keyword" `space.rs` adds
+  (`push_path_symbol`, `linear_to_coordinate`) are themselves tensor-coordinate helpers.
+
+PathMap side of the same sync is recorded in `PathMap/docs/UPSTREAM_DELTA_2026-06-24.md` (PR #38
+read-APIs deferred, no consumer).
