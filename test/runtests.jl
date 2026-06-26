@@ -4489,6 +4489,12 @@ const PM = PathMap.PathMap
     # ── Wiki example programs ─────────────────────────────────────────────────
     include("integration/test_wiki_examples.jl")
 
+    # ── MM2 corpus differential gate (vs upstream `mork` outputs) ──────────────
+    # Asserts the tutorial's stated upstream output for each MM2_Structuring_Code program — the
+    # output-level check that caught the O-sink difference bug (a halting check passed while the
+    # result was wrong). Locks in 8f0d182 / 7908fbd / e59a16b.
+    include("integration/mm2_corpus_differential.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
