@@ -1294,6 +1294,14 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         tpl_ozs[k] = ExprZipper(MORK.Expr(out_bufs[k]), 1)
     end
 
+    # Two-phase apply scratch (oi = pattern var-intro count; new_intros=0 for templates).
+    discard_buf = Vector{UInt8}(undef, 1 << 16)
+    pat_apply_ez = ExprZipper(pat_expr, 1)
+    pat_apply_oz = ExprZipper(MORK.Expr(discard_buf), 1)
+    pat_cyc = Dict{ExprVar, UInt8}()
+    pat_stk = ExprVar[]
+    pat_asn = ExprVar[]
+
     # space_query_multi_i uses s.mmaps for ACT file caching (I-pattern)
     # no_source path uses space_query_multi_at so a non-empty `prefix` anchors
     # the pattern read to the prefix-subtrie (delegates to space_query_multi
@@ -1308,6 +1316,15 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         pat_expr,
         pat_v,
         (bindings, loc_expr) -> begin
+            # oi = the pattern's introduced-var count, counted BOUNDED to the pattern's own span
+            # (_ee_traverseh stops at the expr boundary — NOT a full-buffer walk, which would run
+            # past the pattern into the template and over-count). Template NewVars then number from
+            # oi so they don't collide with pattern-bound vars at key (0, k<oi).
+            (pat_nv, _, _) = _ee_traverseh(UInt8(0), ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
+                (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing),
+                (h, o, sl) -> (h, nothing), (h, o, a) -> (h, nothing),
+                (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
+            oi = pat_v + pat_nv
             if no_sink
                 # `,` template functor — apply each template and insert result directly
                 for (k, ee) in enumerate(template_ees)
@@ -1318,8 +1335,9 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                     empty!(tpl_rdicts[k]);
                     empty!(tpl_fvecs[k]);
                     empty!(tpl_nvecs[k])
-                    expr_apply(UInt8(0), ee.v, UInt8(0), ez, bindings, oz,
+                    (toi, _) = expr_apply(UInt8(0), oi, UInt8(0), ez, bindings, oz,
                         tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
+                    oi = toi
                     result_view = @view out_bufs[k][1:(oz.loc - 1)]   # zero-copy view (no slice alloc)
                     # Prefixed-region write: outputs land under `prefix` so a
                     # prefix-scoped exec stays inside its region.  Empty prefix →
@@ -1341,8 +1359,9 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                     empty!(tpl_rdicts[k]);
                     empty!(tpl_fvecs[k]);
                     empty!(tpl_nvecs[k])
-                    expr_apply(UInt8(0), ee.v, UInt8(0), ez, bindings, oz,
+                    (toi, _) = expr_apply(UInt8(0), oi, UInt8(0), ez, bindings, oz,
                         tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
+                    oi = toi
                     result_expr = MORK.Expr(out_bufs[k][1:(oz.loc - 1)]) # copy needed: sink stores ref
                     if ps[k] !== nothing
                         # Accumulating sink: apply but don't finalize yet
