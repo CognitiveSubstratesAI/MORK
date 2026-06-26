@@ -1141,7 +1141,15 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
     ep_len = length(ep)
     n = length(buf)
     i = 1
-    @inbounds while i <= n
+    # Scan ONLY the first top-level expression (the pattern). `pat_expr.buf` is the exec's
+    # backing buffer and EXTENDS PAST the pattern into the template — a whole-buffer scan
+    # false-positives on the template's own `(exec …)` (e.g. a rule whose template spawns an
+    # exec). That false positive routes the rule down the meta-pattern `pjoin` read_btm path,
+    # which re-inserts the just-removed exec into s.btm and RESURRECTS it — so it dominates trie
+    # selection forever (going-wide never terminated; the fork never decomposed). `remaining`
+    # tracks open subexpressions of the first expr; stop when it hits 0.
+    remaining = 1
+    @inbounds while i <= n && remaining > 0
         # Check if position i starts with _EXEC_PREFIX (expression-start only)
         if i + ep_len - 1 <= n
             match = true
@@ -1153,6 +1161,7 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
         # Advance structurally — same logic as _const_prefix
         t = byte_item(buf[i])
         if t isa ExprArity
+            remaining += Int(t.arity)   # this node introduces `arity` child subexpressions
             i += 1          # descend into expression
         elseif t isa ExprSymbol
             i += 1 + Int(t.size)   # skip sym-header + payload bytes
@@ -1161,6 +1170,7 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
         else
             i += 1
         end
+        remaining -= 1      # consumed this node
     end
     false
 end
