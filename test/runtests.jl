@@ -4030,6 +4030,21 @@ const PM = PathMap.PathMap
             @test occursin("(counter Z)", result)
         end
 
+        @testset "O-sink set difference — removes apply after adds, order-independent" begin
+            # Regression for the set-difference bug (Set_Ops_05): in (O (+ ...) (- ...)) the
+            # removes must be collected across ALL matches and subtracted AFTER every add. With
+            # per-match immediate removal, an atom added by one (a,b) match and removed by a later
+            # one survives or dies by match ORDER: {a,b,c}\{b,c,d} gave the phantom {a,c} instead
+            # of {a}. RemoveSink is now accumulating (_is_accumulating_sink), so removes win.
+            src = "(arg_a a)\n(arg_a b)\n(arg_a c)\n(arg_b b)\n(arg_b c)\n(arg_b d)\n" *
+                  "(exec 0 (, (arg_a \$a) (arg_b \$b)) (O (+ (ret \$a)) (- (ret \$b))))\n"
+            result = _mc(src, 1000)
+            @test occursin("(ret a)", result)
+            @test !occursin("(ret b)", result)
+            @test !occursin("(ret c)", result)   # the phantom survivor — pre-fix bug
+            @test !occursin("(ret d)", result)
+        end
+
         @testset "multi-factor query skips value-removed dangling paths" begin
             # Minimal: add 2 atoms, remove one, a 2-factor conjunction must NOT match it.
             s = new_space()

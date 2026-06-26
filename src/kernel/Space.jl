@@ -1197,6 +1197,15 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     3 + sz > length(raw_bytes) && return false
     name = String(raw_bytes[3:(3 + sz - 1)])
     name in ("AU", "count", "fsum", "fmin", "fmax", "fprod", "sum", "head", "tail") && return true
+    # "-" (RemoveSink) MUST also accumulate. In an O-sink the removes have to be
+    # collected across ALL matches and subtracted AFTER every immediate add — otherwise
+    # an atom added by one match and removed by another survives or dies depending on
+    # match ORDER. That is the set-difference bug: Set_Ops_05 {a,b,c}\{b,c,d} upstream
+    # = {a}, but our per-match immediate path gave {a,c}. Deferring removes to finalize
+    # (after the adds) = upstream's "collect paths, subtract_into on finalize" → removes
+    # win, result is order-independent. The struct already collects into `s.remove`; it
+    # just was never marked accumulating, so it was created fresh-per-match.
+    name == "-" && return true
     false
 end
 
