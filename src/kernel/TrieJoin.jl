@@ -147,9 +147,22 @@ function _split2(argbytes::Vector{UInt8})::Tuple{Vector{UInt8}, Vector{UInt8}}
     (argbytes[1:l1], argbytes[(l1+1):end])
 end
 
-# Classify a 2-factor binary join: each factor `(sym $a $b)` (arity-3, Symbol head, two
-# variable args) with EXACTLY ONE variable shared across the two factors (the join key),
-# the others distinct free tails. Resolves the shared var's arg-position in each factor
+# byte-span of the sub-expression at 1-based arg position `pos` — generalizes _split2 to
+# arity-N factors (walk `pos` sub-expressions; no need to know the total arity). Lets the
+# binary join handle higher-arity relations like `(syn $a $b $w)` joining at any position.
+function _arg_at(argbytes::Vector{UInt8}, pos::Int)::Vector{UInt8}
+    p = 1; sp = UInt8[]
+    for _ in 1:pos
+        sp = Vector{UInt8}(expr_span(MORK.Expr(argbytes[p:end]), 1))
+        p += length(sp)
+    end
+    sp
+end
+
+# Classify a 2-factor join over ARITY-N relations: each factor `(sym $a₁ … $aₙ)` (≥2 var
+# args) with EXACTLY ONE variable shared across the two factors (the join key), the others
+# distinct free tails — e.g. binary `(edge $x $y)(edge $y $z)` OR ternary
+# `(syn $a $b $w)(syn $b $c $w2)`. Resolves the shared var's arg-position in each factor
 # (NewVars numbered in factor order; VarRef.idx is the absolute var index). Returns
 # (matches, keypos1, keypos2, head_prefix1, head_prefix2). Validated ≡ space_query_multi.
 function _classify_binary_join(sources::Vector{ExprEnv})::Tuple{Bool, Int, Int, Vector{UInt8}, Vector{UInt8}}
@@ -158,10 +171,10 @@ function _classify_binary_join(sources::Vector{ExprEnv})::Tuple{Bool, Int, Int, 
     occ = Dict{Int, Vector{Tuple{Int,Int}}}(); nv = 0; hps = Vector{UInt8}[]
     for (fi, src) in enumerate(sources)
         fa = ExprEnv[]; ee_args!(src, fa)
-        length(fa) == 3 || return fail                                   # head + 2 args
+        length(fa) >= 3 || return fail                                   # head + ≥2 args
         buf = src.base.buf
         (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return fail
-        for ap in 2:3
+        for ap in 2:length(fa)
             tag = byte_item(buf[Int(fa[ap].offset)+1])
             vid = if tag isa ExprNewVar
                       v = nv; nv += 1; v
@@ -189,8 +202,7 @@ function _bin_keymap(btm::PathMap{UnitVal}, hp::Vector{UInt8}, keypos::Int)
     rz = read_zipper_at_path(btm, hp)
     while zipper_to_next_val!(rz)
         args = collect(zipper_path(rz))
-        a1, a2 = _split2(args)
-        key = keypos == 1 ? a1 : a2
+        key = _arg_at(args, keypos)        # join-key arg at `keypos` (any arity/position)
         push!(get!(m, key, Vector{Vector{UInt8}}()), vcat(hp, args))
     end
     m

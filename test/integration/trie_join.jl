@@ -149,3 +149,25 @@ end
     @test sort([strip(l) for l in split(space_dump_all_sexpr(s2), '\n') if startswith(strip(l), "(pathy ")]) ==
           ["(pathy a m e)", "(pathy a n e)"]
 end
+
+@testset "TrieJoin arity-N — ternary relation join (generalized binary P2)" begin
+    # ternary `(syn pre post weight)`: 2-hop joins on $b (post of f1 = pre of f2).
+    # a→m→p and a→n→q ⇒ exactly 2 two-hops.
+    s = new_space()
+    space_add_all_sexpr!(s, "(syn a m 5)\n(syn a n 3)\n(syn m p 7)\n(syn n q 2)\n")
+    c = Ref(0)
+    space_query_multi(s.btm, sexpr_to_expr("(, (syn \$a \$b \$w) (syn \$b \$c \$w2))"), (b, cc) -> (c[] += 1; true))
+    @test c[] == 2
+
+    # exec derivation projecting to endpoints ⇒ distinct (twohop a p), (twohop a q)
+    space_add_all_sexpr!(s, "(exec 0 (, (syn \$a \$b \$w) (syn \$b \$c \$w2)) (, (twohop \$a \$c)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    @test sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(twohop ")]) ==
+          ["(twohop a p)", "(twohop a q)"]
+
+    # backward-compat: binary `(edge …)` still classifies + joins (different graph, 1 two-hop)
+    s2 = new_space(); space_add_all_sexpr!(s2, "(edge x y)\n(edge y z)\n")
+    c2 = Ref(0)
+    space_query_multi(s2.btm, sexpr_to_expr("(, (edge \$a \$b) (edge \$b \$c))"), (b, cc) -> (c2[] += 1; true))
+    @test c2[] == 1
+end
