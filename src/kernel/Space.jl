@@ -676,6 +676,17 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     ee_args!(ee0, pat_args)
     sources = pat_args[2:end]
 
+    # ADR-056 P1b: empty-tail trie-join fast path (root queries only). When every factor
+    # is `(sym $v)` sharing ONE variable, compute the join as a trie meet (`pmeet`) of the
+    # relations' arg-value subtries instead of the naive ProductZipper (N^k). Any other
+    # shape, or an anchored (non-empty prefix) query, falls through UNCHANGED below.
+    # Defined in kernel/TrieJoin.jl; validated ≡ ProductZipper (test/integration/trie_join.jl).
+    if isempty(prefix)
+        _tj_ok, _tj_hps = _classify_empty_tail(sources)
+        _tj_ok && return _trie_join_emit!(btm, sources, _tj_hps, effect,
+                                          bindings_scratch, pairs_scratch)
+    end
+
     candidate = 0
     # Fix 3: checkout secondary zippers from the task-local pool instead of
     # allocating fresh ReadZipperCore objects on every call.  The primary is

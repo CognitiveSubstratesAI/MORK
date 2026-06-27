@@ -57,3 +57,81 @@ function trie_join_unary(btm::PathMap{UnitVal},
     end
     acc
 end
+
+# =====================================================================
+# P1b — wiring into the multi-source query path (additive fast path)
+# =====================================================================
+
+# Detect the empty-tail shared-variable shape: every factor is `(sym $v)` (arity-2,
+# Symbol head, variable arg) and ALL args denote ONE shared variable — encoded as
+# exactly one NewVar introducer + (k-1) VarRef back-references. Independent vars
+# (`(p $x) (q $y)` → two NewVars) and non-unary factors are rejected (→ ProductZipper).
+# Returns (matches::Bool, head_prefixes). Validated ≡ space_query_multi (ADR-056 P1b probe).
+function _classify_empty_tail(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UInt8}}}
+    length(sources) < 2 && return (false, Vector{UInt8}[])
+    hps = Vector{UInt8}[]
+    n_newvar = 0; n_varref = 0
+    for src in sources
+        fa = ExprEnv[]; ee_args!(src, fa)
+        length(fa) == 2 || return (false, Vector{UInt8}[])         # not (head + 1 arg)
+        buf = src.base.buf
+        (byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol) || return (false, Vector{UInt8}[])
+        atag = byte_item(buf[Int(fa[2].offset) + 1])
+        if atag isa ExprNewVar
+            n_newvar += 1
+        elseif atag isa ExprVarRef
+            n_varref += 1
+        else
+            return (false, Vector{UInt8}[])                        # arg is not a variable
+        end
+        push!(hps, buf[(Int(src.offset) + 1):Int(fa[2].offset)])   # [Arity2][Sym head] prefix
+    end
+    ((n_newvar == 1 && n_varref == length(sources) - 1), hps)
+end
+
+# Emit the empty-tail join via `trie_join_unary`, reconstructing each match's combined
+# byte-path and driving the SAME value-gate / unify / effect contract as the ProductZipper
+# tail (so bindings + `combined` are byte-identical). Returns the candidate count.
+function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
+        hps::Vector{Vector{UInt8}}, effect::Function,
+        bindings_scratch::Dict{ExprVar, ExprEnv},
+        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    common = trie_join_unary(btm, hps)
+    candidate = 0
+    rz = read_zipper_at_path(common, UInt8[])
+    try
+        while zipper_to_next_val!(rz)
+            v = collect(zipper_path(rz))                 # the shared-variable binding (arg encoding)
+            combined = UInt8[]
+            for hp in hps
+                append!(combined, hp); append!(combined, v)
+            end
+            empty!(pairs_scratch)
+            boundary = 0; allok = true
+            for (k, src) in enumerate(sources)
+                hi = boundary + length(hps[k]) + length(v)
+                sub = combined[(boundary + 1):hi]
+                boundary = hi
+                if get_val_at(btm, sub) === nothing      # value-gate (mirrors ProductZipper tail)
+                    allok = false; break
+                end
+                push!(pairs_scratch, (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), MORK.Expr(sub))))
+            end
+            if !allok || length(pairs_scratch) != length(sources)
+                empty!(bindings_scratch); continue
+            end
+            empty!(bindings_scratch)
+            if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
+                candidate += 1
+                bindings_out = copy(bindings_scratch)
+                empty!(bindings_scratch)
+                effect(bindings_out, MORK.Expr(combined)) || throw(BreakQuery())
+            else
+                empty!(bindings_scratch)
+            end
+        end
+    catch e
+        e isa BreakQuery || rethrow()
+    end
+    candidate
+end
