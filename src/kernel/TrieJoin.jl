@@ -311,3 +311,98 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     rec(1, UInt8[])
     candidate[]
 end
+
+# =====================================================================
+# P4-B — projection pushdown via composition (chain + endpoint projection)
+# =====================================================================
+# For a set-sink exec whose pattern is a strict chain and whose template(s) reference ONLY
+# the chain endpoints (x0, xk) — e.g. `(reach3 $x $w)` over `(edge $x $y)(edge $y $z)(edge
+# $z $w)` — compute the DISTINCT endpoint pairs by relational composition (W² result / ~W³
+# work) instead of enumerating every path (W⁴), and apply the template once per pair.
+# Validated ≡ the full exec (ADR-056 P4-B probe).
+
+# True iff every template references (via VarRef) only the endpoint pattern vars {0, xk_idx}
+# (template-introduced NewVars are fine). A template using an intermediate var ⇒ composition
+# would lose it ⇒ NOT eligible.
+function _chain_projection_ok(template_ees::Vector{ExprEnv}, oi::Int, xk_idx::Int)::Bool
+    okref = Ref(true)
+    for ee in template_ees
+        _ee_traverseh(UInt8(0), ee,
+            (h, o) -> (h, nothing),
+            (h, o, r) -> (begin ri = Int(r); (ri < oi && ri != 0 && ri != xk_idx) && (okref[] = false) end; (h, nothing)),
+            (h, o, sl) -> (h, nothing), (h, o, a) -> (h, nothing),
+            (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
+        okref[] || return false
+    end
+    true
+end
+
+# Relational composition along the chain: returns Dict x0 → Set{xk} of DISTINCT endpoint pairs.
+function _chain_compose(btm::PathMap{UnitVal}, hps::Vector{Vector{UInt8}})
+    reach = Dict{Vector{UInt8}, Set{Vector{UInt8}}}()
+    rz = read_zipper_at_path(btm, hps[1])                          # factor 1 → (x0, x1)
+    while zipper_to_next_val!(rz)
+        a1, a2 = _split2(collect(zipper_path(rz)))
+        push!(get!(reach, a1, Set{Vector{UInt8}}()), a2)
+    end
+    for i in 2:length(hps)                                         # compose factor i (dedup each hop)
+        si = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
+        rzi = read_zipper_at_path(btm, hps[i])
+        while zipper_to_next_val!(rzi)
+            a1, a2 = _split2(collect(zipper_path(rzi)))
+            push!(get!(si, a1, Vector{Vector{UInt8}}()), a2)
+        end
+        nr = Dict{Vector{UInt8}, Set{Vector{UInt8}}}()
+        for (x0, mids) in reach, m in mids
+            haskey(si, m) && for nx in si[m]
+                push!(get!(nr, x0, Set{Vector{UInt8}}()), nx)
+            end
+        end
+        reach = nr
+    end
+    reach
+end
+
+# Apply the template(s) once per distinct (x0, xk) endpoint pair → set_val_at!. Returns
+# (count, any_new). Constructs the minimal bindings {endpoint vars → values} the template needs.
+function _chain_proj_emit!(s, hps::Vector{Vector{UInt8}}, template_ees::Vector{ExprEnv},
+        oi::Int, xk_idx::Int)::Tuple{Int, Bool}
+    reach = _chain_compose(s.btm, hps)
+    cnt = 0; any_new = false
+    obuf = Vector{UInt8}(undef, 1 << 16)
+    tspans = [Vector{UInt8}(expr_span(ee.base, Int(ee.offset) + 1)) for ee in template_ees]
+    for (x0, xks) in reach, xk in xks
+        bind = Dict{ExprVar, ExprEnv}()
+        bind[(UInt8(0), UInt8(0))]      = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(x0))
+        bind[(UInt8(0), UInt8(xk_idx))] = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(xk))
+        for tsp in tspans
+            ez = ExprZipper(MORK.Expr(tsp), 1)
+            oz = ExprZipper(MORK.Expr(obuf), 1)
+            expr_apply(UInt8(0), UInt8(oi), UInt8(0), ez, bind, oz,
+                Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
+            out = obuf[1:(oz.loc - 1)]
+            old = get_val_at(s.btm, out)
+            set_val_at!(s.btm, out, UNIT_VAL)
+            old === nothing && (any_new = true)
+            cnt += 1
+        end
+    end
+    (cnt, any_new)
+end
+
+# Orchestrator: fire P4-B iff pat is a strict chain (k>=3) and all templates project to the
+# endpoints. Returns (count, any_new) when it fires, else `nothing` (caller falls through).
+function _try_chain_projection!(s, pat_expr::MORK.Expr, pat_v::UInt8,
+        template_ees::Vector{ExprEnv})::Union{Nothing, Tuple{Int, Bool}}
+    pa = ExprEnv[]; ee_args!(ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr), pa)
+    length(pa) < 4 && return nothing                              # need (, f1 f2 f3...) k>=3
+    sources = pa[2:end]
+    (ch_ok, hps) = _classify_chain(sources)
+    ch_ok || return nothing
+    (pat_nv, _, _) = _ee_traverseh(UInt8(0), ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
+        (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
+        (h, o, a) -> (h, nothing), (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
+    oi = Int(pat_v) + Int(pat_nv); xk_idx = oi - 1
+    _chain_projection_ok(template_ees, oi, xk_idx) || return nothing
+    _chain_proj_emit!(s, hps, template_ees, oi, xk_idx)
+end

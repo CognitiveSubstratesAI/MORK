@@ -1281,6 +1281,16 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         end
     end
 
+    # ADR-056 P4-B projection pushdown: a set-sink (`,`) exec whose pattern is a strict chain
+    # (k≥3) and whose template(s) project to the chain ENDPOINTS (x0, xk) computes the W²
+    # distinct endpoint pairs by composition instead of enumerating the W^k paths. Returns
+    # early when it fires; ANY other shape falls through to the normal per-match path below
+    # UNCHANGED. Defined in kernel/TrieJoin.jl; validated ≡ the full exec (P4-B probe).
+    if no_sink && isempty(prefix)
+        _pb = _try_chain_projection!(s, pat_expr, pat_v, template_ees)
+        _pb !== nothing && return _pb
+    end
+
     # Build read_btm.
     # Prefix-gated: if the pattern's constant prefix cannot match _EXEC_PREFIX,
     # use s.btm directly (exec atom was already removed by the driver — it couldn't

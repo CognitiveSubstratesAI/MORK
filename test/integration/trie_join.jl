@@ -130,3 +130,22 @@ end
     space_metta_calculus!(s2, 1_000_000)
     @test count(l -> startswith(strip(l), "(twohop "), split(space_dump_all_sexpr(s2), '\n')) == 216
 end
+
+@testset "P4-B projection composition — chain endpoint projection (vs full exec)" begin
+    # two disjoint 3-paths: a→m→p→e and a→n→q→e
+    edges = "(edge a m)\n(edge a n)\n(edge m p)\n(edge n q)\n(edge p e)\n(edge q e)\n"
+
+    # reach3 projects to endpoints {x,w} ⇒ B fires ⇒ distinct (a,e) = ONE atom
+    s = new_space(); space_add_all_sexpr!(s, edges)
+    space_add_all_sexpr!(s, "(exec 0 (, (edge \$x \$y) (edge \$y \$z) (edge \$z \$w)) (, (reach3 \$x \$w)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    @test sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(reach3 ")]) ==
+          ["(reach3 a e)"]
+
+    # template uses the INTERMEDIATE $y ⇒ B must NOT fire (would lose $y) ⇒ both witnesses kept
+    s2 = new_space(); space_add_all_sexpr!(s2, edges)
+    space_add_all_sexpr!(s2, "(exec 0 (, (edge \$x \$y) (edge \$y \$z) (edge \$z \$w)) (, (pathy \$x \$y \$w)))\n")
+    space_metta_calculus!(s2, 1_000_000)
+    @test sort([strip(l) for l in split(space_dump_all_sexpr(s2), '\n') if startswith(strip(l), "(pathy ")]) ==
+          ["(pathy a m e)", "(pathy a n e)"]
+end
