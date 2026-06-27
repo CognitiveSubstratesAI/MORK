@@ -1332,6 +1332,19 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     pat_stk = ExprVar[]
     pat_asn = ExprVar[]
 
+    # ADR-056 projection pushdown (variant A): a set-sink (`,`) exec whose template projects
+    # away some pattern vars makes many matches produce the SAME output atom (e.g.
+    # `(reach3 $x $w)` over a path enumeration → W⁴ matches but W² distinct atoms). Dedup by
+    # output bytes to skip the redundant idempotent `set_val_at!` for repeats. ALWAYS correct
+    # (set/idempotent semantics — never changes the atom set). The projection "gate" is pure
+    # perf: ADAPTIVE — if no duplicate appears in the first DD_PROBE matches the workload isn't
+    # projecting, so disable + free the set → zero overhead on the common (non-projecting) path.
+    dd_seen = Set{Vector{UInt8}}()
+    dd_active = Ref(no_sink)
+    dd_matches = Ref(0)
+    dd_hits = Ref(0)
+    DD_PROBE = 512
+
     # space_query_multi_i uses s.mmaps for ACT file caching (I-pattern)
     # no_source path uses space_query_multi_at so a non-empty `prefix` anchors
     # the pattern read to the prefix-subtrie (delegates to space_query_multi
@@ -1369,6 +1382,15 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                         tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
                     oi = toi
                     result_view = @view out_bufs[k][1:(oz.loc - 1)]   # zero-copy view (no slice alloc)
+                    # projection-pushdown dedup: skip the redundant insert for a repeated output
+                    if dd_active[]
+                        ddkey = Vector{UInt8}(result_view)
+                        if ddkey in dd_seen
+                            dd_hits[] += 1
+                            continue              # duplicate atom — already inserted this firing
+                        end
+                        push!(dd_seen, ddkey)
+                    end
                     # Prefixed-region write: outputs land under `prefix` so a
                     # prefix-scoped exec stays inside its region.  Empty prefix →
                     # write the bare result view (zero-copy, unchanged root path).
@@ -1403,6 +1425,13 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                         changed = sink_finalize!(sink, sink_btm)
                         changed && (any_new[] = true)
                     end
+                end
+            end
+            # adaptive projection-dedup gate: disable + free if no dups seen early (not projecting)
+            if dd_active[]
+                dd_matches[] += 1
+                if dd_matches[] >= DD_PROBE && dd_hits[] == 0
+                    dd_active[] = false; empty!(dd_seen)
                 end
             end
             true

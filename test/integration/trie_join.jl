@@ -111,3 +111,22 @@ end
     c4 = Ref(0); space_query_multi(s4.btm, pat4, (b, cc) -> (c4[] += 1; true))
     @test c4[] == 32
 end
+
+@testset "Projection pushdown (variant A) — set-sink dedup preserves atom set" begin
+    # layered L0..L2, W=6: 72 edges. 2-hop join via the exec calculus.
+    mkg() = (s = new_space(); io = IOBuffer();
+             for l in 0:1, i in 0:5, j in 0:5; print(io, "(edge L$(l)n$(i) L$(l+1)n$(j))\n"); end;
+             space_add_all_sexpr!(s, String(take!(io))); s)
+
+    # PROJECTING: (reach2 $x $z) drops $y ⇒ W²=36 distinct (the W³=216 paths collapse)
+    s = mkg()
+    space_add_all_sexpr!(s, "(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (reach2 \$x \$z)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    @test count(l -> startswith(strip(l), "(reach2 "), split(space_dump_all_sexpr(s), '\n')) == 36
+
+    # NON-PROJECTING: (twohop $x $y $z) keeps all vars ⇒ W³=216 distinct; dedup auto-disables
+    s2 = mkg()
+    space_add_all_sexpr!(s2, "(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (twohop \$x \$y \$z)))\n")
+    space_metta_calculus!(s2, 1_000_000)
+    @test count(l -> startswith(strip(l), "(twohop "), split(space_dump_all_sexpr(s2), '\n')) == 216
+end
