@@ -88,3 +88,26 @@ end
     c3 = Ref(0); space_query_multi(s2.btm, sexpr_to_expr("(, (a \$x \$y) (b \$z \$w))"), (b, cc) -> (c3[] += 1; true))
     @test c3[] == 2                                 # 2 a-atoms × 1 b-atom
 end
+
+@testset "TrieJoin P3 — n-ary chain join (vs hand-computed truth)" begin
+    # 3-chain x→y→z→w over: a→b→{c,d}→e  ⇒  a→b→c→e, a→b→d→e  (2 paths)
+    s = new_space()
+    space_add_all_sexpr!(s, "(edge a b)\n(edge b c)\n(edge b d)\n(edge c e)\n(edge d e)\n")
+    pat = sexpr_to_expr("(, (edge \$x \$y) (edge \$y \$z) (edge \$z \$w))")
+    c = Ref(0); space_query_multi(s.btm, pat, (b, cc) -> (c[] += 1; true))
+    @test c[] == 2
+
+    # exec derivation → distinct (path3 x w)  (a→e via two routes ⇒ one atom)
+    space_add_all_sexpr!(s, "(exec 0 (, (edge \$x \$y) (edge \$y \$z) (edge \$z \$w)) (, (path3 \$x \$w)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    p3 = sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(path3 ")])
+    @test p3 == ["(path3 a e)"]
+
+    # 4-chain on a layered W=2 DAG (L0..L4) ⇒ 2^5 = 32 paths
+    s4 = new_space(); io = IOBuffer()
+    for l in 0:3, i in 0:1, j in 0:1; print(io, "(edge L$(l)n$(i) L$(l+1)n$(j))\n"); end
+    space_add_all_sexpr!(s4, String(take!(io)))
+    pat4 = sexpr_to_expr("(, (edge \$a \$b) (edge \$b \$c) (edge \$c \$d) (edge \$d \$e))")
+    c4 = Ref(0); space_query_multi(s4.btm, pat4, (b, cc) -> (c4[] += 1; true))
+    @test c4[] == 32
+end

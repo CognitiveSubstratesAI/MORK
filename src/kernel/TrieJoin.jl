@@ -232,3 +232,82 @@ function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     end
     candidate
 end
+
+# =====================================================================
+# P3 — n-ary strict-chain join via recursive streaming (additive fast path)
+# =====================================================================
+
+const _NO_ATOMS = Vector{Vector{UInt8}}()
+
+# Classify a strict left-chain of k>=3 binary factors:
+#   (rel1 $x0 $x1)(rel2 $x1 $x2)...(relk $x_{k-1} $xk)
+# factor1 = (NewVar, NewVar); factor i>=2 = (VarRef→factor(i-1)'s 2nd-arg var, NewVar).
+# i.e. each factor's FIRST arg = the previous factor's SECOND arg (a path query).
+# Returns (matches, head_prefixes). Non-chain k>=3 shapes (star, unlinked) are rejected.
+function _classify_chain(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UInt8}}}
+    length(sources) >= 3 || return (false, Vector{UInt8}[])
+    hps = Vector{UInt8}[]; nv = 0; prev = -1
+    for (fi, src) in enumerate(sources)
+        fa = ExprEnv[]; ee_args!(src, fa)
+        length(fa) == 3 || return (false, Vector{UInt8}[])               # head + 2 args
+        buf = src.base.buf
+        (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return (false, Vector{UInt8}[])
+        t1 = byte_item(buf[Int(fa[2].offset)+1]); t2 = byte_item(buf[Int(fa[3].offset)+1])
+        (t2 isa ExprNewVar) || return (false, Vector{UInt8}[])           # 2nd arg always introduces a var
+        if fi == 1
+            (t1 isa ExprNewVar) || return (false, Vector{UInt8}[])       # 1st factor: both new
+            nv += 1                                                       # account arg1's var
+        else
+            (t1 isa ExprVarRef && Int(t1.idx) == prev) || return (false, Vector{UInt8}[])  # chain link
+        end
+        prev = nv; nv += 1                                               # arg2 introduces the next link var
+        push!(hps, buf[(Int(src.offset)+1):Int(fa[2].offset)])
+    end
+    (true, hps)
+end
+
+# Recursive depth-first streaming chain join: factor i>=2 indexed by its 1st arg; at each
+# depth bind the factor's atoms whose 1st arg == the prior factor's 2nd arg, recurse, and at
+# the leaf reconstruct the combined path + drive the unify/effect contract. Returns the count.
+function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
+        hps::Vector{Vector{UInt8}}, effect::Function,
+        bindings_scratch::Dict{ExprVar, ExprEnv},
+        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    k = length(sources)
+    kms = [Dict{Vector{UInt8}, Vector{Vector{UInt8}}}() for _ in 1:k]   # factor i>=2 keyed by 1st arg
+    f1 = Vector{Vector{UInt8}}()
+    for fi in 1:k
+        rz = read_zipper_at_path(btm, hps[fi])
+        while zipper_to_next_val!(rz)
+            args = collect(zipper_path(rz)); a1, _ = _split2(args); full = vcat(hps[fi], args)
+            fi == 1 ? push!(f1, full) : push!(get!(kms[fi], a1, Vector{Vector{UInt8}}()), full)
+        end
+    end
+    stack = Vector{Vector{UInt8}}(undef, k)
+    candidate = Ref(0)
+    # atoms are sourced from zipper_to_next_val! → always real stored values, so no value-gate.
+    function rec(depth::Int, joinkey::Vector{UInt8})::Bool
+        if depth > k
+            empty!(pairs_scratch)
+            for i in 1:k
+                push!(pairs_scratch, (sources[i], ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(stack[i]))))
+            end
+            empty!(bindings_scratch)
+            if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
+                candidate[] += 1
+                bindings_out = copy(bindings_scratch); empty!(bindings_scratch)
+                return effect(bindings_out, MORK.Expr(reduce(vcat, stack)))
+            end
+            return true
+        end
+        atoms = depth == 1 ? f1 : get(kms[depth], joinkey, _NO_ATOMS)
+        for atom in atoms
+            _, a2 = _split2(atom[(length(hps[depth])+1):end])
+            stack[depth] = atom
+            rec(depth + 1, a2) || return false
+        end
+        true
+    end
+    rec(1, UInt8[])
+    candidate[]
+end

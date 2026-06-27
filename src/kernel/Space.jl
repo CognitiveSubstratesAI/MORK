@@ -689,6 +689,11 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
         _bj_ok && return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
                                             effect, bindings_scratch, pairs_scratch)
+        # P3: strict k≥3 chain join (e.g. (edge $x $y)(edge $y $z)(edge $z $w)) via
+        # recursive streaming. Non-chain k≥3 shapes fall through to ProductZipper.
+        _ch_ok, _ch_hps = _classify_chain(sources)
+        _ch_ok && return _chain_join_emit!(btm, sources, _ch_hps, effect,
+                                           bindings_scratch, pairs_scratch)
     end
 
     candidate = 0
