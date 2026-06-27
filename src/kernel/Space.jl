@@ -685,6 +685,10 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _tj_ok, _tj_hps = _classify_empty_tail(sources)
         _tj_ok && return _trie_join_emit!(btm, sources, _tj_hps, effect,
                                           bindings_scratch, pairs_scratch)
+        # P2: general binary join (e.g. (edge $x $y)(edge $y $z)) via key-rotation.
+        _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
+        _bj_ok && return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
+                                            effect, bindings_scratch, pairs_scratch)
     end
 
     candidate = 0

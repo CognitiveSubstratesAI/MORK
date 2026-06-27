@@ -135,3 +135,100 @@ function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     end
     candidate
 end
+
+# =====================================================================
+# P2 — general binary join via key-rotation (additive fast path)
+# =====================================================================
+
+# Split a 2-argument region into its two sub-expression byte-spans (general: compound
+# args handled via expr_span, not just symbols).
+function _split2(argbytes::Vector{UInt8})::Tuple{Vector{UInt8}, Vector{UInt8}}
+    l1 = length(expr_span(MORK.Expr(argbytes), 1))
+    (argbytes[1:l1], argbytes[(l1+1):end])
+end
+
+# Classify a 2-factor binary join: each factor `(sym $a $b)` (arity-3, Symbol head, two
+# variable args) with EXACTLY ONE variable shared across the two factors (the join key),
+# the others distinct free tails. Resolves the shared var's arg-position in each factor
+# (NewVars numbered in factor order; VarRef.idx is the absolute var index). Returns
+# (matches, keypos1, keypos2, head_prefix1, head_prefix2). Validated ≡ space_query_multi.
+function _classify_binary_join(sources::Vector{ExprEnv})::Tuple{Bool, Int, Int, Vector{UInt8}, Vector{UInt8}}
+    fail = (false, 0, 0, UInt8[], UInt8[])
+    length(sources) == 2 || return fail
+    occ = Dict{Int, Vector{Tuple{Int,Int}}}(); nv = 0; hps = Vector{UInt8}[]
+    for (fi, src) in enumerate(sources)
+        fa = ExprEnv[]; ee_args!(src, fa)
+        length(fa) == 3 || return fail                                   # head + 2 args
+        buf = src.base.buf
+        (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return fail
+        for ap in 2:3
+            tag = byte_item(buf[Int(fa[ap].offset)+1])
+            vid = if tag isa ExprNewVar
+                      v = nv; nv += 1; v
+                  elseif tag isa ExprVarRef
+                      Int(tag.idx)
+                  else
+                      return fail                                        # arg not a variable
+                  end
+            push!(get!(occ, vid, Tuple{Int,Int}[]), (fi, ap - 1))
+        end
+        push!(hps, buf[(Int(src.offset)+1):Int(fa[2].offset)])
+    end
+    shared = Int[]
+    for (vid, os) in occ
+        length(Set(f for (f, _) in os)) == 2 && push!(shared, vid)
+    end
+    length(shared) == 1 || return fail                                   # exactly one join var
+    pos = Dict(f => p for (f, p) in occ[shared[1]])
+    (true, pos[1], pos[2], hps[1], hps[2])
+end
+
+# key-rotation index: shared-key encoding → list of full atom paths, for one factor.
+function _bin_keymap(btm::PathMap{UnitVal}, hp::Vector{UInt8}, keypos::Int)
+    m = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
+    rz = read_zipper_at_path(btm, hp)
+    while zipper_to_next_val!(rz)
+        args = collect(zipper_path(rz))
+        a1, a2 = _split2(args)
+        key = keypos == 1 ? a1 : a2
+        push!(get!(m, key, Vector{Vector{UInt8}}()), vcat(hp, args))
+    end
+    m
+end
+
+# Emit a binary join: re-key both factors by the shared var, then per common key emit the
+# tail-product, driving the SAME value-gate / unify / effect contract as the ProductZipper
+# tail (combined + bindings byte-identical). Returns the candidate count.
+function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
+        kp1::Int, kp2::Int, hp1::Vector{UInt8}, hp2::Vector{UInt8}, effect::Function,
+        bindings_scratch::Dict{ExprVar, ExprEnv},
+        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    m1 = _bin_keymap(btm, hp1, kp1)
+    m2 = _bin_keymap(btm, hp2, kp2)
+    candidate = 0
+    try
+        for (key, l1) in m1
+            haskey(m2, key) || continue
+            l2 = m2[key]
+            for f1 in l1, f2 in l2
+                # value-gate (atoms come from zipper_to_next_val! so are real — defensive parity)
+                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) && continue
+                empty!(pairs_scratch)
+                push!(pairs_scratch, (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1))))
+                push!(pairs_scratch, (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2))))
+                empty!(bindings_scratch)
+                if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
+                    candidate += 1
+                    bindings_out = copy(bindings_scratch)
+                    empty!(bindings_scratch)
+                    effect(bindings_out, MORK.Expr(vcat(f1, f2))) || throw(BreakQuery())
+                else
+                    empty!(bindings_scratch)
+                end
+            end
+        end
+    catch e
+        e isa BreakQuery || rethrow()
+    end
+    candidate
+end

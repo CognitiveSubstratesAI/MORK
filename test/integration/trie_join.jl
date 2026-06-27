@@ -64,3 +64,27 @@ end
         @test val_count(trie_join_unary(s.btm, [hp("r"), hp("q"), hp("p")])) == 40
     end
 end
+
+@testset "TrieJoin P2 — binary key-rotation join (vs hand-computed truth)" begin
+    # graph: 2-paths x→y→z over these edges.  via y=2: 1→{4,5}; via y=3: 1→{4} ⇒ 3 triples
+    s = new_space()
+    space_add_all_sexpr!(s, "(edge 1 2)\n(edge 1 3)\n(edge 2 4)\n(edge 3 4)\n(edge 2 5)\n")
+    pat = sexpr_to_expr("(, (edge \$x \$y) (edge \$y \$z))")
+    c = Ref(0); space_query_multi(s.btm, pat, (b, cc) -> (c[] += 1; true))
+    @test c[] == 3                                  # (1,2,4) (1,2,5) (1,3,4)
+
+    # exec derivation through the calculus → distinct (path2 x z)
+    space_add_all_sexpr!(s, "(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (path2 \$x \$z)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    p2 = sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(path2 ")])
+    @test p2 == ["(path2 1 4)", "(path2 1 5)"]
+
+    # different relation heads, shared middle var
+    s2 = new_space(); space_add_all_sexpr!(s2, "(a 1 2)\n(a 3 2)\n(b 2 9)\n")
+    c2 = Ref(0); space_query_multi(s2.btm, sexpr_to_expr("(, (a \$x \$y) (b \$y \$z))"), (b, cc) -> (c2[] += 1; true))
+    @test c2[] == 2                                 # (1,2,9) (3,2,9)
+
+    # NO shared variable ⇒ must fall through to ProductZipper (full product), not P2
+    c3 = Ref(0); space_query_multi(s2.btm, sexpr_to_expr("(, (a \$x \$y) (b \$z \$w))"), (b, cc) -> (c3[] += 1; true))
+    @test c3[] == 2                                 # 2 a-atoms × 1 b-atom
+end
