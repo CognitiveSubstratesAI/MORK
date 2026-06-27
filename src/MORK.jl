@@ -63,6 +63,12 @@ include("kernel/Main.jl")
 # Ports experiments/morkl_interpreter/src/{lib.rs,cf_iter.rs} (server branch).
 include("morkl/MorkL.jl")
 
+# ── TrieJoin (ADR-056 Lever A, P1) ────────────────────────────────────────────
+# Empty-tail conjunctive join via trie meet (pmeet) instead of naive ProductZipper.
+# Substrate primitive only — not yet wired into _space_query_multi_inner! (phase P1b).
+include("kernel/TrieJoin.jl")
+export trie_argset, trie_join_unary
+
 # ── DyckZipper (experiments/expr/dyck/) ──────────────────────────────────────
 
 # Compact bit-packed binary tree representation using Dyck words.

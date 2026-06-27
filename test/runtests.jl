@@ -4495,6 +4495,9 @@ const PM = PathMap.PathMap
     # result was wrong). Locks in 8f0d182 / 7908fbd / e59a16b.
     include("integration/mm2_corpus_differential.jl")
 
+    # ── ADR-056 Lever A / P1: empty-tail trie-join ≡ ProductZipper ────────────
+    include("integration/trie_join.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
