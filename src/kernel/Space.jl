@@ -703,6 +703,15 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _ch_ok, _ch_hps = _classify_chain(sources)
         _ch_ok && return _chain_join_emit!(btm, sources, _ch_hps, effect,
                                            bindings_scratch, pairs_scratch)
+        # P5: pipelined hash join for any CONNECTED k≥3 conjunction the chain rejects
+        # (e.g. going-wide (0 join) case/2 = k-way star + eval consumer). Defined in
+        # kernel/TrieJoin.jl. Bails to ProductZipper on a higher-order (var) key.
+        _cn_ok, _cn_ord, _cn_occ, _cn_lps = _classify_connected(sources)
+        if _cn_ok
+            _cnh, _cnc = _connected_join_emit!(btm, sources, _cn_ord, _cn_occ, _cn_lps,
+                                           effect, bindings_scratch, pairs_scratch)
+            _cnh && return _cnc
+        end
     end
 
     candidate = 0

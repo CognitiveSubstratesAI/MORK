@@ -241,3 +241,57 @@ end
     @test got == ref               # P2c bail ≡ ProductZipper
     _TRIE_JOIN_ENABLED[] = true
 end
+
+@testset "TrieJoin P5 — pipelined connected join (star + consumer, k≥3)" begin
+    # going-wide (0 join) case/2 shape: 3-way STAR on nested $a + eval consumer on ($b $c $d).
+    import MORK: _TRIE_JOIN_ENABLED, _classify_connected
+    QPAT = "(, ((join (\$a case/2)) \$b) ((join (\$a arg/0)) \$c) ((join (\$a arg/1)) \$d) (eval (\$b \$c \$d) -> \$e))"
+    function facts(N)
+        s = new_space(); io = IOBuffer()
+        for k in 1:N
+            print(io, "((join (c$k case/2)) b$k)\n((join (c$k arg/0)) x$k)\n")
+            print(io, "((join (c$k arg/1)) y$k)\n(eval (b$k x$k y$k) -> out$k)\n")
+        end
+        space_add_all_sexpr!(s, String(take!(io))); s
+    end
+    # classifier: connected, order covers all 4 factors
+    let pa = MORK.ExprEnv[]
+        MORK.ee_args!(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), sexpr_to_expr(QPAT)), pa)
+        (ok, ord, _, _) = _classify_connected(pa[2:end])
+        @test ok && sort(ord) == [1, 2, 3, 4]
+    end
+    # equivalence vs forced ProductZipper (small N so the 4-factor product is cheap)
+    outs(s) = (space_add_all_sexpr!(s, "(exec 0 $QPAT (, (res \$a \$e)))\n");
+               space_metta_calculus!(s, 1_000_000);
+               Set(m.match for m in eachmatch(r"\(res [^\n]*\)", space_dump_all_sexpr(s))))
+    for N in (1, 3)
+        _TRIE_JOIN_ENABLED[] = false; ref = outs(facts(N))
+        _TRIE_JOIN_ENABLED[] = true;  got = outs(facts(N))
+        @test length(got) == N && got == ref
+    end
+    _TRIE_JOIN_ENABLED[] = true
+end
+
+@testset "TrieJoin P5 — disconnected + higher-order conjunctions bail correctly" begin
+    import MORK: _TRIE_JOIN_ENABLED
+    # disconnected k=3 (no shared var): inherent Cartesian product; P5 bails ≡ ProductZipper
+    s = new_space()
+    space_add_all_sexpr!(s, "(a 1)\n(a 2)\n(b 7)\n(c 9)\n")
+    cnt = Ref(0)
+    space_query_multi(s.btm, sexpr_to_expr("(, (a \$x) (b \$y) (c \$z))"), (bnd, cc) -> (cnt[] += 1; true))
+    @test cnt[] == 2   # 2×1×1 product, all enumerated (bail to ProductZipper)
+
+    # higher-order: a stored rule with a var at a join-key position ⇒ bail, result ≡ ProductZipper
+    prog = raw"""
+    (rule $k (lhs $k) (rhs $k))
+    (fact 5)
+    (seed 5)
+    (exec 0 (, (fact $k) (seed $k) (rule $k $l $r)) (, (fired $k $l $r)))
+    """
+    go() = (t = new_space(); space_add_all_sexpr!(t, prog); space_metta_calculus!(t, 10);
+            Set(x for x in split(space_dump_all_sexpr(t), '\n') if occursin("fired", x)))
+    _TRIE_JOIN_ENABLED[] = false; ref = go()
+    _TRIE_JOIN_ENABLED[] = true;  got = go()
+    @test got == ref
+    _TRIE_JOIN_ENABLED[] = true
+end

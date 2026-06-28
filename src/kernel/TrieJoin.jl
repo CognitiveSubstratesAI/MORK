@@ -498,6 +498,149 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
 end
 
 # =====================================================================
+# P5 — pipelined multi-way hash join for CONNECTED conjunctions (k≥3)
+# =====================================================================
+#
+# Generalizes P2/P2c/P3 to any CONNECTED k≥3 conjunction the chain classifier
+# rejects — notably the going-wide (0 join) case/2 query, a k-way STAR on a nested
+# hub var plus a consumer factor on the produced vars:
+#   (, ((join ($a case/2)) $b) ((join ($a arg/0)) $c) ((join ($a arg/1)) $d)
+#      (eval ($b $c $d) -> $e))
+# Instead of the naive ProductZipper N^k cross-product, we pick a connected join
+# order and pipeline: each factor is hash-indexed by the values of the variables it
+# shares with the already-bound set (multi-key, nested positions via P2c machinery),
+# extending partial tuples. The streaming-native conjunction decomposition the ADR
+# describes; blessed-faithful to Zippy (iterate + restrict), NOT a port of upstream
+# MORK query_multi (naive Cartesian). Soundness: keying is valid only over GROUND
+# data, so if any stored atom carries a VARIABLE at a join position the whole path
+# BAILS to ProductZipper before any effect fires.
+
+# Greedily order factors so each (after the first) shares ≥1 var with the running
+# bound-var set. Returns (matches, order, occ_per_source, lp_per_source). Disconnected
+# conjunctions (an independent factor) are rejected → ProductZipper.
+function _classify_connected(sources::Vector{ExprEnv})
+    fail = (false, Int[], Dict{Int,Vector{Int}}[], Vector{UInt8}[])
+    k = length(sources)
+    k >= 3 || return fail
+    occ = Dict{Int,Vector{Int}}[]; lps = Vector{UInt8}[]
+    for src in sources
+        (o, lp) = _scan_factor_vars(src)
+        isempty(o) && return fail                 # a ground factor can't join — bail
+        push!(occ, o); push!(lps, lp)
+    end
+    order = [1]; bound = Set{Int}(keys(occ[1]))
+    used = falses(k); used[1] = true
+    for _ in 2:k
+        nxt = 0
+        for j in 1:k
+            used[j] && continue
+            isempty(intersect(keys(occ[j]), bound)) && continue
+            nxt = j; break
+        end
+        nxt == 0 && return fail                   # disconnected component
+        used[nxt] = true; push!(order, nxt); union!(bound, keys(occ[nxt]))
+    end
+    (true, order, occ, lps)
+end
+
+# Extract every var's value-bytes from one atom (keyed by absolute var id). Returns
+# nothing on structural mismatch, or :hov if any value carries a variable (higher-order
+# stored atom → caller must bail to ProductZipper).
+function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int,Vector{Int}})
+    d = Dict{Int,Vector{UInt8}}()
+    for (vid, path) in occ
+        v = _navigate_path(atom, path)
+        v === nothing && return nothing
+        _expr_has_var(v) && return :hov
+        d[vid] = v
+    end
+    d
+end
+
+# Multi-key: concatenate the (sorted) shared vars' bound values into one Dict key.
+_join_key(vals::Dict{Int,Vector{UInt8}}, shared::Vector{Int}) = begin
+    out = UInt8[]; for v in shared; append!(out, vals[v]); end; out
+end
+
+# Pipelined hash join. Returns (handled, count); handled=false ⇒ a higher-order key was
+# found and NO effect fired ⇒ caller falls through to ProductZipper.
+function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
+        order::Vector{Int}, occ::Vector{Dict{Int,Vector{Int}}}, lps::Vector{Vector{UInt8}},
+        effect::Function, bindings_scratch::Dict{ExprVar, ExprEnv},
+        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
+    k = length(sources)
+    # Load + index each factor's atoms once; bail on any higher-order (var-bearing) atom.
+    atoms = Vector{Vector{Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}}}(undef, k)
+    for fi in 1:k
+        lst = Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}[]
+        rz = read_zipper_at_path(btm, lps[fi])
+        while zipper_to_next_val!(rz)
+            full = vcat(lps[fi], collect(zipper_path(rz)))
+            vv = _atom_varvals(full, occ[fi])
+            vv === nothing && continue            # structural non-match → not in this relation
+            vv === :hov && return (false, 0)      # higher-order key → bail
+            push!(lst, (full, vv::Dict{Int,Vector{UInt8}}))
+        end
+        atoms[fi] = lst
+    end
+
+    # Pipeline. A partial tuple = (slot atoms by SOURCE index, merged bound values).
+    f0 = order[1]
+    tuples = Tuple{Vector{Union{Nothing,Vector{UInt8}}}, Dict{Int,Vector{UInt8}}}[]
+    for (a, vv) in atoms[f0]
+        slot = Vector{Union{Nothing,Vector{UInt8}}}(nothing, k); slot[f0] = a
+        push!(tuples, (slot, copy(vv)))
+    end
+    boundvars = Set{Int}(keys(occ[f0]))
+    for step in 2:k
+        fi = order[step]
+        shared = sort(collect(intersect(keys(occ[fi]), boundvars)))
+        idx = Dict{Vector{UInt8}, Vector{Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}}}()
+        for t in atoms[fi]
+            push!(get!(idx, _join_key(t[2], shared), valtype(idx)()), t)
+        end
+        nxt = Tuple{Vector{Union{Nothing,Vector{UInt8}}}, Dict{Int,Vector{UInt8}}}[]
+        for (slot, bnd) in tuples
+            cands = get(idx, _join_key(bnd, shared), nothing)
+            cands === nothing && continue
+            for (a, vv) in cands
+                ns = copy(slot); ns[fi] = a
+                nb = copy(bnd); for (vid, val) in vv; nb[vid] = val; end
+                push!(nxt, (ns, nb))
+            end
+        end
+        tuples = nxt
+        union!(boundvars, keys(occ[fi]))
+        isempty(tuples) && break
+    end
+
+    candidate = 0
+    try
+        for (slot, _) in tuples
+            any(s -> s === nothing, slot) && continue
+            empty!(pairs_scratch); ok = true
+            for i in 1:k
+                get_val_at(btm, slot[i]) === nothing && (ok = false; break)   # value gate
+                push!(pairs_scratch, (sources[i], ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(slot[i]))))
+            end
+            ok || continue
+            empty!(bindings_scratch)
+            if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
+                candidate += 1
+                bindings_out = copy(bindings_scratch); empty!(bindings_scratch)
+                combined = UInt8[]; for i in 1:k; append!(combined, slot[i]); end   # SOURCE order
+                effect(bindings_out, MORK.Expr(combined)) || throw(BreakQuery())
+            else
+                empty!(bindings_scratch)
+            end
+        end
+    catch e
+        e isa BreakQuery || rethrow()
+    end
+    (true, candidate)
+end
+
+# =====================================================================
 # P4-B — projection pushdown via composition (chain + endpoint projection)
 # =====================================================================
 # For a set-sink exec whose pattern is a strict chain and whose template(s) reference ONLY
