@@ -1052,17 +1052,15 @@ end
 """
     space_query_coref(btm, pat_expr, pat_v, effect) → Int
 
-DFS coreferential query — mirrors `query_multi_raw` in space.rs.
+Coreferential query.
 
-For all N sources: uses `_coreferential_transition!` DFS on a ProductZipper.
-The DFS tracks variable bindings during product-trie traversal, pruning
-inconsistent branches.  At each leaf, runs unification to produce bindings.
+- **Single source**: `_coreferential_transition!` DFS on a `ReadZipperCore`.
+- **Multi-source**: DELEGATES to `space_query_multi` (the correct ProductZipper path).
+  The native multi-source DFS port was buggy (missed matches; not stack-safe) and had
+  no callers, so it was retired 2026-06-28. See ADR-056 "Deviation from upstream".
 
-This is more efficient than ProductZipper + post-filter when variables are
-shared across sources (e.g. `(edge \$x \$y)(edge \$y \$z)` — binding `\$y`
-from source 1 constrains which paths source 2 explores).
-
-Mirrors `query_multi_raw` DFS path (space.rs:1207–1270).
+NOTE: `effect` here takes a single argument. For multi-source it receives the matched
+`combined` Expr (bridged from `space_query_multi`'s `(bindings, combined)` contract).
 """
 function space_query_coref(btm::PathMap{UnitVal},
     pat_expr::MORK.Expr,
@@ -1097,55 +1095,19 @@ function space_query_coref(btm::PathMap{UnitVal},
         return count[]
     end
 
-    # Multi-source: ProductZipper DFS — mirrors query_multi_raw(prz, sources, f)
-    # Build ProductZipper: primary = btm, secondaries = (n_src-1) copies of btm
-    primary = read_zipper_at_path(btm, UInt8[])
-    secondaries = [read_zipper_at_path(btm, UInt8[]) for _ in 2:n_src]
-    prz = ProductZipper(primary, secondaries)
-
-    # Stack: sources in reverse (LIFO — first source on top)
-    stack = reverse(collect(sources))
-    references = Int[]
-    count = Ref(0)
-    pairs_scratch = Tuple{ExprEnv, ExprEnv}[]
-    bindings_scratch = Dict{ExprVar, ExprEnv}()
-
-    _coreferential_transition!(
-        prz,
-        stack,
-        references,
-        function (loc)
-            # Reconstruct source expressions from the combined path + factor boundaries
-            combined = collect(pz_path(loc))
-            fps = loc.factor_paths   # path-length boundaries between factors
-
-            empty!(pairs_scratch)
-            boundaries = vcat(0, fps, length(combined))
-            for (k, src) in enumerate(sources)
-                lo = boundaries[k] + 1
-                hi = boundaries[k + 1]
-                (lo > hi || lo > length(combined)) && break
-                expr = MORK.Expr(combined[lo:hi])
-                push!(pairs_scratch, (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), expr)))
-            end
-
-            length(pairs_scratch) < n_src && return nothing   # incomplete match
-
-            result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
-            if result === true
-                count[] += 1
-                # SP-2 fix (audit 2026-06-04): removed a dead `bindings_out = copy(...)`
-                # per match — the coref effect contract is `effect(loc)` (it takes the
-                # zipper, not bindings), so the copy was pure per-match allocation waste.
-                empty!(bindings_scratch)
-                effect(loc)
-            else
-                empty!(bindings_scratch)
-            end
-        end
-    )
-
-    count[]
+    # Multi-source: the coreferential DFS port (`_coreferential_transition!` over a
+    # ProductZipper) is BUGGY — it MISSES matches (e.g. returns 0 for a 4-factor
+    # conjunction the ProductZipper matches; verified 2026-06-28) and is not stack-safe
+    # (recursive; overflows on deep data). It was never wired in production (ZERO callers
+    # in the workspace) and was never validated for multi-source. Delegate to the correct
+    # ProductZipper-based `space_query_multi` (matching this function's test name
+    # "multi-source falls back to ProductZipper"). See ADR-056 "Deviation from upstream".
+    #
+    # Contract bridge: `space_query_multi`'s effect is `(bindings, combined)`, whereas the
+    # coref effect contract is `effect(loc)`. We pass the matched `combined` Expr to the
+    # single-arg effect. No production caller depends on the old `loc`-based contract.
+    return space_query_multi(btm, pat_expr, pat_v,
+        (_bindings, combined) -> (effect(combined); true))
 end
 
 space_query_coref(btm::PathMap{UnitVal}, pat::MORK.Expr, f::Function) =
