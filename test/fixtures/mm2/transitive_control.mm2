@@ -1,0 +1,8 @@
+;; Green control: bounded transitive closure (from canonical_benchmarks.jl).
+;; A multi-step calculus both engines saturate identically — proves the harness
+;; PASSES a healthy recursive workload (isolates lte_selfspawn's (-)-retirement as the trigger).
+(edge a b)
+(edge b c)
+(edge c d)
+(edge d e)
+(exec 0 (, (edge $x $y) (edge $y $z)) (, (edge $x $z)))

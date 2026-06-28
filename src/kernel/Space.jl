@@ -751,72 +751,78 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         ProductZipper(btm, prefix, n_factors - 1)
     end
 
-    try
-        while pz_to_next_val!(prz)
-            pz_focus_factor(prz) != pz_factor_count(prz) - 1 && continue
-
-            # The ProductZipper encodes ALL factor paths in ONE combined path
-            # via pz.z (the primary zipper). factor_paths[i] marks the byte
-            # boundary where factor i ends / factor i+1 begins.
-            #
-            # For k sources: factor_paths has k-1 entries.
-            #   source 1 expression: combined[1 : factor_paths[1]]
-            #   source i expression: combined[factor_paths[i-1]+1 : factor_paths[i]]
-            #   last source:         combined[factor_paths[end]+1 : end]
-            # For single source: factor_paths is empty, use full path.
-            combined = collect(pz_path(prz))
-            fps = prz.factor_paths   # path-length boundaries, 1-based
-
-            empty!(pairs_scratch)
-            # Slice the combined path for each source
-            boundaries = vcat(0, fps, length(combined))
-            all_valued = true
-            for (k, src) in enumerate(sources)
-                lo = boundaries[k] + 1
-                hi = boundaries[k + 1]
-                (lo > hi || lo > length(combined)) && break
-                subpath = combined[lo:hi]
-                # Value gate: the matched factor must be a REAL stored atom (a value
-                # at its path), not a dangling path-node left behind by a non-pruning
-                # remove_val_at! (e.g. RemoveSink / the `-` O-sink). The ProductZipper
-                # can land on such a valueless path; without this check a removed atom
-                # keeps matching, and Control_08_Halts_on_fail never terminates. This
-                # restores the value-presence invariant upstream's path_exists()-gated
-                # query_multi relies on. See experiments/mm2_programs.
-                lookup = isempty(prefix) ? subpath : vcat(prefix, subpath)
-                if get_val_at(btm, lookup) === nothing
-                    all_valued = false
-                    break
-                end
-                expr = MORK.Expr(subpath)
-                push!(pairs_scratch,
-                    (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), expr)))
+    # Per-complete-match processing shared by BOTH drivers. The ProductZipper encodes
+    # all factor paths in ONE combined path; factor_paths marks the byte boundary where
+    # factor i ends / i+1 begins. Slice per source, value-gate (the matched factor must
+    # be a REAL stored atom — not a dangling node left by a non-pruning remove_val_at!,
+    # which restores the value-presence invariant upstream's path_exists() gate relies on),
+    # unify, and dispatch to `effect`. Returns false ⇒ early-terminate.
+    process_combined = function (combined::Vector{UInt8}, fps)
+        empty!(pairs_scratch)
+        boundaries = vcat(0, fps, length(combined))
+        all_valued = true
+        for (k, src) in enumerate(sources)
+            lo = boundaries[k] + 1
+            hi = boundaries[k + 1]
+            (lo > hi || lo > length(combined)) && break
+            subpath = combined[lo:hi]
+            lookup = isempty(prefix) ? subpath : vcat(prefix, subpath)
+            if get_val_at(btm, lookup) === nothing
+                all_valued = false
+                break
             end
+            expr = MORK.Expr(subpath)
+            push!(pairs_scratch, (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), expr)))
+        end
+        if !all_valued || length(pairs_scratch) < length(sources)
+            empty!(bindings_scratch)
+            return true
+        end
+        result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
+        if result === true
+            candidate += 1
+            bindings_out = copy(bindings_scratch)   # fresh Dict (effect may retain it)
+            empty!(bindings_scratch)
+            return effect(bindings_out, MORK.Expr(combined))
+        else
+            empty!(bindings_scratch)
+            return true
+        end
+    end
 
-            # Skip spurious enrollment-only yields (secondary path empty) or a match
-            # that touched a value-removed dangling path.
-            if !all_valued || length(pairs_scratch) < length(sources)
-                empty!(bindings_scratch)
-                continue
-            end
-
-            # Unify into scratch Dict (zero alloc on failure)
-            result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
-            if result === true
-                candidate += 1
-                # Copy scratch → fresh Dict before yielding to user (Option A).
-                # This preserves the public contract: effect may retain bindings.
-                bindings_out = copy(bindings_scratch)
-                empty!(bindings_scratch)
-                if !effect(bindings_out, MORK.Expr(combined))
-                    throw(BreakQuery())
-                end
-            else
-                empty!(bindings_scratch)   # failed — clear for next attempt
+    if _USE_COREF_JOIN[]
+        # Coreferential DFS over the ProductZipper — upstream's DEFAULT query_multi_raw
+        # path: prunes inconsistent branches structurally (binds higher-order vars in
+        # O(depth), not by enumerating the subtrie) instead of the full Cartesian product.
+        # stack = all sources reversed (LIFO pop → in-order); references tracks De Bruijn binds.
+        cstack = collect(reverse(sources))
+        crefs = Int[]
+        _coref_work = function ()
+            try
+                _coreferential_transition!(prz, cstack, crefs, function (loc)
+                    process_combined(collect(pz_path(loc)), loc.factor_paths) || throw(BreakQuery())
+                    nothing
+                end)
+            catch e
+                e isa BreakQuery || rethrow()
             end
         end
-    catch e
-        e isa BreakQuery || rethrow()
+        # Large-stack task so deep (backward-chaining) recursion doesn't overflow. sticky=true
+        # keeps it on the current thread (no cross-thread zipper access). fetch propagates errors.
+        _t = Task(_coref_work, _COREF_STACK_SIZE)
+        _t.sticky = true
+        schedule(_t)
+        fetch(_t)
+    else
+        # Naive ProductZipper enumeration (the `#[cfg(feature="no_search")]` path).
+        try
+            while pz_to_next_val!(prz)
+                pz_focus_factor(prz) != pz_factor_count(prz) - 1 && continue
+                process_combined(collect(pz_path(prz)), prz.factor_paths) || throw(BreakQuery())
+            end
+        catch e
+            e isa BreakQuery || rethrow()
+        end
     end
 
     candidate
@@ -930,8 +936,19 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
     tag = byte_item(e_byte)
 
     if tag isa ExprNewVar
+        # Faithful port: index `references` by the variable's De Bruijn index (e.v), with a
+        # -1 "unbound" sentinel (upstream u32::MAX), saving/restoring the prior value on exit.
+        # The earlier push!/pop! stack only coincided with e.v for in-order patterns; complex
+        # many-var higher-order patterns (bc proofs) need true indexing.
+        _nv_idx = -1
+        _nv_prev = -1
         if e.n == 0
-            push!(references, length(_coref_path(loc)))
+            _nv_idx = Int(e.v)
+            while length(references) <= _nv_idx
+                push!(references, -1)
+            end
+            _nv_prev = references[_nv_idx + 1]
+            references[_nv_idx + 1] = length(_coref_path(loc))
         end
 
         m_vars = _var_children(loc)
@@ -973,20 +990,15 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
             _coref_ascend_byte!(loc)
         end
 
-        e.n == 0 && pop!(references)
+        _nv_idx >= 0 && (references[_nv_idx + 1] = _nv_prev)
 
     elseif tag isa ExprVarRef
         i = Int(tag.idx)   # 0-based De Bruijn index (kept raw; `references` access shifts +1)
-        # Upstream HEAD = the REVERT of e551924 (`4807e2f`, kernel/src/space.rs:166-188):
-        # NO typemax sentinel guard. An out-of-range coreference (the referenced var is
-        # not yet bound on this path) ABORTS this branch via a bounds-check early-return;
-        # an in-range one (e.n==0) resolves to the recorded path offset. `references`
-        # holds only real 0-based path offsets (push on entering a NewVar, pop on exit).
-        if e.n == 0 && i >= length(references)
-            push!(stack, e)        # restore the popped element, then abandon this branch
-            return
-        end
-        new_ee = if e.n == 0
+        # Faithful port (upstream space.rs:166-188): a back-ref is BOUND iff its index is in
+        # range AND not the -1 sentinel — then it resolves to the recorded path offset. An
+        # UNBOUND back-ref (sentinel / out of range) is NOT an abort; it matches anything
+        # (a fresh NewVar 'any'), exactly as upstream falls to the `else` branch.
+        new_ee = if e.n == 0 && i < length(references) && references[i + 1] != -1
             ref_off = references[i + 1]
             path = _coref_path(loc)
             resolved_buf = Vector{UInt8}(path[(ref_off + 1):end])
@@ -1021,9 +1033,16 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
         if _coref_descend_to_existing_byte!(loc, e_byte)
             sym_bytes = e.base.buf[(Int(e.offset) + 2):(Int(e.offset) + 1 + size)]
             if _coref_descend_to_check!(loc, sym_bytes)
+                # check SUCCEEDED → descended 1 (sym byte) + size (payload); undo both.
                 _coreferential_transition!(loc, stack, references, f)
+                _coref_ascend!(loc, size + 1)
+            else
+                # check FAILED → pz_descend_to_check! restored its own partial descent,
+                # so only the 1 sym byte remains descended. Ascending size+1 here would
+                # OVER-ascend by `size`, corrupting the caller's k-path cursor (drops
+                # coreference matches in 3+ factor joins). Undo only the 1 byte.
+                _coref_ascend_byte!(loc)
             end
-            _coref_ascend!(loc, size + 1)
         end
 
     elseif tag isa ExprArity
@@ -1683,6 +1702,17 @@ Mirrors `metta_calculus_impl` in space.rs (server branch):
 Returns steps executed.
 """
 const _METTA_CALCULUS_MAX_RETRIES = 2000
+
+# Multi-source join driver toggle. false (default) = naive ProductZipper enumeration
+# (O(K^N), upstream's `no_search` path). true = coreferential DFS over the ProductZipper
+# (O(M*depth), upstream's DEFAULT `query_multi_raw` path — prunes inconsistent branches;
+# the fix for the higher-order-factor explosion). Re-instates the path retired in 80c3d56.
+const _USE_COREF_JOIN = Ref(false)
+# The coreferential DFS recurses to trie/proof depth; backward-chaining proofs overflow
+# Julia's default ~handler-task stack (its frames are large). Run it on a task with a
+# generous reserved stack (mirrors the large fixed C stack upstream's recursive
+# coreferential_transition relies on). Reserved virtual memory; committed on use.
+const _COREF_STACK_SIZE = 512 * 1024 * 1024
 
 function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
     done = 0

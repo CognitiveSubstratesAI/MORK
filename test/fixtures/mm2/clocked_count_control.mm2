@@ -1,0 +1,7 @@
+;; Green control: self-respawning exec (Peano counter) WITHOUT O-sink (-) front
+;; retirement. Both upstream and ours halt — proves basic self-respawn works; isolates
+;; the (-)-retirement + multi-exec-template shape as the regression trigger.
+(reg Z)
+(exec (clocked Z)
+      (, (reg $n) (exec (clocked $ts) $p $t))
+      (, (reg (S $n))))

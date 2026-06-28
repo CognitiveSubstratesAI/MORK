@@ -70,3 +70,4 @@ server.log
 server.pid
 docs/build/
 docs/Manifest.toml
+examples/bfc/.rust_run/

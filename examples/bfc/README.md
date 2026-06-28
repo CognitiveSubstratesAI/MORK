@@ -1,0 +1,154 @@
+<!--
+  Vendored from ngeiswei/chaining @ df76a05 (branch mork-bfc),
+  experimental/backward-via-forward/. Nil Geisweiller's backward-chaining-
+  via-forward-chaining (BFC) experiment — a real Hyperon MM2 proof-search
+  workload built on multi-source relational joins (the trie-join's target shape).
+
+  Layout here (reorganized from the flat upstream dir):
+    bfc-xp.mm2 · gen-fromNumber.mm2 · gen-lte.mm2  — runnable MM2 workload (this MORK)
+    reference/                                      — PeTTa MeTTa version + benchmark + plots
+
+  Run order on MORK (gen tables first, they write .act files bfc-xp loads):
+    1. gen-fromNumber.mm2   2. gen-lte.mm2   3. bfc-xp.mm2
+  Required grounded ops (present in src/kernel/Pure.jl): i8_from_string, i8_to_string, sum_i8.
+-->
+
+# Emulating Backward Chaining via Forward Chaining
+
+## Overview
+
+Forward chaining starts from a truth to produce more truth.  Backward
+chainging on the other hand starts from a hypothesis to produce more
+hypotheses (and possibly turns them into truths if reaches axioms).
+
+There is actually a way to reconsile both approaches.
+
+It is been already known that backward chaining can emulate forward
+chainging by formulating the query `(: (. $x AXIOM) $a)` where `AXIOM`
+is the name of the axiom to start forward chaining from.  Since the
+proof is constrained to start from a given axiom and the theorem,
+`$a`, is completely unconstrained, the backward chainer will have no
+other option than producing proofs starting from the given axiom, that
+is going forward.
+
+It turns out one can also emulate backward chaining with forward
+chaining.  It is a bit more complicated than just formulating the
+right query.  First, inference rules have to be inverted, using here
+the blackbird combinator:
+
+```
+(: .: (-> (-> $c $d)
+          (-> (-> $a (-> $b $c))
+              (-> $a
+                  (-> $b
+                      $d)))))
+```
+
+For instance applying the backbird to modus ponens
+
+```
+(: mp (-> (→ $a $b)
+          (-> $a
+              $b)))
+```
+
+produces
+
+```
+(: mpⁱ (-> (-> $b $c)
+           (-> (→ $a $b)
+               (-> $a
+                   $c))))
+```
+
+Note how the conclusion, `$c`, is preserved in the input and the
+output of rule, this is what allows to emulate backward expansion
+while going forward.
+
+Second, the target query `(: $x THEOREM)` must be turn into a source
+query provided to the forward chainer, as follows:
+
+`(: $x (-> THEOREM THEOREM))`
+
+Then the forward chainer will have the effect of either expanding
+backward using `mpⁱ` or eliminating hypotheses using the axioms and
+will eventually reach `(: PROOF THEOREM)` if such proof exists.
+
+## Experiments
+
+To establish a fair comparison, it is important that both the backward
+chainer and the forward chainer emulating backward chaining explore
+exactly the same spaces, or rather isomorphic spaces.  To do that the
+following changes must be operated:
+
+1. The backward chainer must set a limit on the size of the proof
+   rather than its depth.  This is actually a very good change because
+   the size of search space grows super exponentially with the maximum
+   depth of the proof, while it grows at most exponentially with the
+   maximum size of the proof.  This provides a finer parameter to
+   control the size of the search space and can dramatically speed up
+   the search.
+2. Due to the way the forward chainer emulates backward chaining, the
+   forward chainer can keep the maximum depth as control parameter but
+   must add an extra pruning parameter based on the number of
+   hypotheses currently expanded.  If that number is greater than the
+   depth (or the size, as they are the same) of the proof, then such
+   proof will never reach the target because it not have possibility
+   to eliminate all hypotheses.  This condition is crutial and allows
+   to speed up the forward chainer many fold, to reach near parity
+   with the backward chainer it is trying to emulate.
+
+### Comparing Emulated vs Regular Backward Chaining in MeTTa
+
+We begin our comparison in MeTTa only, to hopefully measure the
+overhead of emulating backward chaining using forward chaining and
+nothing else.  Once this has been establish we will move to a MORK
+implementation, but for now we remain inside MeTTa using PeTTa as
+back-end.
+
+The code can be found in [bfc-xp.metta](reference/bfc-xp.metta).  The main two
+chainer implementations being compared are `obfc` which stands for
+Optimized Backward via Forward Chainer, and `obc` which stands for
+Optimized Backward Chainer.  Benchmarks of two types are conducted:
+
+1. Over four exhaustive enumerations (all theorems and their proofs up
+   to a certain size) of proof sizes, 11, 13, 15 and 17 respectively.
+1. Over three theorems selected from the Metamath corpus with varying
+   proof sizes, 15, 19 and 26 respectively.
+
+The data obtained from these experiments have been compiled in
+[regular-vs-emulated-petta-benchmark.csv](reference/regular-vs-emulated-petta-benchmark.csv)
+and are plotted below.
+
+![Regular vs Emulated for Exhaustive Enumeration](reference/plots/regular-vs-emulated-bc-all.png)
+![Regular vs Emulated for Exhaustive Enumeration (Ratio)](reference/plots/regular-vs-emulated-bc-all-ratio.png)
+
+As indicated in the figure above the slowdown incurred by the
+emulation for exhaustive enumeration of proofs and theorems ranges
+from a bit over 1.05x to a bit under 1.4x.
+
+![Regular vs Emulated for a Selection of Theorems](reference/plots/regular-vs-emulated-bc-some.png)
+
+![Regular vs Emulated for a Selection of Theorems (Ratio)](reference/plots/regular-vs-emulated-bc-some-ratio.png)
+
+As indicated in the figure above the slowdown incurred by the
+emulation for a selection of theorems ranges from a bit over 1.4x to a
+bit under 2x.  The factor seems to increase with the size of the
+proof.  It is unclear however if the factor converges to a limit as
+the size increases, or diverges to infinity.  Either way, we do not
+see the trend as problematic because the sizes considered are already
+quite high, 26, and even if it diverges it seems to be in a
+logarithmic fashion.  In other words, the forward emulation of
+backward chaining looks like it could be a competitive approach,
+especially for rewriting systems like MORK, which we will study next.
+
+### Comparing MORK Backward Emulation vs Regular MeTTa Backward Chaining
+
+For comparing regular MeTTa backward chaining with MORK forward
+chaining emulation, see [bfc-xp.mm2](bfc-xp.mm2).  Do not forget to
+run [gen-fromNumber.mm2](gen-fromNumber.mm2) and
+[gen-lte.mm2](gen-lte.mm2) (in this order) before, to generate tables
+used by [bfc-xp.mm2](bfc-xp.mm2).  So far the results are
+disappointingly slow but much work remains to optimize the MORK
+emulation, such as using integers instead of naturals, and likely much
+more.

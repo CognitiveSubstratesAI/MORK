@@ -1,0 +1,51 @@
+;; Self-contained lte-generation fixture (bound 6), derived from Nil Geisweiller's
+;; gen-lte.mm2 (ngeiswei/chaining@mork-bfc). fromNumber facts inlined; ACT load/store
+;; dropped — the recursion-termination behaviour lives entirely in the lte-generation
+;; rules (self-respawning exec + O-sink `(-)` front retirement).
+;;
+;; ORACLE (upstream `target/release/mork run --timing`): halts at 60 steps.
+;; Our MORK currently does NOT halt (exec-resurrection regression, Space.jl _pat_overlaps_exec_prefix
+;; / pjoin path). This fixture is the regression detector — see workflows/mm2_xcheck.sh.
+
+(= (fromNumber 0) Z)
+(= (fromNumber 1) (S Z))
+(= (fromNumber 2) (S (S Z)))
+(= (fromNumber 3) (S (S (S Z))))
+(= (fromNumber 4) (S (S (S (S Z)))))
+(= (fromNumber 5) (S (S (S (S (S Z))))))
+(= (fromNumber 6) (S (S (S (S (S (S Z)))))))
+
+(NumBound 6)
+
+(exec Init
+      (, (NumBound $n)
+         (= (fromNumber $n) $b))
+      (, (: Z BndNat)
+         (exec (0 $b)
+               (, (: $k BndNat)
+                  (exec (0 (S $l)) $pat $tmp))
+               (, (: (S $k) BndNat)
+                  (exec (0 $l) $pat $tmp)))
+         (cf1 (lte Z Z))
+         (cf2 (lte Z Z))
+         (lte Z Z)
+         (exec (1 $b $b t)
+               (, (cf1 (lte $x $y))
+                  (: (S $x) BndNat)
+                  (: (S $y) BndNat)
+                  (exec (1 (S $k) (S $l) t) $pat $tmp))
+               (O (+ (lte (S $x) (S $y)))
+                  (+ (cf1 (lte (S $x) (S $y))))
+                  (+ (cf2 (lte (S $x) (S $y))))
+                  (+ (exec (1 $k $l t) $pat $tmp))
+                  (- (cf1 (lte $x $y)))))
+         (exec (1 $b $b t)
+               (, (cf2 (lte $x $y))
+                  (: $x BndNat)
+                  (: (S $y) BndNat)
+                  (exec (1 $k (S $l) t) $pat $tmp))
+               (O (+ (lte $x (S $y)))
+                  (+ (cf1 (lte $x (S $y))))
+                  (+ (cf2 (lte $x (S $y))))
+                  (+ (exec (1 $k $l t) $pat $tmp))
+                  (- (cf2 (lte $x $y)))))))
