@@ -261,18 +261,22 @@ function _classify_chain(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UI
     hps = Vector{UInt8}[]; nv = 0; prev = -1
     for (fi, src) in enumerate(sources)
         fa = ExprEnv[]; ee_args!(src, fa)
-        length(fa) == 3 || return (false, Vector{UInt8}[])               # head + 2 args
+        length(fa) >= 3 || return (false, Vector{UInt8}[])               # head + ≥2 args
         buf = src.base.buf
         (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return (false, Vector{UInt8}[])
         t1 = byte_item(buf[Int(fa[2].offset)+1]); t2 = byte_item(buf[Int(fa[3].offset)+1])
-        (t2 isa ExprNewVar) || return (false, Vector{UInt8}[])           # 2nd arg always introduces a var
+        (t2 isa ExprNewVar) || return (false, Vector{UInt8}[])           # arg2 (out-link) introduces a var
         if fi == 1
-            (t1 isa ExprNewVar) || return (false, Vector{UInt8}[])       # 1st factor: both new
+            (t1 isa ExprNewVar) || return (false, Vector{UInt8}[])       # 1st factor: arg1 also new
             nv += 1                                                       # account arg1's var
         else
-            (t1 isa ExprVarRef && Int(t1.idx) == prev) || return (false, Vector{UInt8}[])  # chain link
+            (t1 isa ExprVarRef && Int(t1.idx) == prev) || return (false, Vector{UInt8}[])  # chain link arg1↔prev arg2
         end
         prev = nv; nv += 1                                               # arg2 introduces the next link var
+        for ap in 4:length(fa)                                          # arity-N tails (pos ≥3): fresh NewVars
+            (byte_item(buf[Int(fa[ap].offset)+1]) isa ExprNewVar) || return (false, Vector{UInt8}[])
+            nv += 1
+        end
         push!(hps, buf[(Int(src.offset)+1):Int(fa[2].offset)])
     end
     (true, hps)
@@ -291,7 +295,7 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     for fi in 1:k
         rz = read_zipper_at_path(btm, hps[fi])
         while zipper_to_next_val!(rz)
-            args = collect(zipper_path(rz)); a1, _ = _split2(args); full = vcat(hps[fi], args)
+            args = collect(zipper_path(rz)); a1 = _arg_at(args, 1); full = vcat(hps[fi], args)
             fi == 1 ? push!(f1, full) : push!(get!(kms[fi], a1, Vector{Vector{UInt8}}()), full)
         end
     end
@@ -314,7 +318,7 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         end
         atoms = depth == 1 ? f1 : get(kms[depth], joinkey, _NO_ATOMS)
         for atom in atoms
-            _, a2 = _split2(atom[(length(hps[depth])+1):end])
+            a2 = _arg_at(atom[(length(hps[depth])+1):end], 2)   # out-link key = arg2 (any arity)
             stack[depth] = atom
             rec(depth + 1, a2) || return false
         end

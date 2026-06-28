@@ -171,3 +171,18 @@ end
     space_query_multi(s2.btm, sexpr_to_expr("(, (edge \$a \$b) (edge \$b \$c))"), (b, cc) -> (c2[] += 1; true))
     @test c2[] == 1
 end
+
+@testset "TrieJoin P3 arity-N — ternary chain join" begin
+    # ternary syn 3-hop: a→m→{p,q}→e ⇒ 2 three-hops (a,m,p,e),(a,m,q,e)
+    s = new_space()
+    space_add_all_sexpr!(s, "(syn a m 1)\n(syn m p 2)\n(syn m q 3)\n(syn p e 4)\n(syn q e 5)\n")
+    pat = sexpr_to_expr("(, (syn \$a \$b \$w1) (syn \$b \$c \$w2) (syn \$c \$d \$w3))")
+    c = Ref(0); space_query_multi(s.btm, pat, (b, cc) -> (c[] += 1; true))
+    @test c[] == 2
+
+    # exec endpoint projection ⇒ distinct (r3 a e) (both routes collapse)
+    space_add_all_sexpr!(s, "(exec 0 (, (syn \$a \$b \$w1) (syn \$b \$c \$w2) (syn \$c \$d \$w3)) (, (r3 \$a \$d)))\n")
+    space_metta_calculus!(s, 1_000_000)
+    @test sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(r3 ")]) ==
+          ["(r3 a e)"]
+end
