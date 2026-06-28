@@ -11,6 +11,12 @@
 # derives head-prefixes from a pattern + the effect/`combined` synthesis), gated
 # separately. See docs/architecture/ADR-056_zam_cardinality_join_planning.md.
 
+# Runtime toggle for ALL trie-join fast paths (P1/P1b/P2/P2c/P3) in
+# `_space_query_multi_inner!`. Default on; flip to `false` to force the naive
+# ProductZipper route — used by equivalence tests / benchmarks to A/B the join
+# engine without code changes. Not const-wedge-prone (a Ref, not a recompiled const).
+const _TRIE_JOIN_ENABLED = Ref(true)
+
 # Resolve a PathMap `pmeet` result to a concrete PathMap.
 #   • AlgResElement  → its `.value` (a genuinely-new meet: overlap, or disjoint→empty)
 #   • AlgResIdentity → the meet equals one input; for a meet (intersection) that input
@@ -243,6 +249,169 @@ function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         e isa BreakQuery || rethrow()
     end
     candidate
+end
+
+# =====================================================================
+# P2c — compound-arg (NESTED shared-var) binary join (additive fast path)
+# =====================================================================
+#
+# Generalizes P2 to the case where the shared join variable sits at a NESTED
+# position inside a COMPOUND argument, e.g.
+#   (, ((join ($ctx case/0)) $a) (eval ($a) -> $b))         # going-wide (0 join) case/0
+#   (, ((rel ($x foo)) $a)       ((rel ($x bar)) $b))       # nested shared $x
+# whereas P2's `_classify_binary_join` only handles a shared var at a TOP-LEVEL
+# arg position (and rejects compound/ground args). Blessed-faithful to Zippy's
+# "navigate (unwrap) to the key position, then key on it" model (Zippy README):
+# we walk the ground SKELETON to reach the var, anchor the trie read at the
+# leading ground prefix, and extract the key by structural navigation. NOT a port
+# of upstream MORK `query_multi` (which is a naive Cartesian product + post-unify).
+# Tried only AFTER P2 fails, so the top-level all-var fast path is unchanged.
+
+# Walk a factor's flat byte tree, assigning ABSOLUTE variable ids (NewVar #j →
+# src.v + j; VarRef → tag.idx, already absolute) and recording, per var id, the
+# child-index PATH from the factor root to its FIRST occurrence. Also returns the
+# leading ground prefix (bytes before the first variable byte at any depth) — a
+# valid trie prefix to anchor the read. Returns (occ, leading_prefix).
+function _scan_factor_vars(src::ExprEnv)::Tuple{Dict{Int,Vector{Int}}, Vector{UInt8}}
+    buf = src.base.buf
+    occ = Dict{Int,Vector{Int}}()
+    base_v = Int(src.v)
+    localnv = Ref(0)
+    firstvar = Ref(0)   # 1-based buf index of first var byte; 0 = none yet
+    function walk(off::Int, path::Vector{Int})::Int       # off = 1-based buf index
+        tag = byte_item(buf[off])
+        if tag isa ExprNewVar
+            vid = base_v + localnv[]; localnv[] += 1
+            haskey(occ, vid) || (occ[vid] = path)
+            firstvar[] == 0 && (firstvar[] = off)
+            return off + 1
+        elseif tag isa ExprVarRef
+            vid = Int(tag.idx)
+            haskey(occ, vid) || (occ[vid] = path)
+            firstvar[] == 0 && (firstvar[] = off)
+            return off + 1
+        elseif tag isa ExprSymbol
+            return off + 1 + Int(tag.size)
+        elseif tag isa ExprArity
+            o = off + 1
+            for c in 1:Int(tag.arity)
+                o = walk(o, vcat(path, c))
+            end
+            return o
+        else
+            return off + 1
+        end
+    end
+    walk(Int(src.offset) + 1, Int[])
+    lp = firstvar[] == 0 ? UInt8[] : buf[(Int(src.offset)+1):(firstvar[]-1)]
+    (occ, lp)
+end
+
+# Classify a 2-factor join where EXACTLY ONE variable is shared across the factors,
+# the var allowed at any nesting depth. Returns (matches, lp1, varpath1, lp2, varpath2)
+# where lp_i = factor i's leading ground prefix and varpath_i = child-path to the
+# shared var's first occurrence in factor i.
+function _classify_binary_join_nested(sources::Vector{ExprEnv})
+    fail = (false, UInt8[], Int[], UInt8[], Int[])
+    length(sources) == 2 || return fail
+    (occ1, lp1) = _scan_factor_vars(sources[1])
+    (occ2, lp2) = _scan_factor_vars(sources[2])
+    (isempty(occ1) || isempty(occ2)) && return fail
+    shared = collect(intersect(keys(occ1), keys(occ2)))
+    length(shared) == 1 || return fail                       # exactly one join var
+    svid = shared[1]
+    (true, lp1, occ1[svid], lp2, occ2[svid])
+end
+
+# Navigate `atom` by a child-index path (descend into Arity nodes), returning the
+# byte-span of the sub-expression at the target position. Variable-length leaves are
+# walked dynamically via `expr_span`, so the same structural path resolves across all
+# atoms matching the factor's arity tree. Returns nothing on a structural mismatch.
+function _navigate_path(atom::Vector{UInt8}, path::Vector{Int})::Union{Nothing, Vector{UInt8}}
+    e = MORK.Expr(atom); off = 1
+    for ci in path
+        off <= length(atom) || return nothing
+        (byte_item(atom[off]) isa ExprArity) || return nothing
+        off += 1
+        for _ in 1:(ci - 1)
+            off <= length(atom) || return nothing
+            off += length(expr_span(e, off))
+        end
+    end
+    off <= length(atom) || return nothing
+    collect(expr_span(e, off))
+end
+
+# True if a sub-expression's bytes contain ANY variable (NewVar/VarRef) — i.e. the
+# stored atom is a (partial) RULE/higher-order pattern, not ground data.
+function _expr_has_var(bytes::Vector{UInt8})::Bool
+    i = 1
+    while i <= length(bytes)
+        t = byte_item(bytes[i])
+        (t isa ExprNewVar || t isa ExprVarRef) && return true
+        i += t isa ExprSymbol ? 1 + Int(t.size) : 1
+    end
+    false
+end
+
+# Index a factor's stored atoms by the shared-var value reached via `varpath`,
+# anchoring the read at `leading_prefix`. Returns (keymap, sound). `sound` is false
+# if any stored atom carries a VARIABLE at the join-key position (a stored rule /
+# higher-order pattern): exact-byte trie keying cannot match a var key against a
+# ground key, so the join must fall back to ProductZipper's full unification. The
+# caller bails BEFORE emitting any effect, so no partial results escape.
+function _nested_keymap(btm::PathMap{UnitVal}, leading_prefix::Vector{UInt8}, varpath::Vector{Int})
+    m = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
+    rz = read_zipper_at_path(btm, leading_prefix)
+    sound = true
+    while zipper_to_next_val!(rz)
+        full = vcat(leading_prefix, collect(zipper_path(rz)))
+        key = _navigate_path(full, varpath)
+        key === nothing && continue
+        _expr_has_var(key) && (sound = false; break)   # higher-order key → bail to ProductZipper
+        push!(get!(m, key, Vector{Vector{UInt8}}()), full)
+    end
+    (m, sound)
+end
+
+# Emit a nested-key binary join: re-key both factors by the shared (nested) var, then
+# per common key emit the tail-product, driving the SAME value-gate / unify / effect
+# contract as the ProductZipper tail (combined + bindings byte-identical). Returns
+# (handled, count): handled=false means a stored higher-order key was found and the
+# caller must fall through to ProductZipper (NO effect has fired yet in that case).
+function _nested_binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
+        lp1::Vector{UInt8}, vp1::Vector{Int}, lp2::Vector{UInt8}, vp2::Vector{Int},
+        effect::Function, bindings_scratch::Dict{ExprVar, ExprEnv},
+        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
+    (m1, s1) = _nested_keymap(btm, lp1, vp1)
+    s1 || return (false, 0)
+    (m2, s2) = _nested_keymap(btm, lp2, vp2)
+    s2 || return (false, 0)
+    candidate = 0
+    try
+        for (key, l1) in m1
+            haskey(m2, key) || continue
+            l2 = m2[key]
+            for f1 in l1, f2 in l2
+                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) && continue
+                empty!(pairs_scratch)
+                push!(pairs_scratch, (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1))))
+                push!(pairs_scratch, (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2))))
+                empty!(bindings_scratch)
+                if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
+                    candidate += 1
+                    bindings_out = copy(bindings_scratch)
+                    empty!(bindings_scratch)
+                    effect(bindings_out, MORK.Expr(vcat(f1, f2))) || throw(BreakQuery())
+                else
+                    empty!(bindings_scratch)
+                end
+            end
+        end
+    catch e
+        e isa BreakQuery || rethrow()
+    end
+    (true, candidate)
 end
 
 # =====================================================================

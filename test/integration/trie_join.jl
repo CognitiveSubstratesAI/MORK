@@ -186,3 +186,58 @@ end
     @test sort([strip(l) for l in split(space_dump_all_sexpr(s), '\n') if startswith(strip(l), "(r3 ")]) ==
           ["(r3 a e)"]
 end
+
+@testset "TrieJoin P2c — compound-arg (nested shared-var) binary join" begin
+    # shared join var $c is NESTED inside the compound first arg (join ($c …)),
+    # modeled on going-wide (0 join) case/0. P2's top-level classifier rejects this;
+    # P2c navigates into the compound to the key. Assert ≡ forced-ProductZipper baseline.
+    import MORK: _TRIE_JOIN_ENABLED, _classify_binary_join_nested
+    function _facts_c(N)
+        s = new_space(); io = IOBuffer()
+        for k in 1:N
+            print(io, "((join (c$k case/0)) a$k)\n"); print(io, "((join (c$k arg/0)) b$k)\n")
+        end
+        space_add_all_sexpr!(s, String(take!(io))); s
+    end
+    pat = sexpr_to_expr("(, ((join (\$c case/0)) \$a) ((join (\$c arg/0)) \$b))")
+
+    # classifier fires on the nested shape (and not on a plain binary, which P2 owns)
+    let pa = MORK.ExprEnv[]
+        MORK.ee_args!(MORK.ExprEnv(UInt8(0), UInt8(0), UInt32(0), pat), pa)
+        (ok, _, vp1, _, vp2) = _classify_binary_join_nested(pa[2:end])
+        @test ok && vp1 == [1, 2, 1] && vp2 == [1, 2, 1]
+    end
+
+    # equivalence: P2c result-set ≡ forced ProductZipper, across sizes
+    for N in (1, 2, 50)
+        outs(s) = (space_add_all_sexpr!(s,
+                      "(exec 0 (, ((join (\$c case/0)) \$a) ((join (\$c arg/0)) \$b)) (, (out \$c \$a \$b)))\n");
+                   space_metta_calculus!(s, 1_000_000);
+                   Set(m.match for m in eachmatch(r"\(out [^\n]*\)", space_dump_all_sexpr(s))))
+        _TRIE_JOIN_ENABLED[] = false; ref = outs(_facts_c(N))
+        _TRIE_JOIN_ENABLED[] = true;  got = outs(_facts_c(N))
+        @test length(got) == N
+        @test got == ref
+    end
+    _TRIE_JOIN_ENABLED[] = true
+end
+
+@testset "TrieJoin P2c — higher-order key bails to ProductZipper (soundness)" begin
+    # stored rule (double $x $conv (+ $conv $conv)) has a VARIABLE at the join-key
+    # position; exact-byte trie keying can't match it against ground (input 5), so P2c
+    # must bail to ProductZipper. Result must equal the forced-ProductZipper baseline.
+    import MORK: _TRIE_JOIN_ENABLED
+    prog = raw"""
+    (double $x $conv (+ $conv $conv))
+    (input 5)
+    (exec 0 (, (input $x) (double $x (i32_from_string $x) $formula)) (, (macro-expanded $x $formula)))
+    """
+    outs() = (s = new_space(); space_add_all_sexpr!(s, prog);
+              space_metta_calculus!(s, 10);
+              Set(l for l in split(space_dump_all_sexpr(s), '\n') if occursin("macro-expanded", l)))
+    _TRIE_JOIN_ENABLED[] = false; ref = outs()
+    _TRIE_JOIN_ENABLED[] = true;  got = outs()
+    @test !isempty(got)            # macro-expanded IS derived (the bug was: empty)
+    @test got == ref               # P2c bail ≡ ProductZipper
+    _TRIE_JOIN_ENABLED[] = true
+end

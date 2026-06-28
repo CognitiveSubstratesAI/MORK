@@ -681,7 +681,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # relations' arg-value subtries instead of the naive ProductZipper (N^k). Any other
     # shape, or an anchored (non-empty prefix) query, falls through UNCHANGED below.
     # Defined in kernel/TrieJoin.jl; validated ≡ ProductZipper (test/integration/trie_join.jl).
-    if isempty(prefix)
+    if isempty(prefix) && _TRIE_JOIN_ENABLED[]
         _tj_ok, _tj_hps = _classify_empty_tail(sources)
         _tj_ok && return _trie_join_emit!(btm, sources, _tj_hps, effect,
                                           bindings_scratch, pairs_scratch)
@@ -689,6 +689,15 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
         _bj_ok && return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
                                             effect, bindings_scratch, pairs_scratch)
+        # P2c: compound-arg binary join — shared var NESTED in a compound argument,
+        # e.g. ((join ($ctx case/0)) $a)(eval ($a) -> $b). Tried only after the
+        # top-level P2 fails. Defined in kernel/TrieJoin.jl.
+        _nbj_ok, _nlp1, _nvp1, _nlp2, _nvp2 = _classify_binary_join_nested(sources)
+        if _nbj_ok
+            _nh, _nc = _nested_binary_join_emit!(btm, sources, _nlp1, _nvp1, _nlp2, _nvp2,
+                                            effect, bindings_scratch, pairs_scratch)
+            _nh && return _nc      # else: stored higher-order key — fall through to ProductZipper
+        end
         # P3: strict k≥3 chain join (e.g. (edge $x $y)(edge $y $z)(edge $z $w)) via
         # recursive streaming. Non-chain k≥3 shapes fall through to ProductZipper.
         _ch_ok, _ch_hps = _classify_chain(sources)
