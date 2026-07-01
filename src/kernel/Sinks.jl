@@ -529,17 +529,33 @@ struct WASMSink <: AbstractSink
     ;
     expr::MORK.Expr;
 end
-struct Z3Sink <: AbstractSink
-    ;
-    expr::MORK.Expr;
-end
+@eval sink_apply!(::WASMSink, ::Dict, ::Vector{UInt8}, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
+@eval sink_finalize!(::WASMSink, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
 
-for T in (WASMSink, Z3Sink)
-    @eval sink_apply!(::$T, ::Dict, ::Vector{UInt8}, ::SinkBtm) =
-        error($(string(T)) * " requires external runtime (wasmtime/Z3)")
-    @eval sink_finalize!(::$T, ::SinkBtm) =
-        error($(string(T)) * " requires external runtime (wasmtime/Z3)")
+# ── Z3Sink — write SMT-LIB assertions to a named z3 instance (real port of Rust Z3Sink) ──────────────
+# `(z3 <instance> <se>)` on the sink side streams the matched <se> (bindings-substituted) as text to the live
+# z3 subprocess named <instance> — e.g. <se> = (assert (> a 5)) or (declare-const a Int). Paired with Z3Source
+# (which reads that instance's model back into the join), this gives SMT-guarded rewriting. Instance = the
+# session-global pool in Sources.jl (`z3_instance!`).
+mutable struct Z3Sink <: AbstractSink
+    expr::MORK.Expr
+    ins::String
+    skip::Int          # bytes of the `[3] z3 <instance>` header to strip off a matched path → the <se> bytes
 end
+function Z3Sink(e::MORK.Expr)
+    buf = e.buf
+    name_tag = length(buf) >= 5 ? byte_item(buf[5]) : nothing
+    ins = name_tag isa ExprSymbol ? String(buf[6:(5 + Int(name_tag.size))]) : ""
+    Z3Sink(e, ins, 5 + length(ins))
+end
+function sink_apply!(s::Z3Sink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+    length(path) > s.skip || return nothing
+    text = expr_serialize(path[(s.skip + 1):end])            # the <se> assertion, e.g. (assert (> a 5))
+    proc = z3_instance!(s.ins)
+    write(proc, text); write(proc, "\n"); flush(proc)
+    nothing
+end
+sink_finalize!(::Z3Sink, ::SinkBtm)::Bool = false            # assertions are streamed in apply; nothing to finalize
 
 # =====================================================================
 # ACTSink — write matched paths to an ArenaCompact (.act) file
@@ -1315,6 +1331,12 @@ function asink_new(e::MORK.Expr)::AbstractSink
     if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(3))) &&
         length(buf) >= 5 && buf[3:5] == Vector{UInt8}("ACT")
         return ACTSink(e)
+    end
+
+    # [3] z3 <instance> <se> → Z3Sink
+    if a1 == item_byte(ExprArity(UInt8(3))) && a2 == item_byte(ExprSymbol(UInt8(2))) &&
+        length(buf) >= 4 && buf[3] == UInt8('z') && buf[4] == UInt8('3')
+        return Z3Sink(e)
     end
 
     # [3] wasm → WASMSink

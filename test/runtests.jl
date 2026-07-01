@@ -4498,6 +4498,9 @@ const PM = PathMap.PathMap
     # ── ADR-056 Lever A / P1: empty-tail trie-join ≡ ProductZipper ────────────
     include("integration/trie_join.jl")
 
+    # ── Real Z3Sink + Z3Source round-trip (guarded on z3_available) ───────────
+    include("integration/z3_roundtrip.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 

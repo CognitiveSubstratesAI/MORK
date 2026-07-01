@@ -399,6 +399,53 @@ function _grounded_encode_results(raw)::Vector{Vector{UInt8}}
     paths
 end
 
+# ── Z3Source (external SMT solver: query a named z3 instance for its model) ──────────
+# Real port of Rust `Z3Source` (feature-gated upstream, space.rs:1051-1078). `(z3 <instance> <se>)` queries
+# the live z3 subprocess named <instance>: sends (check-sat)+(get-model) and, on `sat`, injects the model atoms
+# (prefixed `[3] z3 <instance>`) as this factor's data so the join can match <se> against the model. z3 processes
+# live in a session-global pool — both Z3Source and Z3Sink reach them by name (the sink-apply API carries no Space
+# handle, mirroring upstream's per-space `z3s` map at the session granularity that actually works here).
+const _Z3_BIN = Ref{String}("z3")
+const _Z3_POOL = Dict{String, Base.Process}()
+z3_available() = try; success(`$(_Z3_BIN[]) --version`); catch; false; end
+function z3_instance!(name::AbstractString)::Base.Process
+    p = get(_Z3_POOL, name, nothing)
+    (p !== nothing && process_running(p)) && return p
+    proc = open(`$(_Z3_BIN[]) -in -smt2`, "r+")               # duplex pipe: write SMT-LIB, read the model
+    _Z3_POOL[String(name)] = proc
+    proc
+end
+"Close all live z3 subprocesses and clear the pool (session cleanup / test isolation)."
+z3_reset!() = (for p in values(_Z3_POOL); try; close(p); catch; end; end; empty!(_Z3_POOL); nothing)
+
+struct Z3Source
+    expr::MORK.Expr
+    ins::String
+end
+source_requests(s::Z3Source) = [ResourceRequest(RREQ_Z3, s.ins)]
+
+function source_factor(s::Z3Source, btm::PathMap{UnitVal})
+    prefix = UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('z'), UInt8('3'),
+                   item_byte(ExprSymbol(UInt8(length(s.ins))))]
+    append!(prefix, codeunits(s.ins))
+    model = PathMap{UnitVal}()
+    proc = z3_instance!(s.ins)
+    write(proc, "(check-sat)\n(get-model)\n"); flush(proc)
+    if strip(readline(proc)) == "sat"                          # read model lines until the lone closing ")"
+        lines = String[]
+        while true
+            ln = readline(proc); push!(lines, ln)
+            (strip(ln) == ")" || eof(proc)) && break
+        end
+        text = strip(join(lines, "\n"))
+        if length(text) >= 2                                    # strip the outer ( … ) wrapper (upstream v[1..last])
+            inner = text[nextind(text, firstindex(text)):prevind(text, lastindex(text))]
+            tmp = new_space(); space_add_all_sexpr!(tmp, inner); model = tmp.btm
+        end
+    end
+    PrefixZipper(prefix, read_zipper_at_path(model, UInt8[]))
+end
+
 # ── ASource — dispatch wrapper ────────────────────────────────────────
 
 """
@@ -406,9 +453,9 @@ end
 
 Union type dispatching to the correct concrete source implementation.
 Mirrors `ASource` enum in sources.rs; extended with `GroundedSource`
-for Julia-native grounded function dispatch (Phase 2).
+for Julia-native grounded function dispatch (Phase 2) and `Z3Source` (real SMT).
 """
-const ASource = Union{CompatSource, BTMSource, ACTSource, CmpSource, GroundedSource}
+const ASource = Union{CompatSource, BTMSource, ACTSource, CmpSource, GroundedSource, Z3Source}
 
 """
     asource_new(expr) → ASource
@@ -467,6 +514,11 @@ function asource_new(e::MORK.Expr)::ASource
             return CmpSource(e, 0)
         elseif buf[3] == UInt8('!') && buf[4] == UInt8('=')
             return CmpSource(e, 1)
+        elseif buf[3] == UInt8('z') && buf[4] == UInt8('3')     # [3] z3 <instance> <se>
+            name_tag = byte_item(buf[5])
+            if name_tag isa ExprSymbol
+                return Z3Source(e, String(buf[6:(5 + Int(name_tag.size))]))
+            end
         end
     end
 
@@ -482,7 +534,7 @@ asource_compat(e::MORK.Expr) = CompatSource(e)
 export ResourceRequestKind, RREQ_BTM, RREQ_ACT, RREQ_Z3
 export ResourceRequest
 export AbstractSource, CompatSource, BTMSource, ACTSource, CmpSource
-export GroundedSource, StaticZipper
+export GroundedSource, StaticZipper, Z3Source, z3_available, z3_instance!, z3_reset!
 export GROUNDED_REGISTRY, register_grounded!, is_grounded
 export ASource, asource_new, asource_compat
 export source_requests, source_factor
