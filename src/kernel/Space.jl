@@ -869,6 +869,15 @@ space_query_multi(s::Space, pat::MORK.Expr, f::Function) =
 @inline _coref_path_length(loc::ReadZipperCore) = length(loc.prefix_buf) - loc.origin_path_len
 @inline _coref_path_length(loc::ProductZipper) = _coref_path_length(loc.z)
 
+# The live path buffer + its origin, for a zero-COPY bound-VarRef alias — mirrors upstream's raw
+# `loc.path().as_ptr().offset(ref)` (space.rs:176). We alias the whole Array object and bake the
+# offset into ExprEnv.offset. Julia holds the Array OBJECT (follows the current data pointer on each
+# read, survives realloc) — strictly safer than a raw pointer. Safe because the recorded value lies
+# BELOW the VarRef descent frontier and the balanced DFS never ascends below it (nor rewrites
+# committed bytes: prefix_buf is mutated tail-only via push!/resize!) while the ExprEnv is live.
+@inline _coref_path_buf(loc::ReadZipperCore) = (loc.prefix_buf, loc.origin_path_len)
+@inline _coref_path_buf(loc::ProductZipper) = _coref_path_buf(loc.z)
+
 # Shared NewVar-sentinel Expr — mirrors upstream's `static nv: u8 = item_byte(Tag::NewVar)`
 # (space.rs:155-157, 179-180). A 1-byte read-only buffer reused across all unbound-var placeholders
 # (Arity-under-NewVar slots + unbound VarRef 'any'); never mutated on the coref path, so sharing one
@@ -1010,9 +1019,13 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
         # (a fresh NewVar 'any'), exactly as upstream falls to the `else` branch.
         new_ee = if e.n == 0 && i < length(references) && references[i + 1] != -1
             ref_off = references[i + 1]
-            path = _coref_path(loc)
-            resolved_buf = Vector{UInt8}(path[(ref_off + 1):end])
-            ExprEnv(UInt8(254), UInt8(0), UInt32(0), MORK.Expr(resolved_buf))
+            # Zero-COPY alias into loc's own live path buffer at the recorded offset (mirrors upstream
+            # space.rs:176). Bake the offset into ExprEnv.offset; alias the whole Array object. Reads
+            # `base.buf[offset+1] = prefix_buf[origin+ref_off+1]` — the same first value byte the copy
+            # `path[ref_off+1]` exposed; consumers walk by self-describing tag structure (not buffer
+            # length), so the longer live trailing region is inert. Byte-identical to the old copy.
+            pbuf, porigin = _coref_path_buf(loc)
+            ExprEnv(UInt8(254), UInt8(0), UInt32(porigin + ref_off), MORK.Expr(pbuf))
         else
             ExprEnv(UInt8(255), UInt8(0), UInt32(0), _COREF_NEWVAR_EXPR)
         end
