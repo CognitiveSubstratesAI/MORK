@@ -1703,11 +1703,20 @@ Returns steps executed.
 """
 const _METTA_CALCULUS_MAX_RETRIES = 2000
 
-# Multi-source join driver toggle. false (default) = naive ProductZipper enumeration
-# (O(K^N), upstream's `no_search` path). true = coreferential DFS over the ProductZipper
-# (O(M*depth), upstream's DEFAULT `query_multi_raw` path — prunes inconsistent branches;
-# the fix for the higher-order-factor explosion). Re-instates the path retired in 80c3d56.
-const _USE_COREF_JOIN = Ref(false)
+# Multi-source join driver for the FALLTHROUGH path (shapes the trie-join fast paths P1-P5
+# don't classify — i.e. higher-order / multi-source conjunctions). true (DEFAULT) = coreferential
+# DFS over the ProductZipper (O(M*depth); prunes inconsistent branches during descent) — this
+# is UPSTREAM's default `query_multi_raw`, and our port is faithful to upstream's current coref
+# (post-#29 indexed-restore + VarRef bounds guard + break-true; revert of e551924). false =
+# the naive ProductZipper (O(K^N), upstream's `no_search` cfg variant) — kept as an opt-out for
+# A/B benchmarking. THE DEFAULT WAS FLIPPED false→true (2026-07-06) after a differential audit
+# vs the built upstream binary: the naive default EXPLODED on higher-order joins (counter-machine
+# step 2 >2M transitions vs upstream ~1k; going-wide; lte self-spawn) while coref ≡ upstream
+# byte-for-byte on every workload measured, with NO correctness regression across the join-heavy
+# suite (trie_join 44/44, mm2_corpus_differential 30/1, wiki 17/17, conformance 6/1). The naive
+# default was a wrong-cross-check-target blunder — we validated against upstream's `no_search`
+# feature path, not its default. See docs/tracking/session-log.md §9b-d.
+const _USE_COREF_JOIN = Ref(true)
 # The coreferential DFS recurses to trie/proof depth; backward-chaining proofs overflow
 # Julia's default ~handler-task stack (its frames are large). Run it on a task with a
 # generous reserved stack (mirrors the large fixed C stack upstream's recursive
