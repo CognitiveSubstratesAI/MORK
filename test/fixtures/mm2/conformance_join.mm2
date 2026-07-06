@@ -1,0 +1,7 @@
+; Small tractable MM2 program for upstream-conformance differential (both engines agree,
+; naive ProductZipper handles it — 2-factor join, no higher-order patterns).
+(edge 0 1)
+(edge 1 2)
+(edge 2 3)
+(edge 1 4)
+(exec 0 (, (edge $x $y) (edge $y $z)) (, (path2 $x $z)))

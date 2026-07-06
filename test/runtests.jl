@@ -4501,6 +4501,10 @@ const PM = PathMap.PathMap
     # ── Real Z3Sink + Z3Source round-trip (guarded on z3_available) ───────────
     include("integration/z3_roundtrip.jl")
 
+    # ── Differential conformance vs the built upstream Rust `mork` binary ──────
+    # (guarded on the binary being present; catches default-engine divergence)
+    include("integration/upstream_conformance.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
