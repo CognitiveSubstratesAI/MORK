@@ -101,10 +101,27 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
         for x in ("(results-in 1 <- (and 1 1))", "(results-in 1 <- (or 1 1))",
                   "(results-in 1 <- (not 0))"); @test x in a; end
     end
-    # Going_Wide_02 / _11_Macros / _31_Two_Programs use the DEF/main-loop idiom. Their resurrection
-    # bug is fixed (e59a16b) so they now PROGRESS, but a separate convergence/explosion bug (MAIN
-    # multiplicity + (1 fork)/(0 join) selection) means they don't yet halt with (OUTPUT 1) and the
-    # space grows unbounded — so they are NOT run here (would not terminate). Tracked in
-    # project_mork_mm2_corpus_control08_bug; convert to real @tests once convergence is fixed.
-    @test_skip occursin("(OUTPUT 1)", "going-wide convergence deferred — see e59a16b commit msg")
+    # Going_Wide_02 / _11_Macros / _31_Two_Programs use the DEF/main-loop idiom. The resurrection
+    # bug was fixed (e59a16b) so they PROGRESS; the remaining "convergence/explosion" (they grew
+    # unbounded and never halted with (OUTPUT 1)) was the NAIVE ProductZipper join over-generating
+    # the multi-source (fork/join) selection. Under the coreferential-transition join default (MORK
+    # 921c05c) all three now converge, bounded, byte-identical to the upstream binary — verified via
+    # test/integration/upstream_conformance.jl. _02 and _11 halt with (OUTPUT 1); _31_Two_Programs
+    # legitimately halts WITHOUT (OUTPUT 1) (upstream produces none either — it is a two-program
+    # composition whose output predicate differs). cap=2_000 (they converge in <100 steps).
+    @testset "Going_Wide_02 DEF/main-loop → halts, (OUTPUT 1)" begin
+        steps, cap, a = _corpus_atoms("Going_Wide_02.mm2", 2_000)
+        @test steps < cap                 # bounded convergence (was: unbounded growth under naive join)
+        @test "(OUTPUT 1)" in a
+    end
+    @testset "Going_Wide_11_Macros DEF/main-loop → halts, (OUTPUT 1)" begin
+        steps, cap, a = _corpus_atoms("Going_Wide_11_Macros.mm2", 2_000)
+        @test steps < cap
+        @test "(OUTPUT 1)" in a
+    end
+    @testset "Going_Wide_31_Two_Programs DEF/main-loop → halts (no OUTPUT 1, matches upstream)" begin
+        steps, cap, a = _corpus_atoms("Going_Wide_31_Two_Programs.mm2", 2_000)
+        @test steps < cap
+        @test !any(x -> occursin("(OUTPUT 1)", x), a)
+    end
 end

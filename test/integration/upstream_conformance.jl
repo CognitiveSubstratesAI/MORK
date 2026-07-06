@@ -114,5 +114,24 @@ end
         else
             @test_skip "Set_Ops_06 program absent"
         end
+
+        # (5) Going-wide DEF/main-loop idiom (fork/join multi-source selection). Under the naive
+        #     default these grew unbounded and never halted with (OUTPUT 1); the DEFAULT (coref)
+        #     converges bounded (<100 steps) ≡ upstream byte-for-byte. _02/_11 emit (OUTPUT 1); _31
+        #     is a two-program composition that legitimately emits none (upstream agrees).
+        let progs = joinpath(@__DIR__, "..", "..", "experiments", "mm2_programs", "programs")
+            for (name, want_out) in (("Going_Wide_02.mm2", true),
+                                     ("Going_Wide_11_Macros.mm2", true),
+                                     ("Going_Wide_31_Two_Programs.mm2", false))
+                gw = joinpath(progs, name)
+                if isfile(gw)
+                    our_gw = _ours_default(gw, 2_000)
+                    @test our_gw == _upstream(gw, 100_000)             # DEFAULT ≡ upstream
+                    @test any(l -> occursin("(OUTPUT 1)", l), our_gw) == want_out
+                else
+                    @test_skip "$name absent"
+                end
+            end
+        end
     end
 end
