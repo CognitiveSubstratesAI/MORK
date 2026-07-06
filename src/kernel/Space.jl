@@ -863,6 +863,18 @@ space_query_multi(s::Space, pat::MORK.Expr, f::Function) =
 @inline _coref_path(loc::ReadZipperCore) = zipper_path(loc)
 @inline _coref_path(loc::ProductZipper) = pz_path(loc)
 
+# Zero-alloc length of _coref_path — mirrors upstream `loc.path().len()` (space.rs:129). Avoids
+# building a SubArray via _coref_path just to take its length. (prefix_buf.len - origin_path_len =
+# the same UnitRange length the view would report; origin<=len invariant keeps it non-negative.)
+@inline _coref_path_length(loc::ReadZipperCore) = length(loc.prefix_buf) - loc.origin_path_len
+@inline _coref_path_length(loc::ProductZipper) = _coref_path_length(loc.z)
+
+# Shared NewVar-sentinel Expr — mirrors upstream's `static nv: u8 = item_byte(Tag::NewVar)`
+# (space.rs:155-157, 179-180). A 1-byte read-only buffer reused across all unbound-var placeholders
+# (Arity-under-NewVar slots + unbound VarRef 'any'); never mutated on the coref path, so sharing one
+# const is byte-identical to the per-call `Expr([nv])` it replaces.
+const _COREF_NEWVAR_EXPR = MORK.Expr(UInt8[item_byte(ExprNewVar())])
+
 @inline _coref_descend_byte!(loc::ReadZipperCore, b::UInt8) =
     zipper_descend_to_byte!(loc, b)
 @inline _coref_descend_byte!(loc::ProductZipper, b::UInt8) = pz_descend_to_byte!(loc, b)
@@ -948,7 +960,7 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
                 push!(references, -1)
             end
             _nv_prev = references[_nv_idx + 1]
-            references[_nv_idx + 1] = length(_coref_path(loc))
+            references[_nv_idx + 1] = _coref_path_length(loc)
         end
 
         m_vars = _var_children(loc)
@@ -974,16 +986,14 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
         end
 
         m_arities = _arity_children(loc)
-        static_nv = item_byte(ExprNewVar())
         for b in m_arities
             tag_a = byte_item(b)
             tag_a isa ExprArity || continue
             arity = Int(tag_a.arity)
             _coref_descend_byte!(loc, b)
             ol = length(stack)
-            nv_expr = MORK.Expr([static_nv])
             for _ in 1:arity
-                push!(stack, ExprEnv(UInt8(255), UInt8(0), UInt32(0), nv_expr))
+                push!(stack, ExprEnv(UInt8(255), UInt8(0), UInt32(0), _COREF_NEWVAR_EXPR))
             end
             _coreferential_transition!(loc, stack, references, f)
             resize!(stack, ol)
@@ -1004,8 +1014,7 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
             resolved_buf = Vector{UInt8}(path[(ref_off + 1):end])
             ExprEnv(UInt8(254), UInt8(0), UInt32(0), MORK.Expr(resolved_buf))
         else
-            static_nv = item_byte(ExprNewVar())
-            ExprEnv(UInt8(255), UInt8(0), UInt32(0), MORK.Expr([static_nv]))
+            ExprEnv(UInt8(255), UInt8(0), UInt32(0), _COREF_NEWVAR_EXPR)
         end
 
         # vs!(e, false) — match stored variable children. No sentinel push: the e551924
@@ -1031,7 +1040,7 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
             _coref_ascend_byte!(loc)
         end
         if _coref_descend_to_existing_byte!(loc, e_byte)
-            sym_bytes = e.base.buf[(Int(e.offset) + 2):(Int(e.offset) + 1 + size)]
+            sym_bytes = @view e.base.buf[(Int(e.offset) + 2):(Int(e.offset) + 1 + size)]
             if _coref_descend_to_check!(loc, sym_bytes)
                 # check SUCCEEDED → descended 1 (sym byte) + size (payload); undo both.
                 _coreferential_transition!(loc, stack, references, f)
