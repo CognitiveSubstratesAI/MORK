@@ -295,3 +295,29 @@ end
     @test got == ref
     _TRIE_JOIN_ENABLED[] = true
 end
+
+@testset "TrieJoin P5 — cardinality reorder preserves results (OFF ≡ ON)" begin
+    import MORK: _CARD_REORDER_ENABLED
+    # The P5 cardinality-greedy execution reorder (measured 2026-07-10, ~1.3× fewer intermediate
+    # allocs on the Nil BFC exec-6 shape) changes ONLY the pipeline's intermediate `tuples` sizes —
+    # the result SET must be byte-identical to the connectivity-only source order. Star join on $h:
+    # one large `big` relation written FIRST (the near-worst source order) + small functional/filter
+    # factors — exactly the shape the reorder helps. Guards against a reorder that drops/duplicates.
+    facts() = begin
+        s = new_space(); io = IOBuffer()
+        for h in 0:5, t in 1:4; println(io, "(big h$h t$(h)_$t)"); end     # 24 tuples over 6 keys
+        for h in 0:5; println(io, "(fa h$h a$h)"); println(io, "(fb h$h b$h)"); end
+        for h in 0:2; println(io, "(lt h$h)"); end                          # filter: h ∈ {0,1,2}
+        space_add_all_sexpr!(s, String(take!(io))); s
+    end
+    QPAT = raw"(, (big $h $t) (fa $h $a) (fb $h $b) (lt $h))"               # big first = worst source order
+    outs(s) = (space_add_all_sexpr!(s, "(exec 0 $QPAT (, (res \$h \$t)))\n");
+               space_metta_calculus!(s, 1_000_000);
+               Set(m.match for m in eachmatch(r"\(res [^\n]*\)", space_dump_all_sexpr(s))))
+    _CARD_REORDER_ENABLED[] = false; ref = outs(facts())
+    _CARD_REORDER_ENABLED[] = true;  got = outs(facts())
+    @test !isempty(ref)
+    @test got == ref                     # reorder is result-set-preserving
+    @test length(got) == 12              # h ∈ {0,1,2} × t ∈ {1..4} = 12 distinct (res $h $t)
+    _CARD_REORDER_ENABLED[] = true
+end

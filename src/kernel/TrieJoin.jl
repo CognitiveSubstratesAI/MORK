@@ -17,6 +17,11 @@
 # engine without code changes. Not const-wedge-prone (a Ref, not a recompiled const).
 const _TRIE_JOIN_ENABLED = Ref(true)
 
+# Runtime toggle for the P5 cardinality-greedy execution reorder in `_connected_join_emit!`
+# (measured 2026-07-10). Default on; flip to `false` to force the connectivity-only source
+# order `_classify_connected` picks — used to A/B the reorder win without code changes.
+const _CARD_REORDER_ENABLED = Ref(true)
+
 # Resolve a PathMap `pmeet` result to a concrete PathMap.
 #   • AlgResElement  → its `.value` (a genuinely-new meet: overlap, or disjoint→empty)
 #   • AlgResIdentity → the meet equals one input; for a meet (intersection) that input
@@ -582,6 +587,39 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             push!(lst, (full, vv::Dict{Int,Vector{UInt8}}))
         end
         atoms[fi] = lst
+    end
+
+    # Cardinality-greedy execution order (measured 2026-07-10). The `order` handed in by
+    # `_classify_connected` is connectivity-only, tie-broken by SOURCE order — so a program
+    # that writes a large relation first (e.g. Nil BFC's `sol` in exec-6) drives a near-worst
+    # plan (measured rank ~23/24 of 24 orderings; ~1.2–1.6× slower than optimal). Upstream MORK
+    # `query_multi_raw` (space.rs:1216) has NO join planning at all — a fixed-order coreferential
+    # ProductZipper — so there is no upstream ordering contract to preserve; this is a pure
+    # MORK-side optimization on our own P5 path. We already loaded every factor's atoms above, so
+    # the EXACT per-factor cardinality is in hand at ZERO extra scan: re-seed with the smallest
+    # factor and repeatedly append the smallest-cardinality factor sharing ≥1 var with the bound
+    # set. The join is commutative/associative ⇒ the result SET is byte-identical; only the
+    # intermediate `tuples` sizes shrink. Connectivity is a whole-graph property the classifier
+    # already proved, so a different seed still reaches every factor — the `best == 0` branch is
+    # defensive only (a Cartesian step stays CORRECT, just slower).
+    if _CARD_REORDER_ENABLED[]
+        card = Int[length(atoms[fi]) for fi in 1:k]
+        neworder = Int[]; usedp = falses(k)
+        seed = argmin(card); push!(neworder, seed); usedp[seed] = true
+        boundc = Set{Int}(keys(occ[seed]))
+        for _ in 2:k
+            best = 0; bestc = typemax(Int)
+            for j in 1:k
+                usedp[j] && continue
+                isempty(intersect(keys(occ[j]), boundc)) && continue
+                if card[j] < bestc
+                    bestc = card[j]; best = j
+                end
+            end
+            best == 0 && (best = something(findfirst(!, usedp)))   # defensive: connected ⇒ unused-connected exists
+            push!(neworder, best); usedp[best] = true; union!(boundc, keys(occ[best]))
+        end
+        order = neworder     # rebinds the function arg (plain if-scope, no let shadow)
     end
 
     # Pipeline. A partial tuple = (slot atoms by SOURCE index, merged bound values).
