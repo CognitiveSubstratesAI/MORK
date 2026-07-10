@@ -4495,6 +4495,12 @@ const PM = PathMap.PathMap
     # result was wrong). Locks in 8f0d182 / 7908fbd / e59a16b.
     include("integration/mm2_corpus_differential.jl")
 
+    # ── CTL model-checker regression (gates EU least-fixpoint / PathMap-CoW fix 05451ee) ──
+    # Runs the full CTL checker (MM2 program on the exec-calculus) to a natural fixpoint and
+    # asserts the wiki golden state-sets. F1's state 2 is the sentinel: pre-05451ee the EU
+    # least-fixpoint halted one round early -> [6,7,8,12] (2 missing).
+    include("integration/ctl_model_checking.jl")
+
     # ── ADR-056 Lever A / P1: empty-tail trie-join ≡ ProductZipper ────────────
     include("integration/trie_join.jl")
 
