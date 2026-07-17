@@ -112,13 +112,18 @@ end
 `MorkParser` whose `fe_tokenizer` truncates symbols to 63 bytes.
 Mirrors `ParDataParser` with `cfg(not(feature="interning"))` in space.rs.
 """
-struct SpaceParser <: MorkParser
-    count::Ref{Int}
-    SpaceParser() = new(Ref(0))
+# Faithful port of upstream `ParDataParser` (mork/kernel/src/space.rs:220 `count: u64` mutated via
+# `&mut self`): a MUTABLE struct with a CONCRETE `count::Int`, matching sibling `SpaceTranscriber`.
+# WAS `struct` + `count::Ref{Int}` — but `Ref` is an ABSTRACT type, so `p.count[]` was a runtime
+# `::Any` (JET-detected on the parse hot path). Upstream has no such abstraction; this was a
+# Julia-port idiom bug, not present in the Rust.
+mutable struct SpaceParser <: MorkParser
+    count::Int
+    SpaceParser() = new(0)
 end
 
 function fe_tokenizer(p::SpaceParser, s::AbstractVector{UInt8})::Vector{UInt8}
-    p.count[] += 1
+    p.count += 1
     n = min(length(s), 63)
     Vector{UInt8}(s[1:n])
 end
