@@ -4522,6 +4522,11 @@ const _MORK_TS = @testset "MORK" begin
     # ── Real Z3Sink + Z3Source round-trip (guarded on z3_available) ───────────
     include("integration/z3_roundtrip.jl")
 
+    # ── exec-visibility regression (bug found 2026-07-23 by differential sweep) ──
+    # A bare-variable exec pattern `(exec 0 (, $x) …)` must see the just-removed exec (upstream
+    # re-inserts it unconditionally); the `_pat_overlaps_exec_prefix` byte-scan used to miss it.
+    include("integration/exec_visibility.jl")
+
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")

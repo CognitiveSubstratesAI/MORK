@@ -1169,54 +1169,67 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
     space_query_multi_i(s.btm, pat, pat_v, f; mmaps=s.mmaps)
 
 # =====================================================================
-# _pat_overlaps_exec_prefix — prefix-overlap guard for pjoin skip
+# _pat_overlaps_exec_prefix — can any CONJUNCT of the pattern match an `(exec …)` atom?
 # =====================================================================
 #
-# Returns true iff any structural position in pat_expr's byte buffer starts
-# with _EXEC_PREFIX.  Uses the same structural walk as `_const_prefix` in
-# space_acquire_transform_permissions: advances by tag-correct amounts
-# (skipping symbol payloads), checking only at expression-start positions.
-# This avoids false negatives from non-structural byte coincidences that a
-# flat substring scan could misidentify.
+# The driver removes each exec from s.btm BEFORE interpreting it (space.rs `metta_calculus`,
+# line ~1704, does the same). Upstream then matches the pattern over a COPY of the space with the
+# exec RE-INSERTED UNCONDITIONALLY (space.rs `transform_multi_multi_io`, line 1585:
+# `read_copy.insert(add.span())`). We keep the fast path — matching s.btm directly, skipping the
+# ~12KB/step re-insert — ONLY when the pattern provably cannot match the removed exec; otherwise the
+# caller re-inserts it (line ~1339) so semantics equal upstream's. So the question this answers is
+# exactly: could a conjunct `c` of `(, c1 … ck)` unify with an `(exec …)` atom? Yes iff
+#     (a) c is a bare VARIABLE  ($x)                  — matches ANY atom, incl. exec
+#     (b) c is compound with a VARIABLE HEAD  (($h …)) — the head could bind the symbol `exec`
+#     (c) c is compound with the literal head `exec`   ((exec …)) — an explicit meta-rule
+# A conjunct with a concrete non-`exec` head can never unify with `(exec …)`, so a pure data rule
+# (the overwhelmingly common case) returns false and keeps the fast path.
 #
-# Safe direction: errs toward true (falls through to pjoin) when uncertain.
-# _EXEC_PREFIX = [ExprArity(4), ExprSymbol(4), 'e','x','e','c'] — 6 bytes.
+# BUG THIS REPLACES (found 2026-07-23, differential vs the built upstream binary — Control_02/03,
+# up=4/our=0): the old body was a flat structural byte-scan for the literal `_EXEC_PREFIX`, catching
+# ONLY case (c). A bare-variable conjunct `(, $x)` — which upstream matches against the exec itself
+# at bootstrap, when it is the only atom present — has no literal `exec` bytes, so the scan returned
+# false, the fast path hid the removed exec, and the whole exec-chaining program produced NOTHING.
+# Silent narrowing: "could this pattern match an exec?" was under-approximated as "does it literally
+# contain 'exec'?". Verified by execution: forcing the fixed cases through the re-insert path yields
+# Control_02→{0,1,2,3}, Control_03→{0}, and the exec-self-match line, byte-identical to upstream
+# modulo De Bruijn var rendering; all 84 substitution programs + the data-rule fast path unchanged.
+#
+# Only the `,` conjunction gets this factor analysis. `I` sources, a variable functor, or any other
+# shape fall through to a conservative TRUE — upstream re-inserts unconditionally, so extra exec
+# visibility is never WRONG; we merely forgo the ~12KB skip for those rare shapes.
+# Conjunct subtrees are skipped with `_expr_end_offset` (kernel/Sinks.jl), so the walk stops exactly
+# at the pattern's end and never reads into the template that shares this buffer — preserving the old
+# "scan only the first expression" property that kept a template-spawned `(exec …)` from resurrecting.
 @inline function _pat_overlaps_exec_prefix(pat_expr::MORK.Expr)::Bool
     buf = pat_expr.buf
-    ep = _EXEC_PREFIX
-    ep_len = length(ep)
     n = length(buf)
-    i = 1
-    # Scan ONLY the first top-level expression (the pattern). `pat_expr.buf` is the exec's
-    # backing buffer and EXTENDS PAST the pattern into the template — a whole-buffer scan
-    # false-positives on the template's own `(exec …)` (e.g. a rule whose template spawns an
-    # exec). That false positive routes the rule down the meta-pattern `pjoin` read_btm path,
-    # which re-inserts the just-removed exec into s.btm and RESURRECTS it — so it dominates trie
-    # selection forever (going-wide never terminated; the fork never decomposed). `remaining`
-    # tracks open subexpressions of the first expr; stop when it hits 0.
-    remaining = 1
-    @inbounds while i <= n && remaining > 0
-        # Check if position i starts with _EXEC_PREFIX (expression-start only)
-        if i + ep_len - 1 <= n
-            match = true
-            for j in 1:ep_len
-                buf[i + j - 1] != ep[j] && (match=false; break)
+    n >= 4 || return true                              # malformed/short → conservative
+    t0 = byte_item(buf[1])
+    (t0 isa ExprArity) || return true                  # not (functor …) → conservative
+    nfac = Int(t0.arity) - 1                            # arity counts the functor + nfac conjuncts
+    nfac >= 1 || return false                           # empty pattern — interpret rejects it anyway
+    tf = byte_item(buf[2])
+    @inbounds (tf isa ExprSymbol && Int(tf.size) == 1 && buf[3] == UInt8(',')) || return true
+    i = 4                                               # past [Arity][Sym1][','] → first conjunct
+    @inbounds for _ in 1:nfac
+        i <= n || break
+        th = byte_item(buf[i])
+        if th isa ExprNewVar || th isa ExprVarRef
+            return true                                 # (a) bare-variable conjunct
+        elseif th isa ExprArity && i + 1 <= n
+            hh = byte_item(buf[i+1])
+            if (hh isa ExprNewVar || hh isa ExprVarRef) && Int(th.arity) == 4
+                # (b) variable head AND exec's arity (`(exec loc pat tpl)` == 4) → could bind the
+                # exec. Arity is REQUIRED: a var-head conjunct of a different arity (e.g. `($x $y)`,
+                # arity 2) can never unify with the arity-4 exec atom, so it keeps the fast path.
+                return true
+            elseif hh isa ExprSymbol && Int(hh.size) == 4 && i + 5 <= n &&
+                   buf[i+2] == 0x65 && buf[i+3] == 0x78 && buf[i+4] == 0x65 && buf[i+5] == 0x63
+                return true                             # (c) literal (exec …) head
             end
-            match && return true
         end
-        # Advance structurally — same logic as _const_prefix
-        t = byte_item(buf[i])
-        if t isa ExprArity
-            remaining += Int(t.arity)   # this node introduces `arity` child subexpressions
-            i += 1          # descend into expression
-        elseif t isa ExprSymbol
-            i += 1 + Int(t.size)   # skip sym-header + payload bytes
-        elseif t isa ExprNewVar || t isa ExprVarRef
-            i += 1
-        else
-            i += 1
-        end
-        remaining -= 1      # consumed this node
+        i = _expr_end_offset(buf, i)                    # skip this conjunct subtree → next
     end
     false
 end

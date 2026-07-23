@@ -81,24 +81,32 @@ using MORK
 
     # ── C3: structural prefix helper returns correct values ──────────────────
     @testset "C3: _pat_overlaps_exec_prefix — structural walk, not flat scan" begin
-        # Exec-shaped patterns must return true → pjoin branch (exec atom visible).
-        # raw"..." strings don't interpolate — $loc is a literal dollar sign + loc.
-        for pat_str in [
-            raw"(exec $loc $pat $tpl)",          # fully variable exec
-            raw"(exec 0 (, $pat) (, $tpl))"     # concrete priority
+        # pat_expr is ALWAYS the `(, …)` / `(I …)` conjunction the exec matches over (interpret
+        # requires the `,`/`I` functor). A conjunct can bind the just-removed exec — so the fast path
+        # (skipping the ~12KB re-insert) must be SKIPPED — iff it is a bare variable, a variable-headed
+        # compound OF EXEC'S ARITY (`(exec loc pat tpl)` == 4), or literally `(exec …)`. Everything else
+        # keeps the fast path. Updated 2026-07-23 with the fix to the bare-variable case (a byte-scan
+        # for the literal `exec` prefix missed it — Control_02/03 produced no output). raw"..." strings
+        # don't interpolate — $x is a literal dollar + name.
+        needs_exec = [
+            raw"(, $x)",                        # bare-variable conjunct — matches the exec itself (THE BUG CASE)
+            raw"(, (exec $l $p $t))",           # explicit meta-rule matching execs
+            raw"(, ($h $a $b $c))",             # variable head, arity 4 == exec's arity
+            raw"(, (isa $x bird) $y)",          # a LATER bare-variable conjunct still counts
         ]
-            e = MORK.sexpr_to_expr(pat_str)
-            @test MORK._pat_overlaps_exec_prefix(e) == true
+        for p in needs_exec
+            @test MORK._pat_overlaps_exec_prefix(MORK.sexpr_to_expr(p)) == true
         end
 
-        # Data patterns must return false → fast path (no pjoin)
-        for pat_str in [
-            raw"(isa $x thing)",
-            raw"(edge $a $b)",
-            raw"($x $y)"                        # wildcard — structurally no exec prefix
+        # Data conjunctions must return false → fast path (no re-insert).
+        fast_path = [
+            raw"(, (isa $x thing))",            # concrete head ≠ exec → cannot match (exec …)
+            raw"(, (edge $a $b))",
+            raw"(, ($x $y))",                   # var head but arity 2 ≠ 4 → cannot match the arity-4 exec
+            raw"(, (isa $x bird) (edge $a $b))", # multi-factor data rule
         ]
-            e = MORK.sexpr_to_expr(pat_str)
-            @test MORK._pat_overlaps_exec_prefix(e) == false
+        for p in fast_path
+            @test MORK._pat_overlaps_exec_prefix(MORK.sexpr_to_expr(p)) == false
         end
 
         # Integration: data exec rule produces results after the optimization.
