@@ -34,7 +34,14 @@ _ground(dump::AbstractString) = sort!(String[s for l in split(dump, '\n')
 function _upstream(file::AbstractString, steps::Int)
     out = tempname() * ".mm2out"
     try
-        run(pipeline(`$_UP_MORK run $file --steps $steps $out`; stdout = devnull, stderr = devnull))
+        # `Base.run`, QUALIFIED deliberately. `tools/repl.jl:27` defines its own
+        # `run(src::AbstractString, steps::Int)` in `Main`, which SHADOWS `Base.run` — so an
+        # unqualified call here dies with `MethodError: no method matching run(::Base.CmdRedirect)`
+        # whenever the suite is driven through that REPL. And `tools/repl.jl` is the warm-session
+        # workflow this repo MANDATES for MORK testing, so this — our ONLY differential check
+        # against the built Rust binary — was silently erroring out on every mandated run.
+        # Found 2026-07-23 while auditing why a 36-function port gap had gone unnoticed.
+        Base.run(pipeline(`$_UP_MORK run $file --steps $steps $out`; stdout = devnull, stderr = devnull))
         _ground(read(out, String))
     finally
         isfile(out) && rm(out; force = true)
