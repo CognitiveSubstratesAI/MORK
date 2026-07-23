@@ -491,12 +491,14 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # ── Case 2: mixed or trie-only — build ProductZipperG for trie sources ──
     trie_ees = sources[trie_idxs]
     trie_srcs = src_types[trie_idxs]
-    factors = Any[]
-    for (src, ee) in zip(trie_srcs, trie_ees)
-        factor =
-            src isa ACTSource ? source_factor(src, btm, mmaps) : source_factor(src, btm)
-        push!(factors, factor)
-    end
+    # Build the source factors with their RUNTIME element type — NOT `Any[]`. A Vector{Any} here
+    # erased the zipper types into `ProductZipperG`'s (formerly Any) fields, so every descent step
+    # boxed + dynamically dispatched the `_zpg_*` ops (438M allocs wedged ip_sudoku). `trie_srcs` has
+    # an abstract eltype so the comprehension can't be statically narrow; `identity.(…)` re-infers the
+    # eltype from the actual factors — concrete when the query's sources are homogeneous (the common
+    # case), a small union otherwise, which the parameterized ProductZipperG union-splits.
+    factors = identity.([src isa ACTSource ? source_factor(src, btm, mmaps) : source_factor(src, btm)
+                         for src in trie_srcs])
 
     primary = popfirst!(factors)
     prz = ProductZipperG(primary, factors)
