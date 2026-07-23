@@ -46,17 +46,48 @@ end  # 0..63 children follow
 Encode an ExprTag as a single byte.  Mirrors `item_byte` in mork_expr.
 """
 function item_byte(tag::ExprTag)::UInt8
+    # BOUNDS CHECKS RESTORED 2026-07-23 — upstream has them; this port had dropped them.
+    #   upstream `mork/expr/src/lib.rs:117-124` (read, not inferred):
+    #     Tag::NewVar        => { 0b1100_0000 | 0 }
+    #     Tag::SymbolSize(s) => { debug_assert!(s > 0 && s < 64); 0b1100_0000 | s }
+    #     Tag::VarRef(i)     => { debug_assert!(i < 64);          0b1000_0000 | i }
+    #     Tag::Arity(a)      => { debug_assert!(a < 64);          0b0000_0000 | a }
+    #   ours (before): `0b11000000 | (tag.size & 0x3f)` — MASKED instead of asserting.
+    #
+    # The mask does not clamp, it WRAPS, and it wraps ACROSS A TAG BOUNDARY: 64 is
+    # 0b0100_0000, so `64 & 0x3f == 0` and the byte becomes 0b1100_0000 — which `byte_item`
+    # (`lib.rs:128`) decodes as **NewVar**. An oversized symbol therefore did not merely lose
+    # bytes, it could emit a structurally DIFFERENT node, silently. Observed downstream as a
+    # 64-char id written and read back as 63 chars, so the lookup that used the original id
+    # could never match its own atom (`WorldModel/src/Braid.jl` `content_id`; caught by a
+    # round-trip property test, not by inspection).
+    #
+    # WHY 64 AT ALL — not an encoding accident. Upstream states three deliberate assumptions
+    # "to avoid abuse" (MORK wiki `Home.md`, §"Where to start" → "Information about numerical
+    # computations in these environments"; https://github.com/trueagi-io/MORK/wiki#where-to-start):
+    #   a) max EXPRESSION size 64   — to avoid slow LISP-style processing
+    #   b) max SYMBOL size 64       — to avoid slow string indexing
+    #   c) max VARIABLE MENTIONS 64 — to avoid large unification problems
+    #                                 ("instead of the more idiomatic many smaller ones")
+    # These are a performance CONTRACT, not a budget to spend to the last byte. The lesson from
+    # the CID incident is (b): A LONG OPAQUE STRING IS NOT A SYMBOL — digests, UUIDs, paths and
+    # serialized payloads do not belong in symbol position.
+    #
+    # `@assert` vs Rust's debug-only `debug_assert!`: Julia asserts are on by default, so this is
+    # closer to upstream's INTENT (catch the violation) than a release Rust build is. The `& 0x3f`
+    # masks are kept as belt-and-braces for `--check-bounds=no`, where asserts may be elided.
     if tag isa ExprNewVar
-        ;
         return 0b11000000
     elseif tag isa ExprVarRef
-        ;
+        @assert tag.idx < 64 "VarRef index $(tag.idx) exceeds the Rule of 64 (max 63)"
         return 0b10000000 | (tag.idx & 0x3f)
     elseif tag isa ExprSymbol
-        ;
+        @assert 0 < tag.size < 64 "symbol size $(tag.size) violates the Rule of 64 (1..63 bytes). \
+A long opaque string is not a symbol — MORK wiki assumption (b), 'max symbol size 64 to avoid slow \
+string indexing'. Store digests/paths/payloads as VALUES, not in symbol position."
         return 0b11000000 | (tag.size & 0x3f)
     elseif tag isa ExprArity
-        ;
+        @assert tag.arity < 64 "arity $(tag.arity) exceeds the Rule of 64 (max 63)"
         return 0b00000000 | (tag.arity & 0x3f)
     else
         ;
