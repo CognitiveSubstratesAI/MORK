@@ -4648,13 +4648,18 @@ const _MORK_TS = @testset "MORK" begin
         b128(x) = MORK._be_bytes(UInt128(x))
         u128(b) = MORK._read_u128(b)
         u64r(b) = ntoh(only(reinterpret(UInt64, b[1:8])))
+        # count/leading ops return u32 for EVERY integer width in Rust (`u128::count_ones() -> u32`),
+        # so upstream emits 4 bytes — verified directly for u8 (`\0\0\0\x02`). Was read as u64 here,
+        # encoding the pre-2026-07-23 bug where our port emitted the input width. Result VALUES (≤128)
+        # fit in u32 fine.
+        u32r(b) = ntoh(only(reinterpret(UInt32, b[1:4])))
         allones = ~UInt128(0)
         hi = UInt128(0x0102030405060708090a0b0c0d0e0f10)
-        # population counts span all 128 bits (was capped at 64)
-        @test u64r(MORK.pure_apply("u128_count_ones", [b128(allones)])) == 128
-        @test u64r(MORK.pure_apply("u128_count_zeros", [b128(0)])) == 128
-        @test u64r(MORK.pure_apply("u128_leading_zeros", [b128(0)])) == 128
-        @test u64r(MORK.pure_apply("u128_leading_ones", [b128(allones)])) == 128
+        # population counts span all 128 bits (was capped at 64); result width is u32
+        @test u32r(MORK.pure_apply("u128_count_ones", [b128(allones)])) == 128
+        @test u32r(MORK.pure_apply("u128_count_zeros", [b128(0)])) == 128
+        @test u32r(MORK.pure_apply("u128_leading_zeros", [b128(0)])) == 128
+        @test u32r(MORK.pure_apply("u128_leading_ones", [b128(allones)])) == 128
         # N-ary folds over >2 args
         @test u128(MORK.pure_apply("u128_and", [b128(allones), b128(allones), b128(hi)])) ==
             hi
@@ -4668,7 +4673,10 @@ const _MORK_TS = @testset "MORK" begin
             (allones & ~hi)
         @test u128(MORK.pure_apply("u128_swap_bytes", [b128(hi)])) == bswap(hi)
         @test u128(MORK.pure_apply("u128_reverse_bits", [b128(hi)])) == bitreverse(hi)
-        @test u128(MORK.pure_apply("u128_shl", [b128(1), MORK._be_bytes(UInt64(100))])) ==
+        # shift amount is u32 (4 bytes) — upstream shl/shr all take `y: u32` (pure.rs). Was UInt64
+        # (8 bytes) here, matching the old _read_u32s bug; a real 4-byte shift (e.g. ip_sudoku's
+        # sub_i32) BoundsError'd against the old 8-byte read.
+        @test u128(MORK.pure_apply("u128_shl", [b128(1), MORK._be_bytes(UInt32(100))])) ==
             (UInt128(1) << 100)
     end
 

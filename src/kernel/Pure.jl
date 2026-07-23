@@ -51,7 +51,9 @@ _read_u128(b) = ntoh(only(reinterpret(UInt128, b[1:16])))
 _read_i128(b) = ntoh(only(reinterpret(Int128, b[1:16])))
 _read_f32(b) = ntoh(only(reinterpret(Float32, b[1:4])))
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
-_read_u32s(b) = UInt32(_read_u64(b))   # shift amounts stored as u64
+_read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr all take `y: u32`
+                               # (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
+                               # BoundsError'd on the 4-byte shift ip_sudoku passes (sub_i32 → i32).
 
 # General 3-input bitwise LUT (x86 vpternlog) — the result bit for each bit position
 # is bit ((x<<2)|(y<<1)|z) of the selector `s`. Computed via the 8 minterms, which is
@@ -98,10 +100,13 @@ const PURE_OPS = Dict{String, Function}(
     "u8_ones" => (a) -> ~UInt8(0),
     "u8_not" => (a) -> ~_read_u8(a[1]),
     "u8_swap_bytes" => (a) -> _read_u8(a[1]),
-    "u8_leading_zeros" => (a) -> UInt8(leading_zeros(_read_u8(a[1]))),
-    "u8_leading_ones" => (a) -> UInt8(leading_ones(_read_u8(a[1]))),
-    "u8_count_zeros" => (a) -> UInt8(count_zeros(_read_u8(a[1]))),
-    "u8_count_ones" => (a) -> UInt8(count_ones(_read_u8(a[1]))),
+    # count/leading/trailing bit-ops return u32 for EVERY integer width in Rust (x.count_ones() :: u32),
+    # so upstream emits 4 bytes; our port emitted the INPUT width (1 byte for u8), which cascaded into
+    # u32_eq/ifnz failing on the width mismatch (ip_sudoku 71 vs 102 fixpoint). Fixed 2026-07-23 to u32.
+    "u8_leading_zeros" => (a) -> UInt32(leading_zeros(_read_u8(a[1]))),
+    "u8_leading_ones" => (a) -> UInt32(leading_ones(_read_u8(a[1]))),
+    "u8_count_zeros" => (a) -> UInt32(count_zeros(_read_u8(a[1]))),
+    "u8_count_ones" => (a) -> UInt32(count_ones(_read_u8(a[1]))),
     "u8_reverse_bits" => (a) -> bitreverse(_read_u8(a[1])),
     "u8_nand" => (a) -> ~(_read_u8(a[1]) & _read_u8(a[2])),
     "u8_andn" => (a) -> _read_u8(a[1]) & ~_read_u8(a[2]),
@@ -119,10 +124,10 @@ const PURE_OPS = Dict{String, Function}(
     "u16_ones" => (a) -> ~UInt16(0),
     "u16_not" => (a) -> ~_read_u16(a[1]),
     "u16_swap_bytes" => (a) -> bswap(_read_u16(a[1])),
-    "u16_leading_zeros" => (a) -> UInt16(leading_zeros(_read_u16(a[1]))),
-    "u16_leading_ones" => (a) -> UInt16(leading_ones(_read_u16(a[1]))),
-    "u16_count_zeros" => (a) -> UInt16(count_zeros(_read_u16(a[1]))),
-    "u16_count_ones" => (a) -> UInt16(count_ones(_read_u16(a[1]))),
+    "u16_leading_zeros" => (a) -> UInt32(leading_zeros(_read_u16(a[1]))),
+    "u16_leading_ones" => (a) -> UInt32(leading_ones(_read_u16(a[1]))),
+    "u16_count_zeros" => (a) -> UInt32(count_zeros(_read_u16(a[1]))),
+    "u16_count_ones" => (a) -> UInt32(count_ones(_read_u16(a[1]))),
     "u16_reverse_bits" => (a) -> bitreverse(_read_u16(a[1])),
     "u16_nand" => (a) -> ~(_read_u16(a[1]) & _read_u16(a[2])),
     "u16_andn" => (a) -> _read_u16(a[1]) & ~_read_u16(a[2]),
@@ -161,10 +166,10 @@ const PURE_OPS = Dict{String, Function}(
     "u64_ones" => (a) -> ~UInt64(0),
     "u64_not" => (a) -> ~_read_u64(a[1]),
     "u64_swap_bytes" => (a) -> bswap(_read_u64(a[1])),
-    "u64_leading_zeros" => (a) -> UInt64(leading_zeros(_read_u64(a[1]))),
-    "u64_leading_ones" => (a) -> UInt64(leading_ones(_read_u64(a[1]))),
-    "u64_count_zeros" => (a) -> UInt64(count_zeros(_read_u64(a[1]))),
-    "u64_count_ones" => (a) -> UInt64(count_ones(_read_u64(a[1]))),
+    "u64_leading_zeros" => (a) -> UInt32(leading_zeros(_read_u64(a[1]))),
+    "u64_leading_ones" => (a) -> UInt32(leading_ones(_read_u64(a[1]))),
+    "u64_count_zeros" => (a) -> UInt32(count_zeros(_read_u64(a[1]))),
+    "u64_count_ones" => (a) -> UInt32(count_ones(_read_u64(a[1]))),
     "u64_reverse_bits" => (a) -> bitreverse(_read_u64(a[1])),
     "u64_nand" => (a) -> ~(_read_u64(a[1]) & _read_u64(a[2])),
     "u64_andn" => (a) -> _read_u64(a[1]) & ~_read_u64(a[2]),
@@ -607,10 +612,10 @@ const PURE_OPS = Dict{String, Function}(
     "u128_shr" => (a) -> _read_u128(a[1]) >> _read_u32s(a[2]),
     "u128_swap_bytes" => (a) -> bswap(_read_u128(a[1])),
     "u128_reverse_bits" => (a) -> bitreverse(_read_u128(a[1])),
-    "u128_leading_zeros" => (a) -> UInt64(leading_zeros(_read_u128(a[1]))),
-    "u128_leading_ones" => (a) -> UInt64(leading_ones(_read_u128(a[1]))),
-    "u128_count_zeros" => (a) -> UInt64(count_zeros(_read_u128(a[1]))),
-    "u128_count_ones" => (a) -> UInt64(count_ones(_read_u128(a[1]))),
+    "u128_leading_zeros" => (a) -> UInt32(leading_zeros(_read_u128(a[1]))),
+    "u128_leading_ones" => (a) -> UInt32(leading_ones(_read_u128(a[1]))),
+    "u128_count_zeros" => (a) -> UInt32(count_zeros(_read_u128(a[1]))),
+    "u128_count_ones" => (a) -> UInt32(count_ones(_read_u128(a[1]))),
     "u128_ones" => (_) -> ~UInt128(0),
     "u128_zeros" => (_) -> UInt128(0),
     "u128_ternarylogic" =>
@@ -619,7 +624,7 @@ const PURE_OPS = Dict{String, Function}(
         ),
 
     # ── u32 eq + ternary logic (P-2: now reads the selector + all 3 inputs) ──
-    "u32_eq" => (a) -> UInt32(_read_u32(a[1]) == _read_u32(a[2]) ? 1 : 0),
+    "u32_eq" => (a) -> UInt8(_read_u32(a[1]) == _read_u32(a[2]) ? 1 : 0),   # bool = 1 byte (upstream 1u8/0u8)
     "u32_ternarylogic" =>
         (a) -> _ternarylogic(
             _read_u32(a[1]), _read_u32(a[2]), _read_u32(a[3]), _read_u8(a[4])
