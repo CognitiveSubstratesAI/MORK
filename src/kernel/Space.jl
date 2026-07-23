@@ -504,11 +504,16 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     prz = ProductZipperG(primary, factors)
     prefix_len = pzg_root_prefix_len(prz)
 
-    while pzg_to_next_val!(prz)
-        pzg_focus_factor(prz) != pzg_factor_count(prz) - 1 && continue
-
-        combined = collect(pzg_origin_path(prz))
-        fps = pzg_factor_paths(prz)
+    # Per-complete-match processing, shared by the naive enumerator AND the coreferential DFS. Returns
+    # false ⇒ early-terminate the query. Factored out of the old inline `while` so the SOURCE path can
+    # route through `_coreferential_transition!` (the coref-source-join port, 2026-07-23): upstream runs
+    # the SAME coref DFS over ProductZipperG (space.rs query_multi_i:1150 + 1227), which PRUNES the naive
+    # cross-product explosion (ip_sudoku's higher-order meta-exec). `candidate` is captured + mutated
+    # (boxed) so both drivers share the count. The old naive filters (focus_factor / child_count) are
+    # preserved verbatim so coref and naive produce identical results — coref just prunes the traversal.
+    process_match = function (loc)
+        combined = collect(pzg_origin_path(loc))
+        fps = pzg_factor_paths(loc)
         boundaries = vcat(0, [fp + prefix_len for fp in fps], length(combined))
 
         empty!(pairs_scratch)
@@ -523,19 +528,18 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
             expr = MORK.Expr(combined[lo:hi])
             push!(pairs_scratch, (ee, ExprEnv(UInt8(i), UInt8(0), UInt32(0), expr)))
         end
-        all_sliced || continue
+        all_sliced || return true
 
-        pzg_child_count(prz) != 0 && (empty!(bindings_scratch); continue)
+        pzg_child_count(loc) != 0 && (empty!(bindings_scratch); return true)
 
         # SP-1 fix (audit 2026-06-04): was `try …unify… catch; nothing end`, which
         # swallowed EVERY exception as a benign no-match. `_expr_unify_inplace!` returns
         # its failure as a VALUE (≠ true) on genuine non-unification and only THROWS on a
         # real bug (malformed expr / BoundsError) — so the catch could only hide bugs.
-        # The root paths (`_space_query_multi_inner!`) call it directly; match them.
         result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
         if result !== true
             empty!(bindings_scratch)
-            continue
+            return true
         end
 
         # Apply bindings to each grounded source and call the function
@@ -543,23 +547,49 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         empty!(bindings_scratch)
 
         if isempty(grnd_idxs)
-            # No grounded sources — emit directly
             candidate += 1
-            effect(trie_bindings, combined) || break
+            return effect(trie_bindings, combined)
         else
-            # For each grounded source: substitute bound variables, call, emit per result
-            emit = true
             for k in grnd_idxs
                 src = src_types[k]::GroundedSource
                 result_paths = _grounded_call_with_bindings(src, trie_bindings)
-                isempty(result_paths) && (emit=false; break)
+                isempty(result_paths) && break
                 for rpath in result_paths
                     candidate += 1
                     merged = vcat(combined, rpath)
-                    effect(trie_bindings, merged) || return candidate
+                    effect(trie_bindings, merged) || return false
                 end
-                emit = false  # already emitted above
             end
+            return true
+        end
+    end
+
+    if _USE_COREF_JOIN[]
+        # Coreferential DFS over the ProductZipperG — THE coref-source-join fix. Binds higher-order
+        # vars structurally (O(depth)), pruning the Cartesian product the naive enumerator explodes on
+        # (ip_sudoku / dtl). Mirrors the non-source `_space_query_multi_inner!` coref branch: sticky
+        # large-stack Task (deep bc recursion), BreakQuery early-exit. cstack = trie source patterns
+        # reversed (LIFO pop → in-order); grounded sources are NOT in the DFS (applied per match above).
+        cstack = collect(reverse(trie_ees))
+        crefs = Int[]
+        _coref_work = function ()
+            try
+                _coreferential_transition!(prz, cstack, crefs, function (loc)
+                    process_match(loc) || throw(BreakQuery())
+                    nothing
+                end)
+            catch e
+                e isa BreakQuery || rethrow()
+            end
+        end
+        _t = Task(_coref_work, _COREF_STACK_SIZE)
+        _t.sticky = true
+        schedule(_t)
+        fetch(_t)
+    else
+        while pzg_to_next_val!(prz)
+            pzg_focus_factor(prz) != pzg_factor_count(prz) - 1 && continue
+            process_match(prz) || break
         end
     end
 
@@ -928,6 +958,39 @@ end
 @inline function _coref_to_next_k_path!(loc::ProductZipper, k::Int)
     pz_to_next_k_path!(loc, k)
 end
+
+# ── ProductZipperG (source-aware) — the coref-source-join port (2026-07-23) ──────────────────────
+# Same `_coref_*` interface as ProductZipper, backed by ProductZipperG's coref primitives (PathMap
+# ProductZipperG.jl). This lets `_coreferential_transition!` run over the SOURCE query path
+# (space_query_multi_i), giving it the same coreferential PRUNING the non-source path has and killing
+# the naive cross-product explosion (ip_sudoku). Upstream does exactly this: query_multi_i builds a
+# ProductZipperG and calls coreferential_transition over it (space.rs:1150, 1227).
+@inline _coref_child_mask(loc::ProductZipperG) = pzg_child_mask(loc)
+@inline _coref_path(loc::ProductZipperG) = pzg_path(loc)
+@inline _coref_path_length(loc::ProductZipperG) = length(pzg_path(loc))
+# Zero-copy bound-VarRef alias: ProductZipperG holds the FULL combined path in its PRIMARY factor
+# zipper (descended per byte, mirroring the secondaries), so delegate the buffer chain there.
+@inline _coref_path_buf(loc::ProductZipperG) = _coref_path_buf(loc.primary)
+@inline _coref_descend_byte!(loc::ProductZipperG, b::UInt8) = pzg_descend_to_byte!(loc, b)
+@inline _coref_ascend_byte!(loc::ProductZipperG) = pzg_ascend_byte!(loc)
+@inline _coref_ascend!(loc::ProductZipperG, n::Int) = pzg_ascend!(loc, n)
+@inline _coref_descend_to_existing_byte!(loc::ProductZipperG, b::UInt8) = pzg_descend_to_existing_byte!(loc, b)
+@inline _coref_descend_to_check!(loc::ProductZipperG, bytes) = pzg_descend_to_check!(loc, bytes)
+@inline _coref_descend_first_k_path!(loc::ProductZipperG, k::Int) = pzg_descend_first_k_path!(loc, k)
+@inline _coref_to_next_k_path!(loc::ProductZipperG, k::Int) = pzg_to_next_k_path!(loc, k)
+
+# A DependentZipper (the `!=` source) can BE ProductZipperG's primary; its path bottoms out in a
+# ReadZipperCore (dpz_path = rz_path(primary)), so the path-buffer chain terminates there.
+@inline _coref_path_buf(loc::DependentZipper) = _coref_path_buf(loc.primary)
+@inline _coref_path_length(loc::DependentZipper) = length(dpz_path(loc))
+
+# A PrefixZipper (ACT / prefix-scoped source, and the wrapper ip_sudoku's factors actually use:
+# PrefixZipper{DependentZipper{ReadZipper}}) keeps its OWN full absolute-path buffer `pz.path`
+# (tail-mutated like ReadZipperCore.prefix_buf: append on descend, resize on ascend), with the first
+# `origin_depth` bytes being the root prefix. So the zero-copy VarRef alias uses it directly — no
+# further delegation into the wrapped source, since pz.path already holds the whole combined path.
+@inline _coref_path_buf(loc::PrefixZipper) = (loc.path, loc.origin_depth)
+@inline _coref_path_length(loc::PrefixZipper) = length(loc.path) - loc.origin_depth
 
 # Filtered child lists using precomputed bitmasks — avoids calling byte_item on
 # content bytes (0x40-0x7F are reserved and throw; e.g. 'e' = 0x65 from "edge").
