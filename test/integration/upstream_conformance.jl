@@ -14,10 +14,34 @@
 # higher-order multi-source joins (counter-machine step 2: >2M transitions vs upstream ~1k).
 # See docs/tracking/session-log.md 2026-07-06 and project_mork_mm2_corpus_control08_bug.
 #
-# Guarded on the built binary being present (skips cleanly like z3_roundtrip.jl where absent).
+# A MISSING ORACLE INPUT IS A FAILURE, NOT A SKIP (2026-07-23). Every guard below used to degrade
+# to `@test_skip`, so a tree with no built Rust binary ran this file to completion, printed one
+# `@info`, and reported GREEN — with ZERO differential coverage. That is the same defect class as the
+# `Base.run` shadowing fixed in c543841 one commit earlier: the oracle claims coverage it does not
+# have, and every downstream "the port is correct" conclusion rests on nothing. Since this is the ONLY
+# check of our Julia port against real upstream behaviour, its absence must be LOUD.
+#
+# Escape hatch, for environments that genuinely cannot build Rust: MORK_ALLOW_MISSING_ORACLE=1
+# downgrades to a warning + skip. It must be set DELIBERATELY — the default is fail-closed, because
+# an unset variable should never buy silence ([[feedback_guarantee_not_convention]]).
 
 using Test
 using MORK
+
+const _ALLOW_MISSING = get(ENV, "MORK_ALLOW_MISSING_ORACLE", "") == "1"
+
+"""Report a missing oracle input: FAILS by default, warns+skips only under an explicit opt-out."""
+function _oracle_missing(what::AbstractString, fix::AbstractString)
+    if _ALLOW_MISSING
+        @warn "ORACLE INPUT MISSING — differential coverage REDUCED (MORK_ALLOW_MISSING_ORACLE=1)" what fix
+        @test_skip what
+    else
+        @error "ORACLE INPUT MISSING — this is a FAILURE, not a skip. Without it the port has NO \
+                independent check against upstream. Fix it, or set MORK_ALLOW_MISSING_ORACLE=1 to \
+                accept reduced coverage deliberately." what fix
+        @test false
+    end
+end
 
 const _UP_MORK = let
     cands = [expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"),
@@ -75,8 +99,8 @@ end
 
 @testset "upstream conformance (differential vs built Rust `mork`)" begin
     if _UP_MORK === nothing
-        @info "upstream `mork` binary not built (dev-zone/MORK/target/release/mork) — skipping differential conformance"
-        @test_skip true
+        _oracle_missing("upstream Rust `mork` binary (the ONLY differential oracle for this port)",
+                        "cd ~/JuliaAGI/dev-zone/MORK && cargo build --release")
     else
         # (1) tractable relational join — the DEFAULT engine AND the naive opt-out both match upstream.
         jf = joinpath(_FIXTURE, "conformance_join.mm2")
@@ -100,7 +124,8 @@ end
             @test any(l -> startswith(l, "(HALTED "), our_cm)      # it actually halted
             @test our_cm == up_cm                                   # DEFAULT ≡ upstream
         else
-            @test_skip "counter_machine_5.mm2 absent from upstream resources"
+            _oracle_missing("counter_machine_5.mm2 (the higher-order 5-factor reflective join — the \
+                             ONE case that caught the naive-default explosion)", "expected at $cm")
         end
 
         # (3) lte self-spawning recursion — upstream halts (~60 steps); the DEFAULT halts & conforms.
@@ -110,7 +135,8 @@ end
         if isfile(lte)
             @test _ours_default(lte, 200) == _upstream(lte, 200)
         else
-            @test_skip "lte_selfspawn_b6.mm2 fixture absent"
+            _oracle_missing("lte_selfspawn_b6.mm2 (self-spawning recursion halting check)",
+                            "expected at $lte")
         end
 
         # (4) Set_Ops_06 symmetric-difference — 4-factor conjunction + O-sink; DEFAULT ≡ upstream.
@@ -119,7 +145,8 @@ end
         if isfile(so)
             @test _ours_default(so, 1_000) == _upstream(so, 1_000)
         else
-            @test_skip "Set_Ops_06 program absent"
+            _oracle_missing("Set_Ops_06_Symmetric_Difference.mm2 (4-factor conjunction + O-sink)",
+                            "expected at $so")
         end
 
         # (5) Going-wide DEF/main-loop idiom (fork/join multi-source selection). Under the naive
@@ -136,9 +163,19 @@ end
                     @test our_gw == _upstream(gw, 100_000)             # DEFAULT ≡ upstream
                     @test any(l -> occursin("(OUTPUT 1)", l), our_gw) == want_out
                 else
-                    @test_skip "$name absent"
+                    _oracle_missing("$name (going-wide fork/join idiom)", "expected at $gw")
                 end
             end
+        end
+
+        # ASSERTION FLOOR — the guard against this file going inert AGAIN. Counting is the only way
+        # to detect an oracle that runs to completion while asserting nothing: c543841's bug produced
+        # exactly that shape (a green file contributing 0 of its 15 assertions), and no amount of
+        # "0 failed" can distinguish it from real coverage. If a fixture is legitimately retired,
+        # LOWER this number in the same commit — deliberately, in review.
+        let n = Test.get_testset().n_passed
+            @test n >= 15 || error("upstream conformance contributed only $n assertions (floor 15) \
+                                    — the oracle has gone (partly) INERT; find out why before trusting green")
         end
     end
 end

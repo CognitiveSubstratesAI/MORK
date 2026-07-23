@@ -14,12 +14,27 @@ end
 # PathMap module and PathMap type share the same name — alias the type
 const PM = PathMap.PathMap
 
-@testset "MORK" begin
+# Fails the build on any testset that runs but asserts nothing — see the file header for the two
+# inert oracles that motivated it. Captured into `_MORK_TS` and checked AFTER the suite.
+include("inert_testset_guard.jl")
+
+const _MORK_TS = @testset "MORK" begin
     if _HAS_AQUA
         @testset "Aqua quality" begin
             # deps_compat check_extras=false: [extras] are dev/test tools; runtime [deps]
             # (Base64, PathMap, PrecompileTools) carry [compat]. PathMap is dev-linked via
             # [sources] so deps_compat skips it.
+            # NOTE (2026-07-23) on `persistent_tasks` erroring with `IOError: could not spawn …
+            # (EINVAL)`: that is a defect of the TEST INVOCATION, not of MORK, and it is fixed in
+            # tools/run_tests.sh — do NOT "fix" it by passing persistent_tasks=false. Aqua spawns
+            # via `run(cmd, stdin, stdout, stderr; wait=false)` (persistent_tasks.jl:114), passing
+            # the CURRENT stdin as an explicit stdio handle. Under `printf '…' | julia -i`, stdin is
+            # a PipeEndpoint that printf has already CLOSED (`isopen(stdin) == false`), and libuv
+            # rejects a closed handle with EINVAL. Isolated: default-stdio spawn OK, explicit-stdio
+            # spawn FAILS, and the same explicit spawn succeeds under `julia -i … < /dev/null`.
+            # (A first pass mis-attributed this to PathMap being a local-path [sources] dep, citing
+            # Aqua's docstring. PathMap's OWN suite fails identically and has no [sources] at all —
+            # which falsified it. Verify the discriminating case, don't stop at a plausible cause.)
             Aqua.test_all(MORK; deps_compat=(check_extras=false,))
         end
     else
@@ -4699,3 +4714,6 @@ const PM = PathMap.PathMap
     end
 
 end
+
+# Post-suite: a testset that asserted NOTHING must fail the build, not read as green.
+assert_no_inert_testsets(_MORK_TS)
