@@ -720,12 +720,15 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # Defined in kernel/TrieJoin.jl; validated ≡ ProductZipper (test/integration/trie_join.jl).
     if isempty(prefix) && _TRIE_JOIN_ENABLED[]
         _tj_ok, _tj_hps = _classify_empty_tail(sources)
-        _tj_ok && return _trie_join_emit!(btm, sources, _tj_hps, effect,
-                                          bindings_scratch, pairs_scratch)
+        if _tj_ok
+            return _trie_join_emit!(btm, sources, _tj_hps, effect, bindings_scratch, pairs_scratch)
+        end
         # P2: general binary join (e.g. (edge $x $y)(edge $y $z)) via key-rotation.
         _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
-        _bj_ok && return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
+        if _bj_ok
+            return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
                                             effect, bindings_scratch, pairs_scratch)
+        end
         # P2c: compound-arg binary join — shared var NESTED in a compound argument,
         # e.g. ((join ($ctx case/0)) $a)(eval ($a) -> $b). Tried only after the
         # top-level P2 fails. Defined in kernel/TrieJoin.jl.
@@ -738,8 +741,9 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         # P3: strict k≥3 chain join (e.g. (edge $x $y)(edge $y $z)(edge $z $w)) via
         # recursive streaming. Non-chain k≥3 shapes fall through to ProductZipper.
         _ch_ok, _ch_hps = _classify_chain(sources)
-        _ch_ok && return _chain_join_emit!(btm, sources, _ch_hps, effect,
-                                           bindings_scratch, pairs_scratch)
+        if _ch_ok
+            return _chain_join_emit!(btm, sources, _ch_hps, effect, bindings_scratch, pairs_scratch)
+        end
         # P5: pipelined hash join for any CONNECTED k≥3 conjunction the chain rejects
         # (e.g. going-wide (0 join) case/2 = k-way star + eval consumer). Defined in
         # kernel/TrieJoin.jl. Bails to ProductZipper on a higher-order (var) key.
@@ -820,7 +824,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
             candidate += 1
             bindings_out = copy(bindings_scratch)   # fresh Dict (effect may retain it)
             empty!(bindings_scratch)
-            return effect(bindings_out, MORK.Expr(combined))
+            effect(bindings_out, MORK.Expr(combined))
         else
             empty!(bindings_scratch)
             return true
@@ -1396,19 +1400,31 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     end
 
     # Build read_btm.
-    # Prefix-gated: if the pattern's constant prefix cannot match _EXEC_PREFIX,
-    # use s.btm directly (exec atom was already removed by the driver — it couldn't
-    # match a data pattern anyway).  ReadZipperCore captures root_node as an Rc
-    # snapshot at construction; COW writes during the match closure fork s.btm's
-    # spine independently, so they are invisible to the ongoing query (same next-step
-    # semantics as the old separate-read_btm path). Self-feeding data rules are safe.
     #
-    # If the pattern CAN match exec atoms (meta-rules with (exec ...) patterns),
-    # fall through to the pjoin path so the atom is visible in an isolated map.
+    # BUG (found via DTL decision-tree-learning investigation, confirmed by trace: a
+    # single-conjunct rule wrote 976 facts from 56 legitimate matches): the comment that
+    # used to justify `read_btm = s.btm` directly ("ReadZipperCore captures root_node as
+    # an Rc snapshot at construction") is FALSE — `read_zipper`/`write_zipper` both alias
+    # `m.root` without ever calling `copy` on it (no refcount bump), so `refcount(root_rc)`
+    # stays 1 and `_wz_ensure_write_unique!` mutates the SAME node object the query is
+    # scanning, instead of COW-forking away from it. When a write's output shape can
+    # re-match the read pattern (e.g. a written "leaf" fact has the same functor/arity as
+    # the query, as in STEP(1,11)'s `total_gini_impurity_choice`), the newly written fact
+    # feeds back into the SAME ongoing scan and cascades.
     #
-    # Saves ~12 KB/step (singleton + spine) on the overwhelmingly common data-rule path.
+    # Upstream (space.rs:1582, `transform_multi_multi_io`) ALWAYS isolates the read side:
+    # `let mut read_copy = self.btm.clone();` — a cheap Arc-bump PathMap clone, unconditional
+    # for every transform, not gated on pattern shape. Mirror that here: bump the root's
+    # refcount so a same-scan write is forced to COW-fork instead of mutating in place. This
+    # is a single TrieNodeODRc refcount bump (no pjoin, no singleton materialization), so the
+    # non-meta fast path stays cheap — just no longer unsound.
+    #
+    # Meta-patterns (can match `(exec ...)` atoms) still need the pjoin path below: the
+    # driver already removed this exec fact from s.btm, so a self-referential rule needs it
+    # re-inserted into the isolated read_btm to see its own just-popped fact.
     read_btm = if !_pat_overlaps_exec_prefix(pat_expr)
-        s.btm                        # fast path: no pjoin, no singleton
+        _ensure_root!(s.btm)   # exported from PathMap, in scope via `using PathMap`
+        PathMap{UnitVal, GlobalAlloc}(copy(s.btm.root::TrieNodeODRc{UnitVal, GlobalAlloc}), s.btm.root_val, s.btm.alloc)
     else
         # Meta-pattern: re-insert exec atom into an isolated read_btm so the
         # pattern can see it without the driver re-selecting it.
