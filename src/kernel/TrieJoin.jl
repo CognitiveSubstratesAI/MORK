@@ -332,11 +332,34 @@ end
 # byte-span of the sub-expression at the target position. Variable-length leaves are
 # walked dynamically via `expr_span`, so the same structural path resolves across all
 # atoms matching the factor's arity tree. Returns nothing on a structural mismatch.
-function _navigate_path(atom::Vector{UInt8}, path::Vector{Int})::Union{Nothing, Vector{UInt8}}
+"""
+    _navigate_path(atom, path) -> Nothing | :hov | Vector{UInt8}
+
+Walk `atom` down `path` (a sequence of 1-based child indices), mirroring the descent
+`_scan_factor_vars` used to record where a shared variable sits in the PATTERN. Three
+outcomes, NOT two — this used to collapse the last two into a single `nothing`, which
+broke the P5/P2c soundness contract (found 2026-07-24 investigating a DTL query that
+silently returned zero matches instead of falling back to ProductZipper):
+  - `nothing` — genuine structural mismatch (wrong arity/symbol at this depth): the
+    stored atom does not belong to this relation at all, safe to skip.
+  - `:hov`    — the stored atom has a VARIABLE at a position where the pattern expects
+    to descend FURTHER (e.g. pattern position holds `(i32_from_string \$y)`, a 2-node
+    compound, but the stored fact — a type-relation like `(total_gini_impurity (->
+    (\$yes_no_l \$yes_no_r) ...))` — has a bare variable there instead). This is NOT "no
+    match": a free variable unifies with ANY value, so the caller cannot decide via
+    positional trie-keying and MUST bail to the full unification path (ProductZipper).
+  - `Vector{UInt8}` — the value found at `path`.
+Callers (`_atom_varvals`, `_nested_keymap`) already handle the SEPARATE case where the
+FINAL extracted value itself contains a variable (via `_expr_has_var`); this function
+only needs to flag variables hit while descending TOWARD that final position.
+"""
+function _navigate_path(atom::Vector{UInt8}, path::Vector{Int})::Union{Nothing, Symbol, Vector{UInt8}}
     e = MORK.Expr(atom); off = 1
     for ci in path
         off <= length(atom) || return nothing
-        (byte_item(atom[off]) isa ExprArity) || return nothing
+        tag = byte_item(atom[off])
+        (tag isa ExprNewVar || tag isa ExprVarRef) && return :hov
+        tag isa ExprArity || return nothing
         off += 1
         for _ in 1:(ci - 1)
             off <= length(atom) || return nothing
@@ -373,6 +396,7 @@ function _nested_keymap(btm::PathMap{UnitVal}, leading_prefix::Vector{UInt8}, va
         full = vcat(leading_prefix, collect(zipper_path(rz)))
         key = _navigate_path(full, varpath)
         key === nothing && continue
+        key === :hov && (sound = false; break)          # var hit while descending → higher-order, bail
         _expr_has_var(key) && (sound = false; break)   # higher-order key → bail to ProductZipper
         push!(get!(m, key, Vector{Vector{UInt8}}()), full)
     end
@@ -551,13 +575,39 @@ end
 # Extract every var's value-bytes from one atom (keyed by absolute var id). Returns
 # nothing on structural mismatch, or :hov if any value carries a variable (higher-order
 # stored atom → caller must bail to ProductZipper).
+"""
+    _outer_head_prefix(lp) -> Nothing | Vector{UInt8}
+
+Truncate a factor's (possibly deep) ground prefix `lp` down to just its OUTERMOST
+arity tag + head symbol — e.g. for `(total_gini_impurity (-> ((i32_from_string`, this
+returns `(total_gini_impurity` alone, one hop deep. Used as a soundness cross-check
+(2026-07-24): if a factor's full ground-prefix scan finds nothing, that alone doesn't
+prove the relation has no data — the relation could be a stored RULE whose own shape
+diverges from the query's assumed literal continuation (e.g. `(total_gini_impurity (->
+(\$yes_no_l \$yes_no_r) ...))` has a bare variable exactly where the query pattern's
+deeper ground prefix expects to keep matching literal `i32_from_string` bytes, so the
+deep-prefix scan never finds it at all). Checking existence at this shallow anchor lets
+the caller detect that divergence and bail to ProductZipper instead of silently
+reporting zero matches. Returns `nothing` if `lp` doesn't even start with a well-formed
+arity+symbol pair (nothing to check).
+"""
+function _outer_head_prefix(lp::Vector{UInt8})::Union{Nothing, Vector{UInt8}}
+    isempty(lp) && return nothing
+    (byte_item(lp[1]) isa ExprArity) || return nothing
+    length(lp) < 2 && return nothing
+    (byte_item(lp[2]) isa ExprSymbol) || return nothing
+    e = MORK.Expr(lp)
+    vcat(lp[1], expr_span(e, 2))
+end
+
 function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int,Vector{Int}})
     d = Dict{Int,Vector{UInt8}}()
     for (vid, path) in occ
         v = _navigate_path(atom, path)
         v === nothing && return nothing
+        v === :hov && return :hov
         _expr_has_var(v) && return :hov
-        d[vid] = v
+        d[vid] = v::Vector{UInt8}
     end
     d
 end
@@ -579,12 +629,28 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     for fi in 1:k
         lst = Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}[]
         rz = read_zipper_at_path(btm, lps[fi])
+        _n_scanned = 0
         while zipper_to_next_val!(rz)
+            _n_scanned += 1
             full = vcat(lps[fi], collect(zipper_path(rz)))
             vv = _atom_varvals(full, occ[fi])
             vv === nothing && continue            # structural non-match → not in this relation
             vv === :hov && return (false, 0)      # higher-order key → bail
             push!(lst, (full, vv::Dict{Int,Vector{UInt8}}))
+        end
+        # Soundness cross-check (2026-07-24): a deep ground-prefix scan finding NOTHING is
+        # not proof this relation has no data — it could be a stored higher-order RULE whose
+        # shape diverges from the query's literal continuation before our prefix even ends
+        # (see _outer_head_prefix docstring). Only trust "0 matches" once we've confirmed the
+        # relation is ALSO absent at its shallow, outermost anchor.
+        if _n_scanned == 0
+            shallow = _outer_head_prefix(lps[fi])
+            if shallow !== nothing && length(shallow) < length(lps[fi])
+                rz2 = read_zipper_at_path(btm, shallow)
+                if zipper_to_next_val!(rz2)
+                    return (false, 0)
+                end
+            end
         end
         atoms[fi] = lst
     end
