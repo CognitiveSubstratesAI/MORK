@@ -652,7 +652,7 @@ function _expr_apply_bindings(e::MORK.Expr, bindings::Dict{ExprVar, ExprEnv})::M
         b = buf[i]
         t = byte_item(b)
         if t isa ExprNewVar
-            binding = get(bindings, ExprVar(var_idx, UInt8(0)), nothing)
+            binding = get(bindings, (var_idx, UInt8(0)), nothing)
             if binding !== nothing
                 span = expr_span(binding.base, Int(binding.offset) + 1)
                 append!(out, span)
@@ -662,7 +662,7 @@ function _expr_apply_bindings(e::MORK.Expr, bindings::Dict{ExprVar, ExprEnv})::M
             var_idx += UInt8(1)
             i += 1
         elseif t isa ExprVarRef
-            binding = get(bindings, ExprVar(UInt8(0), t.index), nothing)
+            binding = get(bindings, (UInt8(0), t.index), nothing)
             if binding !== nothing
                 span = expr_span(binding.base, Int(binding.offset) + 1)
                 append!(out, span)
