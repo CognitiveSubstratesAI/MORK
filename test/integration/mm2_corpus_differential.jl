@@ -124,4 +124,71 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
         @test steps < cap
         @test !any(x -> occursin("(OUTPUT 1)", x), a)
     end
+    @testset "Going_Wide_21_Larger_Programs → halts, matches upstream exactly" begin
+        steps, cap, a = _corpus_atoms("Going_Wide_21_Larger_Programs.mm2", 20_000)
+        @test steps == 92                 # exact vs freshly-rebuilt upstream binary (2026-07-24)
+        @test length(a) == 26
+        for x in ("(OUTPUT A 1)", "(OUTPUT B 1)"); @test x in a; end
+    end
+
+    # ── 2026-07-24 corpus-completeness sweep: 15 programs never previously exercised by this file
+    #    (34-file corpus total, only 18 covered before today) — each verified against a freshly
+    #    rebuilt upstream `mork` binary (exact step count + atom count + content, modulo the known
+    #    cosmetic $a/$b-vs-anonymous-$/_N variable-name printing on rule/DEF echo lines). All 15
+    #    matched exactly; zero divergences found. See session-log 2026-07-24 (cont'd, part 2).
+    @testset "Basics_01_file1 → bare data, no rules" begin
+        _, _, a = _corpus_atoms("Basics_01_file1.mm2")
+        @test sort(a) == ["a", "b"]
+    end
+    @testset "Basics_02_file2 → bare data, no rules" begin
+        _, _, a = _corpus_atoms("Basics_02_file2.mm2")
+        @test sort(a) == ["b", "c"]
+    end
+    # Basics_06_Priority_* (6 variants): each is two `(exec <priority> (,) (,))` facts with an
+    # empty pattern/template (a pure no-op transition) — only the PRIORITY TAG'S ENCODING differs
+    # (bare 1/2-digit numeral, 1-tuple, 2-tuple, mixed order). All six converge to 0 data atoms
+    # regardless of tag shape; this locks in that priority-tag parsing doesn't silently misparse
+    # any of the encodings into something that fails to match/consume.
+    for fname in ("Basics_06_Priority_00_01.mm2", "Basics_06_Priority_(0_0)_(0_1).mm2",
+                  "Basics_06_Priority_0_(0_0).mm2", "Basics_06_Priority_0_1.mm2",
+                  "Basics_06_Priority_1_00.mm2", "Basics_06_Priority_(1)_(0_0).mm2")
+        @testset "$fname → 2 no-op execs consumed, 0 data atoms" begin
+            steps, cap, a = _corpus_atoms(fname)
+            @test steps == 2
+            @test isempty(a)
+        end
+    end
+    @testset "Control_01_Priority_Seq → 0 1 2 3" begin
+        _, _, a = _corpus_atoms("Control_01_Priority_Seq.mm2")
+        @test sort(a) == ["0", "1", "2", "3"]
+    end
+    @testset "Control_02_Exec_Chaining_Seq → 0 1 2 3" begin
+        _, _, a = _corpus_atoms("Control_02_Exec_Chaining_Seq.mm2")
+        @test sort(a) == ["0", "1", "2", "3"]
+    end
+    @testset "Control_03_Exec_Chaining_Fail_Seq → halts at 0 (chain breaks)" begin
+        steps, cap, a = _corpus_atoms("Control_03_Exec_Chaining_Fail_Seq.mm2")
+        @test steps == 2
+        @test a == ["0"]
+    end
+    @testset "Control_04_Select_b_c → (case b) (case c) b c" begin
+        _, _, a = _corpus_atoms("Control_04_Select_b_c.mm2")
+        @test sort(a) == ["(case b)", "(case c)", "b", "c"]
+    end
+    @testset "Set_Ops_01_Hardcoded_Locations → ret a-f" begin
+        _, _, a = _corpus_atoms("Set_Ops_01_Hardcoded_Locations.mm2")
+        @test _with_prefix(a, "(arg_a") == ["(arg_a a)", "(arg_a b)", "(arg_a c)"]
+        @test _with_prefix(a, "(arg_b") == ["(arg_b d)", "(arg_b e)", "(arg_b f)"]
+        @test _with_prefix(a, "(ret") == ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
+    end
+    @testset "Set_Ops_02_Parameterized_Locations → ret a-f + the union rule echoed" begin
+        _, _, a = _corpus_atoms("Set_Ops_02_Parameterized_Locations.mm2")
+        @test _with_prefix(a, "(arg_a") == ["(arg_a a)", "(arg_a b)", "(arg_a c)"]
+        @test _with_prefix(a, "(arg_b") == ["(arg_b d)", "(arg_b e)", "(arg_b f)"]
+        @test _with_prefix(a, "(ret") == ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
+    end
+    @testset "Setup_Hello_World → (say (Hello World !))" begin
+        _, _, a = _corpus_atoms("Setup_Hello_World.mm2")
+        @test "(say (Hello World !))" in a
+    end
 end
