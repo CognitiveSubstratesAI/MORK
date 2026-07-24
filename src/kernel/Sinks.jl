@@ -490,35 +490,89 @@ end
 """
     AndSink
 
-Logical AND of matched boolean flag values.
-Mirrors `AndSink` in sinks.rs (simplified).
+BITWISE-AND aggregation over grouped values — ports `AndSink` in sinks.rs (723-819).
+`(and <result> <source-var> <value>)`: group the matched entries by <result> (which carries a
+free variable placeholder), bitwise-AND the <value> masks across each group, substitute the variable
+with the AND result, and emit <result>. This replaces a WRONG "simplified" port (2026-07-23) that did
+a BOOLEAN true/false AND and emitted a literal `true`/`false` atom — which dropped every constraint
+update in ip_sudoku (its `(and (cell \$c \$nv) \$nv \$i)` narrows each cell's option-bitmask by AND-ing
+the incoming \$i masks into \$nv). Modeled on the correct SumSink (Dict-grouped) rather than upstream's
+OneFactor/query_multi_raw machinery; the value observed for ip_sudoku is the VarRef branch
+(sinks.rs:799) where \$nv is filled with AND(all \$i).
 """
 mutable struct AndSink <: AbstractSink
     expr::MORK.Expr
-    result::Bool
+    unique::PathMap{UnitVal}
 end
 
-AndSink(e::MORK.Expr) = AndSink(e, true)
+AndSink(e::MORK.Expr) = AndSink(e, PathMap{UnitVal}())
+
+const _AND_KEYWORD_PREFIX_LEN = 5   # [4] + "and"(sym3) + size byte — mirrors upstream path[5+root..]
 
 function sink_apply!(s::AndSink, bindings::Dict{ExprVar, ExprEnv},
     path::Vector{UInt8}, btm::SinkBtm)
-    # Check if path ends in a "false" symbol
-    if !isempty(path)
-        p = collect(path)
-        tag = byte_item(p[1])
-        if tag isa ExprSymbol
-            sym = String(p[2:(1 + Int(tag.size))])
-            sym == "false" && (s.result = false)
-        end
-    end
+    length(path) > _AND_KEYWORD_PREFIX_LEN || return nothing
+    set_val_at!(s.unique, path[(_AND_KEYWORD_PREFIX_LEN + 1):end], UNIT_VAL)
+end
+
+# Parse one accumulated entry `<result-expr> <source-var> <value-sym>` → (result_bytes, value_bytes).
+# <result> carries a NewVar placeholder (the $nv to fill); <source> is a bare Var (skipped — its index
+# identifies the var, always the sole NewVar here); <value> is the mask to AND.
+function _and_parse_entry(p::Vector{UInt8})
+    isempty(p) && return nothing
+    rspan = expr_span(MORK.Expr(p), 1)
+    i = length(rspan) + 1
+    i <= length(p) || return nothing
+    tv = byte_item(p[i])                         # <source>: a bare Var (1 byte)
+    (tv isa ExprVarRef || tv isa ExprNewVar) || return nothing
+    j = i + 1
+    j <= length(p) || return nothing
+    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
+    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+    (Vector{UInt8}(rspan), Vector{UInt8}(p[(j + 1):(j + xsz)]))
 end
 
 function sink_finalize!(s::AndSink, btm::SinkBtm)::Bool
-    key = s.result ? Vector{UInt8}("true") : Vector{UInt8}("false")
-    key_enc = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(key))))], key)
-    old = get_val_at(btm, key_enc)
-    set_val_at!(btm, key_enc, UNIT_VAL)
-    old === nothing
+    groups = Dict{Vector{UInt8}, Vector{UInt8}}()   # <result>-bytes → running bitwise-AND of values
+    rz = read_zipper(s.unique)
+    while zipper_to_next_val!(rz)
+        parsed = _and_parse_entry(collect(zipper_path(rz)))
+        parsed === nothing && continue
+        (rbytes, value) = parsed
+        g = get(groups, rbytes, nothing)
+        groups[rbytes] = g === nothing ? copy(value) :
+            UInt8[g[k] & value[k] for k in 1:min(length(g), length(value))]
+    end
+    changed = false
+    for (rbytes, anded) in groups
+        val_tag = item_byte(ExprSymbol(UInt8(length(anded))))   # mask symbol tag (width of the AND result)
+        # Substitute the NewVar placeholder in <result> with the ANDed mask (a 1-byte symbol node),
+        # then emit. NewVar and Symbol are both single nodes so the arity is unchanged. `_expr_apply_
+        # bindings` can't be used here — it constructs `ExprVar(u8,u8)` (a Tuple type ctor with no
+        # 2-arg method) on the substitution path, so it errors on any bound var. Manual replace instead.
+        out = UInt8[]
+        sizehint!(out, length(rbytes) + length(anded))
+        replaced = false
+        i = 1
+        @inbounds while i <= length(rbytes)
+            t = byte_item(rbytes[i])   # only ever at a NODE start — never a symbol payload byte
+            if !replaced && t isa ExprNewVar
+                push!(out, val_tag); append!(out, anded)   # NewVar → (Sym <mask bytes>)
+                replaced = true; i += 1
+            elseif t isa ExprSymbol
+                n = Int(t.size)
+                append!(out, @view rbytes[i:(i + n)])       # tag + n payload bytes, structurally
+                i += n + 1
+            else                                            # Arity / VarRef / (post-replace) — 1 byte
+                push!(out, rbytes[i]); i += 1
+            end
+        end
+        replaced || continue
+        old = get_val_at(btm, out)
+        set_val_at!(btm, out, UNIT_VAL)
+        old === nothing && (changed = true)
+    end
+    changed
 end
 
 # =====================================================================
