@@ -4527,6 +4527,13 @@ const _MORK_TS = @testset "MORK" begin
     # re-inserts it unconditionally); the `_pat_overlaps_exec_prefix` byte-scan used to miss it.
     include("integration/exec_visibility.jl")
 
+    # ── BFC occurs-check regression (fix 2026-07-25) ──────────────────────────
+    # Nil's backward-via-forward proof search (bfc size 13) on the coref join. Gates the
+    # deref-aware occurs-check fix: pre-fix, `exec(3 3)` accepted an occurs-violating binding
+    # (a data var bound to a term containing itself) → a spurious 3rd `(final)` proof upstream
+    # rejects. Asserts exactly 2 finals / 9938 atoms / 393 steps, byte-exact vs upstream.
+    include("integration/bfc_occurs_check.jl")
+
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")

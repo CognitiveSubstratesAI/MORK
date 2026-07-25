@@ -1,0 +1,15 @@
+(axiom 1 (> $p (> $s $p)))
+(axiom 2 (> (> $p (> $s $x)) (> (> $p $s) (> $p $x))))
+(axiom 3 (> (> (! $p) (! $s)) (> $s $p)))
+
+(exec (2)
+    (, (target $mps (C $ta $tx)))
+    (, (sol $mps 1 (C (/ $ta $ta) I))
+       (exec (2 $mps)
+            (, (exec (2 $ski) $ptrn $tplt)
+               (dec $ski $ki) (gte $ki $hi) (inc $hi $shi) (axiom $r $constraint))
+            (, (exec (3 $r) (, (sol $ski $shi (C (/ $constraint $b) $f))) (, (sol $ki $hi (C $b ($r $f)))))
+               (exec (4 0) (, (sol $ski $hi (C (/ $b $c) $f))) (, (sol $ki $shi (C (/ (> $a $b) (/ $a $c)) (M $f)))))
+               (exec (7 0) (, (lte 0 0)) (, (exec (2 $ki) $ptrn $tplt)))))))
+
+(exec (3 0 0) (, (target $mps (C $ta $tx)) (sol 0 0 (C $ta $tx))) (, (final 0 0 (C $ta $tx))))

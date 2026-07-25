@@ -238,34 +238,41 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
         end
     end
 
-    # occurs check: does var xvar appear in expression e?
-    # h = (new_var_counter::UInt8, found::Bool)
-    function _occurs_check(xvar::ExprVar, e::ExprEnv)::Bool
-        xvar[1] != e.n && return false
-        (_, found, _) = _ee_traverseh(
-            (UInt8(e.v), false), e,
-            (h, o) -> begin
-                (cnt, f) = h;
-                eq = (cnt == xvar[2]);
-                ((cnt + UInt8(1), f || eq), f || eq)
-            end,
-            (h, o, r) -> begin
-                b = h[2] || r == xvar[2];
-                ((h[1], b), b)
-            end,
-            (h, o, sl) -> (h, false),
-            (h, o, a) -> (h, false),
-            (h, o, x, y) -> (h, x || y),
-            (h, o, acc) -> (h, acc))
-        # EA-1 fix (audit 2026-06-04): `expr_traverseh` returns (h, value, j) and every
-        # occurs-check callback's value component is a strict Bool (f||eq, b, false, x||y,
-        # acc); the only non-Bool is `nothing` when no callback fires (leaf-only expression —
-        # the var genuinely does NOT occur, so `false` is correct). `found` is therefore
-        # never a Tuple — dropped the dead `found isa Tuple ? found[2] : found` coalescing
-        # that papered over unexpected shapes. The `::Bool` now makes any non-Bool surface
-        # loudly instead of silently defaulting an occurs-check to the unsound (allow-binding)
-        # direction.
-        found === nothing ? false : found::Bool
+    # occurs check: does var xvar appear in the fully-RESOLVED form of e (deref'd via bindings)?
+    #
+    # DEREF-AWARE (fix 2026-07-25, ADR-057 BFC over-generation). Upstream's `occurs` macro
+    # (expr/src/lib.rs) is NOT deref-aware — it short-circuits on `x.0 != e.n` and only scans e's
+    # OWN-namespace var indices. Upstream nonetheless catches cross-namespace cycles because its
+    # `match2`-based pair generation binds in an ORDER where the offending var is eventually
+    # unified in its own namespace (e.g. binds `W := (> $s $p)` first, then meets `$s` against
+    # W's binding and tries `$s := (> $s $p)` — same namespace → occurs fires). OUR pair generation
+    # (recursive `ee_args!` child-pairing) binds in a DIFFERENT order (`$s := W` first, then
+    # `W := (> $s $p)` — cross-namespace → the old short-circuit MISSED the cycle), so the
+    # order-dependent occurs check was unsound for us. The BFC `exec(3 3)` firing exploited exactly
+    # this: it accepted `W := (> _2 _1)` (a data var bound to a term containing itself), producing
+    # a malformed proof upstream rejects (verified: upstream returns `Occurs((0,1),…)` at the same
+    # firing). Making the check deref-aware catches the cycle regardless of binding order — the
+    # standard correct occurs check, order-independent, so it matches upstream's OUTCOME without
+    # depending on replicating its exact pair-generation order. A depth guard treats an
+    # already-cyclic chain as "occurs" (safety; bindings are acyclic before the checked insert).
+    function _occurs_check(xvar::ExprVar, e::ExprEnv, depth::Int=0)::Bool
+        depth > MAX_UNIFY_ITER && return true
+        ev = ee_var_opt(e)
+        if ev !== nothing
+            ev == xvar && return true
+            bound = get(bindings, ev, nothing)
+            bound === nothing && return false
+            return _occurs_check(xvar, bound, depth + 1)
+        end
+        tag = byte_item(e.base.buf[Int(e.offset) + 1])
+        if tag isa ExprArity
+            children = ExprEnv[]
+            ee_args!(e, children)
+            for c in children
+                _occurs_check(xvar, c, depth + 1) && return true
+            end
+        end
+        return false
     end
 
     # is_unbound: follow variable chain, true if ultimately unbound
