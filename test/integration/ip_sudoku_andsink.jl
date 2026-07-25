@@ -1,56 +1,57 @@
-# ip_sudoku_andsink.jl — regression for the AndSink ACCUMULATION fix (2026-07-25).
+# ip_sudoku_andsink.jl — regression for the HARD ip_sudoku, now BYTE-EXACT vs upstream (2026-07-25).
 #
 # The HARD ip_sudoku (upstream `kernel/resources/ip_sudoku.mm2`, vendored as a fixture) drives its
 # constraint propagation through the `(and (cell $c $nv) $nv $i)` AndSink over the coref SOURCE join
 # — unlike the simpler embedded program in ip_sudoku.jl (which uses a PureSink and explicit exec-4
 # rules, exercising neither AndSink nor the coref-source join).
 #
-# THE BUG (fixed): AndSink was NOT listed in `_is_accumulating_sink`, so it was created fresh PER
-# MATCH and finalized per match — each finalize saw ONE entry, so the bitwise-AND that should group
-# and reduce ALL of a cell's entries (current value & every incoming message) never happened across
-# matches. The paired `- ($src $c $i)` removed every matched cell, but the AndSink only re-added a
-# few, so the cell set COLLAPSED from 16 to 4 (only the 4 known cells survived). Fix: mark "and" as
-# accumulating (one sink, all matches, finalize once — mirrors upstream sinks.rs AndSink).
+# TWO bugs had to fall for this to match upstream, both fixed 2026-07-25:
+#   1. AndSink ACCUMULATION — AndSink was not in `_is_accumulating_sink`, so it was created fresh per
+#      match and finalized per match; the bitwise-AND that groups ALL of a cell's entries never ran
+#      across matches. The paired `- ($src $c $i)` removed every matched cell but the AndSink re-added
+#      only a few, collapsing the cell set from 16 to 4. Fix: mark "and" as accumulating.
+#   2. de-Bruijn RE-BASING in the pure sink — the `(exec (4 N) …)` meta-rule respawns itself through a
+#      PureSink whose template carries a region-backref. Substituting the sink's ground value for one
+#      NewVar removes a binding, so every trailing VarRef must shift down by one; the old naive
+#      byte-copy left them dangling (`_1`→`_2` drift), so the respawn chain produced a malformed exec
+#      and the propagation loop halted early at 12 steps with under-narrowed cells. Fix: substitute via
+#      the faithful port of upstream `Expr::substitute_one_de_bruijn` (ExprAlg.jl / expr/src/lib.rs:539),
+#      which re-bases every other de-Bruijn variable.
 #
-# This test asserts the ACCUMULATION invariant: all 16 cells persist and the 4 known cells narrow to
-# their single-candidate bitmasks. NOTE: the hard ip_sudoku is NOT yet byte-exact vs upstream — a
-# SEPARATE, pre-existing propagation bug (the spawned `!=`/BTM elimination rule under-generates
-# neighbour messages, so row/col peers of a solved cell aren't narrowed; ours halts at 12 steps /
-# 102 atoms with under-narrowed cells vs upstream's 34 / 102 fully-narrowed). That is tracked
-# separately; this test guards ONLY the AndSink accumulation fix.
+# With both fixed, ours reproduces upstream `mork run` EXACTLY: 34 steps, 102 atoms, and the full
+# atom set is byte-identical (verified against the release binary; the reference is vendored as
+# `ip_sudoku_hard.expected`, which is upstream's dump minus the `--timing` profiling atoms). The 4x4
+# puzzle is NOT fully solved by propagation alone (no backtracking) — several cells stay at 0x0f — but
+# our result matches upstream cell-for-cell.
 using MORK, Test
 
-const _IPS_HARD_FIXTURE = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.mm2")
+const _IPS_HARD_FIXTURE  = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.mm2")
+const _IPS_HARD_EXPECTED = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.expected")
 
-@testset "ip_sudoku hard — AndSink accumulation (fix 2026-07-25)" begin
+@testset "ip_sudoku hard — byte-exact vs upstream (fixes 2026-07-25)" begin
     prev = MORK._USE_COREF_JOIN[]
     MORK._USE_COREF_JOIN[] = true      # the hard version needs the coref source join
     try
         s = MORK.new_space()
         MORK.space_add_all_sexpr!(s, read(_IPS_HARD_FIXTURE, String))
-        MORK.space_metta_calculus!(s, 100_000_000)
-        atoms = [strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))]
-        cells = filter(l -> startswith(l, "(cell "), atoms)
+        steps = MORK.space_metta_calculus!(s, 100_000_000)
+        atoms = sort!([strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))])
 
-        # Accumulation invariant: all 16 cells persist (pre-fix the set collapsed to 4 because the
-        # AndSink re-added far fewer cells than the paired `-` removed). This is the load-bearing guard.
+        # Step-count parity: the de-Bruijn re-basing fix takes the respawn chain from a truncated 12
+        # steps to the full 34 upstream reaches.
+        @test steps == 34
+
+        # Byte-exact atom set vs the upstream-verified reference (102 atoms, whole set).
+        expected = sort!([strip(l) for l in eachline(_IPS_HARD_EXPECTED) if !isempty(strip(l))])
+        @test length(atoms) == 102
+        @test length(expected) == 102
+        @test atoms == expected
+
+        # Explicit accumulation guard (pre-fix #1 this collapsed to 4): all 16 grid cells persist.
+        cells = filter(l -> startswith(l, "(cell "), atoms)
         @test length(cells) == 16
-        # All 16 grid positions are present as cells (the 4x4 grid, one cell each):
         for r in 0:3, c in 0:3
             @test any(l -> startswith(l, "(cell ($r $c) "), cells)
-        end
-        # The AND actually REDUCED the known cells: each known-cell value is a single byte whose
-        # low nibble is narrowed below the initial all-candidates 0x0F (0x00 or 0x01 here). We check
-        # the value byte directly (it can be a raw non-printing byte, so index bytes, not chars).
-        function cell_val_byte(pos)
-            l = findfirst(c -> startswith(c, "(cell ($pos) "), cells)
-            l === nothing && return nothing
-            b = codeunits(cells[l])                 # ...") <val-byte> ")"
-            length(b) >= 2 ? b[end-1] : nothing     # byte just before the closing ')'
-        end
-        for pos in ("0 2", "1 1", "2 2", "3 3")
-            vb = cell_val_byte(pos)
-            @test vb !== nothing && (vb & 0x0f) != 0x0f
         end
     finally
         MORK._USE_COREF_JOIN[] = prev

@@ -516,6 +516,111 @@ function expr_apply(ez::ExprZipper, bindings::Dict{ExprVar, ExprEnv}, oz::ExprZi
 end
 
 # =====================================================================
+# substitute_de_bruijn — de-Bruijn variable substitution with re-basing
+# (ports Expr::substitute_de_bruijn / substitute_one_de_bruijn / shift / bind
+#  from upstream expr/src/lib.rs:571/539/620/598)
+# =====================================================================
+#
+# Unlike `expr_apply` (which substitutes NAMED (n,idx) bindings), this substitutes BY DE-BRUIJN
+# POSITION: the k-th NewVar of the input is replaced by substitutions[k], and every other var's
+# index is RE-BASED so the result stays a well-formed de-Bruijn expression. The `additions` offset
+# array is the re-basing mechanism (upstream lib.rs:571): each substitution may introduce a
+# different number of vars than the single var it replaces, and subsequent references shift by the
+# accumulated delta. The PureSink needs this to substitute its output slot (a ground computed value,
+# 0 vars) for one NewVar while correctly decrementing the trailing VarRefs — the naive
+# byte-copy substitution left them dangling (the ip_sudoku meta-rule respawn +1-shift bug, 2026-07-25).
+
+# Count NewVars in buf[from:to]. Ports Expr::newvars (lib.rs:331).
+function _expr_newvars(buf::AbstractVector{UInt8}, from::Int, to::Int)::Int
+    c = 0; i = from
+    @inbounds while i <= to
+        t = byte_item(buf[i])
+        if t isa ExprNewVar; c += 1; i += 1
+        elseif t isa ExprVarRef; i += 1
+        elseif t isa ExprSymbol; i += 1 + Int(t.size)
+        else; i += 1   # Arity
+        end
+    end
+    c
+end
+
+# Write `sub` to `out` with every VarRef index incremented by `n` (NewVars unchanged). Returns the
+# number of NewVars written. Ports Expr::shift (lib.rs:620).
+function _expr_shift!(sub::AbstractVector{UInt8}, n::Int, out::Vector{UInt8})::Int
+    nvar = 0; i = 1
+    @inbounds while i <= length(sub)
+        t = byte_item(sub[i])
+        if t isa ExprNewVar
+            push!(out, item_byte(ExprNewVar())); i += 1; nvar += 1
+        elseif t isa ExprVarRef
+            push!(out, item_byte(ExprVarRef(UInt8(Int(t.idx) + n)))); i += 1
+        elseif t isa ExprSymbol
+            m = Int(t.size); append!(out, @view sub[i:(i + m)]); i += m + 1
+        else  # Arity
+            push!(out, sub[i]); i += 1
+        end
+    end
+    nvar
+end
+
+# Write `sub` to `out` with NewVar → VarRef(n + running-newvar-count) and VarRef(i) → VarRef(n + i).
+# Ports Expr::bind (lib.rs:598).
+function _expr_bind!(sub::AbstractVector{UInt8}, n::Int, out::Vector{UInt8})
+    var_count = 0; i = 1
+    @inbounds while i <= length(sub)
+        t = byte_item(sub[i])
+        if t isa ExprNewVar
+            push!(out, item_byte(ExprVarRef(UInt8(n + var_count)))); i += 1; var_count += 1
+        elseif t isa ExprVarRef
+            push!(out, item_byte(ExprVarRef(UInt8(n + Int(t.idx))))); i += 1
+        elseif t isa ExprSymbol
+            m = Int(t.size); append!(out, @view sub[i:(i + m)]); i += m + 1
+        else  # Arity
+            push!(out, sub[i]); i += 1
+        end
+    end
+end
+
+# Substitute the k-th NewVar of buf[from:to] with substitutions[k+1] (0-based k), re-basing all
+# other vars. Ports Expr::substitute_de_bruijn (lib.rs:571).
+function _expr_substitute_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
+        substitutions::Vector{<:AbstractVector{UInt8}})::Vector{UInt8}
+    out = UInt8[]
+    additions = zeros(Int, length(substitutions))
+    var_count = 0; i = from
+    @inbounds while i <= to
+        t = byte_item(buf[i])
+        if t isa ExprNewVar
+            nvars = _expr_shift!(substitutions[var_count + 1], additions[var_count + 1], out)
+            var_count += 1
+            for j in (var_count + 1):length(additions); additions[j] += nvars; end
+            i += 1
+        elseif t isa ExprVarRef
+            r = Int(t.idx)
+            _expr_bind!(substitutions[r + 1], additions[r + 1], out)
+            i += 1
+        elseif t isa ExprSymbol
+            m = Int(t.size); append!(out, @view buf[i:(i + m)]); i += m + 1
+        else  # Arity
+            push!(out, buf[i]); i += 1
+        end
+    end
+    out
+end
+
+# Substitute the single NewVar at de-Bruijn index `idx` with `substitution` (a complete sub-expr),
+# keeping every other var (identity) but re-based. Ports Expr::substitute_one_de_bruijn (lib.rs:539).
+function _expr_substitute_one_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
+        idx::Int, substitution::AbstractVector{UInt8})::Vector{UInt8}
+    nvs = _expr_newvars(buf, from, to)   # upstream: self.newvars(); vars[idx] indexes it (panics if idx>=nvs)
+    subs = Vector{Vector{UInt8}}(undef, nvs)
+    nv = UInt8[item_byte(ExprNewVar())]
+    for k in 1:nvs; subs[k] = nv; end
+    subs[idx + 1] = Vector{UInt8}(substitution)
+    _expr_substitute_de_bruijn(buf, from, to, subs)
+end
+
+# =====================================================================
 # ee_show — debug string for ExprEnv
 # =====================================================================
 

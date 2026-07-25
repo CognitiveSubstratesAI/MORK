@@ -1112,7 +1112,7 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
     result_mork = _pure_eval_formula(formula_buf, formula_start)
     result_mork === nothing && return nothing
 
-    # Substitute: walk template bytes, replace first VarRef/NewVar with result_mork
+    # Substitute the sink var with the evaluated result, re-basing trailing de-Bruijn vars.
     tpl_end = _expr_end_offset(tpl_buf, tpl_start)
     out = _pure_substitute_first_var(tpl_buf, tpl_start, tpl_end - 1, result_mork)
     out === nothing && return nothing
@@ -1125,11 +1125,65 @@ end
 """
     _pure_substitute_first_var(buf, from, to, replacement) → Vector{UInt8}
 
-Walk the expression in buf[from:to], replacing the first VarRef or NewVar
-with `replacement` bytes. Returns the resulting byte vector, or `nothing`
-if no variable slot was found.
+Substitute the sink's computed value (`replacement`) for the template's sink
+variable slot. When the template is a self-contained de-Bruijn expression the
+substitution RE-BASES every other variable via the faithful port of upstream
+`Expr::substitute_one_de_bruijn` (expr/src/lib.rs:539, used by every kernel sink
+at sinks.rs:611/707/818/927/1069/1176): removing one NewVar binding shifts all
+trailing VarRefs down, so a naive byte-copy leaves them dangling (the ip_sudoku
+meta-rule respawn +1-shift bug, 2026-07-25).
+
+Upstream derives the substituted index `k` from the explicit `VarRef(k)` at the
+slot; we derive it from the template's first variable slot, which is provably the
+same for every corpus program (a naive replace of the wrong slot would already
+have diverged from the upstream binary, yet the full differential corpus is
+byte-exact).
+
+If the template holds a VarRef pointing outside its own NewVar count (not a
+self-contained de-Bruijn term — `substitute_de_bruijn` would index its
+`substitutions` array out of range), we fall back to the original naive
+byte-copy so behaviour is unchanged for those cases.
+
+Returns `nothing` if the template has no variable slot.
 """
 function _pure_substitute_first_var(buf::Vector{UInt8}, from::Int, to::Int,
+    replacement::Vector{UInt8})::Union{Vector{UInt8}, Nothing}
+    idx, nvs, maxref = _first_var_index_and_bounds(buf, from, to)
+    idx === nothing && return nothing
+    # Self-contained ⇒ every VarRef targets a NewVar in-span AND the substituted
+    # slot is a real NewVar binding (idx < nvs). Otherwise keep the old behaviour.
+    if maxref < nvs && idx < nvs
+        return _expr_substitute_one_de_bruijn(buf, from, to, idx, replacement)
+    end
+    return _pure_substitute_first_var_naive(buf, from, to, replacement)
+end
+
+# Single walk of buf[from:to] returning (first-var de-Bruijn index | nothing,
+# NewVar count, max VarRef index or -1). The first-var index is the count of
+# NewVars preceding the first variable slot (0 if it is itself the first NewVar)
+# for a NewVar, or the referenced index for a leading VarRef.
+function _first_var_index_and_bounds(buf::Vector{UInt8}, from::Int, to::Int)
+    firstidx = nothing; nvs = 0; maxref = -1; i = from
+    @inbounds while i <= to
+        t = byte_item(buf[i])
+        if t isa ExprNewVar
+            firstidx === nothing && (firstidx = nvs)
+            nvs += 1; i += 1
+        elseif t isa ExprVarRef
+            r = Int(t.idx)
+            firstidx === nothing && (firstidx = r)
+            r > maxref && (maxref = r)
+            i += 1
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)
+        else  # Arity
+            i += 1
+        end
+    end
+    (firstidx, nvs, maxref)
+end
+
+function _pure_substitute_first_var_naive(buf::Vector{UInt8}, from::Int, to::Int,
     replacement::Vector{UInt8})::Union{Vector{UInt8}, Nothing}
     out = UInt8[]
     found = Ref(false)
