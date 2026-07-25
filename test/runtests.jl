@@ -4534,6 +4534,13 @@ const _MORK_TS = @testset "MORK" begin
     # rejects. Asserts exactly 2 finals / 9938 atoms / 393 steps, byte-exact vs upstream.
     include("integration/bfc_occurs_check.jl")
 
+    # ── AndSink accumulation regression (fix 2026-07-25) ──────────────────────
+    # The HARD ip_sudoku (resource fixture; AndSink + coref source join) collapsed its cell set
+    # 16→4 because AndSink wasn't marked accumulating (finalized per-match → no cross-match AND).
+    # Asserts all 16 cells persist + the 4 known cells narrow. (NOT byte-exact yet — a separate
+    # pre-existing propagation bug remains; see the test header.)
+    include("integration/ip_sudoku_andsink.jl")
+
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")

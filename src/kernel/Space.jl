@@ -1335,6 +1335,15 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     3 + sz > length(raw_bytes) && return false
     name = String(raw_bytes[3:(3 + sz - 1)])
     name in ("AU", "count", "fsum", "fmin", "fmax", "fprod", "sum", "head", "tail") && return true
+    # "and" (AndSink) MUST accumulate: it groups matched entries by <result> key and bitwise-ANDs
+    # their values ACROSS all matches of the query (e.g. ip_sudoku narrows each cell's candidate
+    # bitmask by AND-ing the current cell value with every incoming message for that cell). Treated
+    # as immediate (fresh sink per match, finalize per match) it saw ONE entry per finalize → no
+    # cross-match grouping → the AND never happened → constraint narrowing was lost and cells got
+    # removed (by the paired `-`) faster than correctly re-added (ip_sudoku stalled at 12 steps /
+    # 4 of 16 cells vs upstream's 34 / 16). Mirrors upstream's AndSink.finalize (sinks.rs:741),
+    # which reduces the whole accumulated `unique` PathMap once. Fix 2026-07-25.
+    name == "and" && return true
     # "-" (RemoveSink) MUST also accumulate. In an O-sink the removes have to be
     # collected across ALL matches and subtracted AFTER every immediate add — otherwise
     # an atom added by one match and removed by another survives or dies depending on
