@@ -401,17 +401,116 @@ end
 
 
 # =====================================================================
+# Shared three-branch reduction-sink finalize (AndSink / SumSink)
+# =====================================================================
+#
+# Upstream's accumulating reduction sinks are ONE shape with THREE branches, dispatched on what the
+# `<source>` slot holds. AndSink::finalize (sinks.rs:741-830) and SumSink::finalize (:851-940) are
+# line-for-line identical apart from (init, accumulate, encode):
+#
+#   branch 1  SIZES fixed-literal  (:757-789 / :867-898) — `<source>` is a literal symbol. Reduce the
+#             group and emit `<result>` IFF the encoded reduction equals that literal. A MISMATCH EMITS
+#             NOTHING — the asymmetry is the whole point of the branch.
+#   branch 2  NewVar ignored guard (:791-798 / :900-907) — `<source>` is a bare NewVar. Emit the path
+#             minus that byte, i.e. `<result>` unchanged.
+#   branch 3  VarRef(k)            (:799-826 / :908-935) — `<source>` is a backref into `<result>`.
+#             Reduce the group and splice the value in with `substitute_one_de_bruijn(k, value)`, which
+#             substitutes AT INDEX k and RE-BASES every trailing de-Bruijn var.
+#
+# Upstream walks a OneFactor/query_multi_raw trie traversal to enumerate groups; we group in a Dict
+# keyed by (result, source), which yields the same partition — upstream's "context" IS the
+# `<result> <source>` prefix, and the values it reduces are exactly the payloads stored under it.
+#
+# HISTORY (fixed 2026-07-26): our two sinks had each implemented a DIFFERENT SINGLE BRANCH of this —
+# AndSink only branch 3 (and wrongly: it filled the FIRST NewVar rather than index k, and hand-rolled a
+# byte copy that left trailing VarRefs dangling), SumSink only branch 1. Every unimplemented branch was
+# a SILENT DROP, invisible to the suite because `ip_sudoku_hard.mm2` is the only corpus fixture using
+# either sink and its shape is the one case where the old and new code agree. Regression:
+# `test/integration/sink_and_sum_branches.jl` (9 probes, upstream-binary ground truth).
+
+# Parse one accumulated entry `<result-expr> <source> <value-sym>`.
+# `<source>` is a NewVar/VarRef (1 byte) or a literal Symbol (tag + payload); `<value>` is a Symbol.
+# Returns (result_bytes, source_node_bytes, value_payload_bytes) or nothing if the layout doesn't fit.
+function _redsink_parse_entry(p::Vector{UInt8})
+    isempty(p) && return nothing
+    rspan = expr_span(MORK.Expr(p), 1)              # first complete sub-expression = <result>
+    i = length(rspan) + 1
+    i <= length(p) || return nothing
+    ts = byte_item(p[i])
+    slen = ts isa ExprSymbol ? 1 + Int(ts.size) : 1  # literal source spans its payload; a var is 1 byte
+    (i + slen - 1) <= length(p) || return nothing
+    source = Vector{UInt8}(p[i:(i + slen - 1)])
+    j = i + slen
+    j <= length(p) || return nothing
+    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
+    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+    (Vector{UInt8}(rspan), source, Vector{UInt8}(p[(j + 1):(j + xsz)]))
+end
+
+"""
+    _redsink_finalize!(unique, btm, init, acc, enc) → Bool
+
+Generic finalize for the accumulating reduction sinks. `acc(running, value_payload)` folds one entry
+(returning `nothing` to SKIP an entry upstream would have panicked on, e.g. an unparseable number);
+`enc(total)` renders the reduction as a complete symbol node (tag + payload), which is both the value
+spliced in by branch 3 and the thing compared against the literal in branch 1.
+"""
+function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc, enc)::Bool where {T}
+    GK = Tuple{Vector{UInt8}, Vector{UInt8}}         # (result, source) — upstream's traversal "context"
+    groups = Dict{GK, T}()
+    order = GK[]                                     # deterministic emit order (Dict iteration is not)
+    rz = read_zipper(unique)
+    while zipper_to_next_val!(rz)
+        parsed = _redsink_parse_entry(collect(zipper_path(rz)))
+        parsed === nothing && continue
+        (rbytes, source, value) = parsed
+        key = (rbytes, source)
+        seen = haskey(groups, key)
+        folded = acc(seen ? groups[key] : init, value)
+        folded === nothing && continue
+        seen || push!(order, key)
+        groups[key] = folded
+    end
+
+    changed = false
+    for key in order
+        (rbytes, source) = key
+        total = groups[key]
+        t = byte_item(source[1])
+        out = if t isa ExprNewVar
+            rbytes                                   # branch 2 — ignored guard
+        elseif t isa ExprVarRef
+            k = Int(t.idx)                           # branch 3 — substitute at index k, re-basing
+            # Upstream indexes `vars[k]` and panics if k is out of range; a malformed template must not
+            # take the engine down, so we skip that group instead (a CHECK, not a silent mask — reaching
+            # this means the `<source>` backref does not name a NewVar of `<result>`).
+            k < _expr_newvars(rbytes, 1, length(rbytes)) ?
+                _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, enc(total)) : nothing
+        else                                         # branch 1 — SIZES fixed literal
+            enc(total) == source ? rbytes : nothing
+        end
+        out === nothing && continue
+        old = get_val_at(btm, out)
+        set_val_at!(btm, out, UNIT_VAL)
+        old === nothing && (changed = true)
+    end
+    changed
+end
+
+# =====================================================================
 # SumSink — [4] sum <result_sym> <source_sym> <expr>: sum matched values
 # =====================================================================
 
 """
     SumSink — `(sum <result> <expected> <x>)`
 
-Ports `SumSink` in sinks.rs (the literal branch of `SumSink::finalize`). Template form is
-`(sum <result-expr> <expected> <x>)`: accumulate the DECIMAL-STRING value `<x>` over every match,
-grouped by `(<result-expr> <expected>)`, and emit `<result-expr>` **iff** the accumulated sum equals
-the `<expected>` literal. So `(foo 1)(foo 2)(foo 3)` under `(sum (correct) 6 \$x)` sums to 6, equals
-the literal `6`, and emits `(correct)`; `(sum (incorrect) 5 \$x)` sums to 6 ≠ 5 and emits nothing.
+Ports `SumSink` in sinks.rs (851-940). Template form is `(sum <result-expr> <source> <x>)`: accumulate
+the DECIMAL-STRING value `<x>` over every match, grouped by `(<result-expr> <source>)`, then dispatch on
+`<source>` through all THREE upstream branches (see `_redsink_finalize!` above). With a LITERAL source,
+emit `<result-expr>` **iff** the sum equals it — `(foo 1)(foo 2)(foo 3)` under `(sum (correct) 6 \$x)`
+sums to 6 and emits `(correct)`, while `(sum (incorrect) 5 \$x)` emits nothing. With a VarRef source the
+sum is spliced into `<result-expr>`, so `(sum (total \$n) \$n \$x)` emits `(total 6)` (this branch was
+missing until 2026-07-26 and silently dropped every entry).
 
 This REQUIRES `sum` to be an accumulating sink (`_is_accumulating_sink`, Space.jl) so all matches
 land in one `unique` before finalize — a per-match sink could never sum across matches.
@@ -439,66 +538,38 @@ function sink_apply!(s::SumSink, bindings::Dict{ExprVar, ExprEnv},
     set_val_at!(s.unique, path[(_SUM_KEYWORD_PREFIX_LEN + 1):end], UNIT_VAL)
 end
 
-# Parse one accumulated entry `<result-expr> <expected-sym> <x-sym>` → (result_bytes, expected_str, x).
-# Returns nothing if the layout isn't a complete expr followed by two symbols.
-function _sum_parse_entry(p::Vector{UInt8})
-    isempty(p) && return nothing
-    rspan = expr_span(MORK.Expr(p), 1)          # first complete sub-expression = <result>
-    i = length(rspan) + 1                        # <expected> symbol tag position
-    i <= length(p) || return nothing
-    te = byte_item(p[i]); te isa ExprSymbol || return nothing
-    esz = Int(te.size); i + esz <= length(p) || return nothing
-    expected = String(p[(i + 1):(i + esz)])
-    j = i + esz + 1                              # <x> symbol tag position
-    j <= length(p) || return nothing
-    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
-    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
-    xval = tryparse(Int64, String(p[(j + 1):(j + xsz)]))
-    xval === nothing && return nothing
-    (Vector{UInt8}(rspan), expected, xval)
+# Sum reduction: upstream accumulates a `u32` over `u32::from_str_radix(<value>, 10)` and renders it
+# with `total.to_string()` (sinks.rs:873/880/882). We match the width (wrapping, as Rust release does);
+# a value upstream would panic on (`from_str_radix` error — negative or overflowing) skips that entry
+# rather than taking the engine down.
+_sum_acc(running::UInt32, value::Vector{UInt8}) =
+    (v = tryparse(UInt32, String(copy(value))); v === nothing ? nothing : running + v)
+
+function _sum_enc(total::UInt32)
+    s = string(total)
+    vcat(item_byte(ExprSymbol(UInt8(length(s)))), Vector{UInt8}(s))
 end
 
-function sink_finalize!(s::SumSink, btm::SinkBtm)::Bool
-    # group key = result ++ expected bytes → (result_bytes, expected_str, running_sum)
-    groups = Dict{Vector{UInt8}, Tuple{Vector{UInt8}, String, Int64}}()
-    rz = read_zipper(s.unique)
-    while zipper_to_next_val!(rz)
-        parsed = _sum_parse_entry(collect(zipper_path(rz)))
-        parsed === nothing && continue
-        (rbytes, expected, xval) = parsed
-        gkey = vcat(rbytes, Vector{UInt8}(expected))
-        g = get(groups, gkey, nothing)
-        groups[gkey] = g === nothing ? (rbytes, expected, xval) : (g[1], g[2], g[3] + xval)
-    end
-    changed = false
-    for (_, (rbytes, expected, total)) in groups
-        # Emit <result> iff the literal <expected> equals the decimal sum (upstream's
-        # `fixed_number == cnt_str`).
-        if expected == string(total)
-            old = get_val_at(btm, rbytes)
-            set_val_at!(btm, rbytes, UNIT_VAL)
-            old === nothing && (changed = true)
-        end
-    end
-    changed
-end
+sink_finalize!(s::SumSink, btm::SinkBtm)::Bool =
+    _redsink_finalize!(s.unique, btm, UInt32(0), _sum_acc, _sum_enc)
 
 # =====================================================================
 # AndSink — [4] and <result_sym> <source_sym> <expr>: logical AND
 # =====================================================================
 
 """
-    AndSink
+    AndSink — `(and <result> <source> <value>)`
 
-BITWISE-AND aggregation over grouped values — ports `AndSink` in sinks.rs (723-819).
-`(and <result> <source-var> <value>)`: group the matched entries by <result> (which carries a
-free variable placeholder), bitwise-AND the <value> masks across each group, substitute the variable
-with the AND result, and emit <result>. This replaces a WRONG "simplified" port (2026-07-23) that did
-a BOOLEAN true/false AND and emitted a literal `true`/`false` atom — which dropped every constraint
-update in ip_sudoku (its `(and (cell \$c \$nv) \$nv \$i)` narrows each cell's option-bitmask by AND-ing
-the incoming \$i masks into \$nv). Modeled on the correct SumSink (Dict-grouped) rather than upstream's
-OneFactor/query_multi_raw machinery; the value observed for ip_sudoku is the VarRef branch
-(sinks.rs:799) where \$nv is filled with AND(all \$i).
+BITWISE-AND aggregation over grouped values — ports `AndSink` in sinks.rs (723-830). Group the matched
+entries by `(<result> <source>)`, fold the `<value>` masks with `&`, then dispatch on `<source>` through
+all THREE upstream branches (see `_redsink_finalize!` above): a literal emits `<result>` only on an exact
+match (:757), a bare NewVar emits it unconditionally (:791), and a VarRef(k) splices the AND result into
+`<result>` at index k via `substitute_one_de_bruijn` (:818).
+
+ip_sudoku's `(and \$c \$nv) \$nv \$i)` is the VarRef branch — it narrows each cell's option-bitmask by
+AND-ing the incoming \$i masks into \$nv. This replaces two earlier wrong ports: a BOOLEAN true/false AND
+emitting a literal `true`/`false` atom (2026-07-23), and a VarRef-only version that filled the FIRST
+NewVar instead of index k and left trailing de-Bruijn refs un-rebased (2026-07-26).
 """
 mutable struct AndSink <: AbstractSink
     expr::MORK.Expr
@@ -515,65 +586,15 @@ function sink_apply!(s::AndSink, bindings::Dict{ExprVar, ExprEnv},
     set_val_at!(s.unique, path[(_AND_KEYWORD_PREFIX_LEN + 1):end], UNIT_VAL)
 end
 
-# Parse one accumulated entry `<result-expr> <source-var> <value-sym>` → (result_bytes, value_bytes).
-# <result> carries a NewVar placeholder (the $nv to fill); <source> is a bare Var (skipped — its index
-# identifies the var, always the sole NewVar here); <value> is the mask to AND.
-function _and_parse_entry(p::Vector{UInt8})
-    isempty(p) && return nothing
-    rspan = expr_span(MORK.Expr(p), 1)
-    i = length(rspan) + 1
-    i <= length(p) || return nothing
-    tv = byte_item(p[i])                         # <source>: a bare Var (1 byte)
-    (tv isa ExprVarRef || tv isa ExprNewVar) || return nothing
-    j = i + 1
-    j <= length(p) || return nothing
-    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
-    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
-    (Vector{UInt8}(rspan), Vector{UInt8}(p[(j + 1):(j + xsz)]))
-end
+# Bitwise-AND reduction: upstream seeds `total = !0u8` and folds `total &= p[clen+1]` — the FIRST
+# PAYLOAD BYTE of each value symbol, not the whole payload (sinks.rs:764/771, :801/808) — then renders
+# the result as the one-byte symbol `[total]` (:773, :810-813).
+_and_acc(running::UInt8, value::Vector{UInt8}) = isempty(value) ? running : running & value[1]
 
-function sink_finalize!(s::AndSink, btm::SinkBtm)::Bool
-    groups = Dict{Vector{UInt8}, Vector{UInt8}}()   # <result>-bytes → running bitwise-AND of values
-    rz = read_zipper(s.unique)
-    while zipper_to_next_val!(rz)
-        parsed = _and_parse_entry(collect(zipper_path(rz)))
-        parsed === nothing && continue
-        (rbytes, value) = parsed
-        g = get(groups, rbytes, nothing)
-        groups[rbytes] = g === nothing ? copy(value) :
-            UInt8[g[k] & value[k] for k in 1:min(length(g), length(value))]
-    end
-    changed = false
-    for (rbytes, anded) in groups
-        val_tag = item_byte(ExprSymbol(UInt8(length(anded))))   # mask symbol tag (width of the AND result)
-        # Substitute the NewVar placeholder in <result> with the ANDed mask (a 1-byte symbol node),
-        # then emit. NewVar and Symbol are both single nodes so the arity is unchanged. `_expr_apply_
-        # bindings` can't be used here — it constructs `ExprVar(u8,u8)` (a Tuple type ctor with no
-        # 2-arg method) on the substitution path, so it errors on any bound var. Manual replace instead.
-        out = UInt8[]
-        sizehint!(out, length(rbytes) + length(anded))
-        replaced = false
-        i = 1
-        @inbounds while i <= length(rbytes)
-            t = byte_item(rbytes[i])   # only ever at a NODE start — never a symbol payload byte
-            if !replaced && t isa ExprNewVar
-                push!(out, val_tag); append!(out, anded)   # NewVar → (Sym <mask bytes>)
-                replaced = true; i += 1
-            elseif t isa ExprSymbol
-                n = Int(t.size)
-                append!(out, @view rbytes[i:(i + n)])       # tag + n payload bytes, structurally
-                i += n + 1
-            else                                            # Arity / VarRef / (post-replace) — 1 byte
-                push!(out, rbytes[i]); i += 1
-            end
-        end
-        replaced || continue
-        old = get_val_at(btm, out)
-        set_val_at!(btm, out, UNIT_VAL)
-        old === nothing && (changed = true)
-    end
-    changed
-end
+_and_enc(total::UInt8) = UInt8[item_byte(ExprSymbol(0x01)), total]
+
+sink_finalize!(s::AndSink, btm::SinkBtm)::Bool =
+    _redsink_finalize!(s.unique, btm, 0xff, _and_acc, _and_enc)
 
 # =====================================================================
 # External-dep stubs — require wasmtime / Z3 (skip)

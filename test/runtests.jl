@@ -4534,12 +4534,20 @@ const _MORK_TS = @testset "MORK" begin
     # rejects. Asserts exactly 2 finals / 9938 atoms / 393 steps, byte-exact vs upstream.
     include("integration/bfc_occurs_check.jl")
 
-    # ── AndSink accumulation regression (fix 2026-07-25) ──────────────────────
-    # The HARD ip_sudoku (resource fixture; AndSink + coref source join) collapsed its cell set
-    # 16→4 because AndSink wasn't marked accumulating (finalized per-match → no cross-match AND).
-    # Asserts all 16 cells persist + the 4 known cells narrow. (NOT byte-exact yet — a separate
-    # pre-existing propagation bug remains; see the test header.)
+    # ── HARD ip_sudoku — BYTE-EXACT vs upstream (fixes 2026-07-25) ────────────
+    # The resource fixture (AndSink + coref source join) needed TWO fixes: AndSink wasn't marked
+    # accumulating (finalized per-match → cells collapsed 16→4), and the pure sink substituted its
+    # computed value without RE-BASING trailing de-Bruijn refs (respawn drifted `_1`→`_2`, halting
+    # propagation at 12 steps). Now asserts the full 102-atom set + steps==34 against the vendored
+    # upstream reference.
     include("integration/ip_sudoku_andsink.jl")
+
+    # ── AndSink/SumSink three-branch conformance (fix 2026-07-26) ─────────────
+    # Upstream's reduction sinks have THREE branches (SIZES fixed-literal / NewVar ignored guard /
+    # VarRef splice-with-rebasing); ours had implemented COMPLEMENTARY SINGLE halves — AndSink only
+    # the VarRef branch (filling the wrong slot, un-rebased), SumSink only the fixed-literal branch.
+    # Every missing branch was a SILENT DROP. 9 probes, ground truth from the upstream binary.
+    include("integration/sink_and_sum_branches.jl")
 
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
