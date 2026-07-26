@@ -4542,6 +4542,12 @@ const _MORK_TS = @testset "MORK" begin
     # upstream reference.
     include("integration/ip_sudoku_andsink.jl")
 
+    # ── pure comparison ops (ported 2026-07-26) ──────────────────────────────
+    # `{lt,gt,lte,gte,eq,ne} × {i8,i16,i32,i64,i128,f32,f64}` — the ONLY family missing from our
+    # pure-op table (371 upstream ops, 42 absent). Each returns a 1-BYTE i8, not the operand width.
+    # These are what makes MM2's "ordering is derivable in the pure-sink layer" claim actually true.
+    include("integration/pure_comparison_ops.jl")
+
     # ── AndSink/SumSink three-branch conformance (fix 2026-07-26) ─────────────
     # Upstream's reduction sinks have THREE branches (SIZES fixed-literal / NewVar ignored guard /
     # VarRef splice-with-rebasing); ours had implemented COMPLEMENTARY SINGLE halves — AndSink only

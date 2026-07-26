@@ -781,6 +781,33 @@ const PURE_OPS = Dict{String, Function}(
 )
 
 # =====================================================================
+# Comparison ops — `lt/gt/lte/gte/eq/ne` × {i8,i16,i32,i64,i128,f32,f64}
+# =====================================================================
+#
+# Ported 2026-07-26. These 42 ops were the ONLY gap in the pure-op table (a name-level diff against
+# upstream's `op!` macro invocations showed 371 upstream ops, all present except this one family).
+# Upstream spells each as `op!(num binary lt_i32(x: i32, y: i32) => (x < y) as i8)` — pure.rs:556-561
+# (ints) and :676-681 (floats) — so the result is a 1-BYTE SIGNED int, 0 or 1, NOT the operand width.
+#
+# Note the family is deliberately signed-and-float only: upstream defines NO unsigned comparisons
+# (no `lt_u8` etc.), so neither do we.
+#
+# Why this matters beyond conformance: MM2's join layer has no ordering at all (`<`/`<=` panic as
+# sources), and the documented workaround is that ordering is DERIVABLE in the pure-sink layer via
+# these comparisons plus `ifnz`. Without them that derivability story was false for every type —
+# `(gte_i32 ...)` simply errored as an unknown op.
+for (suffix, rd) in (("i8", _read_i8), ("i16", _read_i16), ("i32", _read_i32),
+                     ("i64", _read_i64), ("i128", _read_i128),
+                     ("f32", _read_f32), ("f64", _read_f64))
+    for (name, cmp) in (("lt", <), ("gt", >), ("lte", <=), ("gte", >=), ("eq", ==), ("ne", !=))
+        # `let` binds the loop vars per-iteration so each closure captures its own reader/comparator.
+        PURE_OPS["$(name)_$(suffix)"] = let rd = rd, cmp = cmp
+            (a) -> Int8(cmp(rd(a[1]), rd(a[2])))
+        end
+    end
+end
+
+# =====================================================================
 # Exports
 # =====================================================================
 
