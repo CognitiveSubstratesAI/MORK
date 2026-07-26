@@ -74,6 +74,64 @@ function _ternarylogic(x::T, y::T, z::T, s::UInt8)::T where {T <: Base.BitUnsign
 end
 
 # =====================================================================
+# Rust-compatible float rendering
+# =====================================================================
+
+"""
+    _f64_rust_string(x) → String
+
+Render a float the way Rust's `impl Display for f64` / `f64::to_string()` does, which is NOT what
+Julia's `string(::Float64)` produces. Verified against the upstream release binary (2026-07-26):
+
+| value            | Rust / upstream           | Julia `string`            |
+|------------------|---------------------------|---------------------------|
+| -3.0             | `-3`                      | `-3.0`   (trailing .0)    |
+| 1e20             | `100000000000000000000`   | `1.0e20` (exponent form)  |
+| 3.0000000000000004e-5 | `0.000030000000000000004` | `3.0000000000000004e-5` |
+| 0.30000000000000004   | `0.30000000000000004`     | same                  |
+
+Three rules: shortest round-trip digits (same as Julia), **never** exponent notation (always the full
+decimal expansion), and integral values carry **no** `.0` suffix. We reuse Julia's shortest-round-trip
+digits and re-place the decimal point, so precision is identical — only the presentation changes.
+
+Used by the float reduction sinks and by the `f32_to_string`/`f64_to_string` pure ops, all of which
+previously emitted Julia-formatted floats that diverged from upstream byte-for-byte.
+"""
+function _f64_rust_string(x::Real)::String
+    xf = Float64(x)
+    isnan(xf) && return "NaN"
+    isinf(xf) && return xf > 0 ? "inf" : "-inf"
+    xf == 0.0 && return signbit(xf) ? "-0" : "0"
+
+    s = string(xf)                      # Julia's shortest round-trip form (may use e-notation)
+    neg = startswith(s, "-")
+    neg && (s = s[2:end])
+    mant, ex = s, 0
+    i = findfirst(==('e'), s)
+    if i !== nothing
+        mant = s[1:(i - 1)]
+        ex = parse(Int, s[(i + 1):end])
+    end
+    j = findfirst(==('.'), mant)
+    ip, fp = j === nothing ? (mant, "") : (mant[1:(j - 1)], mant[(j + 1):end])
+
+    digits = ip * fp
+    point = length(ip) + ex             # decimal-point position within `digits`
+    out = if point <= 0
+        "0." * "0"^(-point) * digits
+    elseif point >= length(digits)
+        digits * "0"^(point - length(digits))
+    else
+        digits[1:point] * "." * digits[(point + 1):end]
+    end
+    if occursin('.', out)               # Rust never renders a trailing .0
+        out = rstrip(rstrip(out, '0'), '.')
+        isempty(out) && (out = "0")
+    end
+    (neg ? "-" : "") * out
+end
+
+# =====================================================================
 # pure_apply — main entry point
 # =====================================================================
 
@@ -366,8 +424,9 @@ const PURE_OPS = Dict{String, Function}(
     "i16_to_string" => (a) -> Vector{UInt8}(string(_read_i16(a[1]))),
     "i32_to_string" => (a) -> Vector{UInt8}(string(_read_i32(a[1]))),
     "i64_to_string" => (a) -> Vector{UInt8}(string(_read_i64(a[1]))),
-    "f32_to_string" => (a) -> Vector{UInt8}(string(_read_f32(a[1]))),
-    "f64_to_string" => (a) -> Vector{UInt8}(string(_read_f64(a[1]))),
+    # Rust Display, NOT Julia `string` — see `_f64_rust_string` (no exponent form, no trailing .0).
+    "f32_to_string" => (a) -> Vector{UInt8}(_f64_rust_string(_read_f32(a[1]))),
+    "f64_to_string" => (a) -> Vector{UInt8}(_f64_rust_string(_read_f64(a[1]))),
 
     # ── i8/i16/i32/i64/i128 arithmetic (missing from original port) ──
     "sub_i8" => (a) -> _read_i8(a[1]) - _read_i8(a[2]),

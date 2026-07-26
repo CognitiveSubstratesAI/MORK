@@ -310,91 +310,78 @@ end
 # =====================================================================
 
 """
-    CountSink
+    CountSink — `(count <result> <source> <value>)`
 
-Count unique source values per output template, then write the result.
-Mirrors `CountSink` in sinks.rs. Three modes from upstream tests:
+Ports `CountSink` (sinks.rs:547-623). Counts the entries accumulated under each `<result>` and then
+dispatches the SAME three branches as the other accumulating sinks (see `_redsink_finalize!`):
+a literal `<source>` emits `<result>` iff it equals the count, a bare NewVar emits `<result>`
+unchanged, and a `VarRef(k)` splices the count into `<result>` at de-Bruijn index k.
 
-  1. Fixed guard  — count-var arg is a literal (e.g. `18`):
-       Only emit template if actual count == that literal.
-       Example: `(count (all eighteen) 18 source)` → emits `(all eighteen)` iff count=18
-  2. Variable-embed — count-var arg is a variable AND template contains it:
-       Substitute variable in template with actual count.
-       Example: `(count (all \$k) \$k source)` → emits `(all 3)` for count=3
-  3. Variable-no-embed — count-var is a variable but template has no variables:
-       Always emit template unchanged (count captured but not in result).
-       Example: `(count (all stupid) \$k source)` → always emits `(all stupid)`
+⚠️ Unlike And/Sum/FloatReduction, the reduction here is computed at the **context** level: upstream
+takes `cnt = prz.val_count()` (sinks.rs:580) BEFORE descending into the `<source>` slot, so the group
+is `<result>` ALONE and the count spans every source slot beneath it. The others fold AFTER descending,
+making their group `(<result>, <source>)`. That is why this cannot simply reuse `_redsink_finalize!`.
+
+FIXED 2026-07-26: the port previously grouped by `(template, source)` and counted only that group's
+sources — so a query variable in the source slot split one upstream group into several and fabricated
+matches — and it collapsed upstream's NewVar and VarRef branches into a single `is_var` case that
+substituted at the template's FIRST variable instead of at index k. Both were silent wrong answers;
+the CTL fixture never caught them because its template has exactly one variable, where k == 0 == first.
 """
 mutable struct CountSink <: AbstractSink
     expr::MORK.Expr
-    # Groups: (template_bytes, count_var_bytes, unique_sources PathMap)
-    # count_var_bytes = raw bytes of arg3 (literal or variable).
-    by_template::Vector{Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}}
+    unique::PathMap{UnitVal}
 end
 
-CountSink(e::MORK.Expr) =
-    CountSink(e, Tuple{Vector{UInt8}, Vector{UInt8}, PathMap{UnitVal}}[])
+CountSink(e::MORK.Expr) = CountSink(e, PathMap{UnitVal}())
 
 function sink_apply!(s::CountSink, bindings::Dict{ExprVar, ExprEnv},
     path::Vector{UInt8}, btm::SinkBtm)
-    # path = bound expression: (count <template> <count-var> <source>)
-    length(path) < 7 && return nothing
-    args = ExprEnv[]
-    ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(path)), args)
-    length(args) < 4 && return nothing
-
-    tpl_start = Int(args[2].offset) + 1
-    tpl_end = _expr_end_offset(path, tpl_start)
-    tpl_bytes = path[tpl_start:(tpl_end - 1)]
-
-    # arg3 = count-var or fixed guard value
-    var_start = Int(args[3].offset) + 1
-    var_end = _expr_end_offset(path, var_start)
-    var_bytes = path[var_start:(var_end - 1)]
-
-    src_start = Int(args[4].offset) + 1
-    src_end = _expr_end_offset(path, src_start)
-    src_bytes = path[src_start:(src_end - 1)]
-
-    # Group by (template, count-var) — both vary with outer variable bindings
-    entry = findfirst(t -> t[1] == tpl_bytes && t[2] == var_bytes, s.by_template)
-    if entry === nothing
-        push!(s.by_template, (tpl_bytes, var_bytes, PathMap{UnitVal}()))
-        entry = length(s.by_template)
-    end
-    set_val_at!(s.by_template[entry][3], src_bytes, UNIT_VAL)
+    # Store the INSTANTIATED `<result> <source> <value>` (upstream: unique.insert(mpath, ())).
+    plen = _sink_keyword_prefix_len(s.expr)
+    length(path) > plen || return nothing
+    set_val_at!(s.unique, path[(plen + 1):end], UNIT_VAL)
 end
 
 function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
-    changed = false
-    for (tpl_bytes, var_bytes, sources) in s.by_template
-        cnt = val_count(sources)
-        cnt_str = string(cnt)
-        cnt_mork = vcat(item_byte(ExprSymbol(UInt8(length(cnt_str)))),
-            Vector{UInt8}(cnt_str))
-
-        # Mode 1 (fixed guard): var_bytes is a literal symbol, not a variable.
-        # Only emit if actual count matches the literal exactly.
-        is_var =
-            !isempty(var_bytes) &&
-            (
-                byte_item(var_bytes[1]) isa ExprNewVar ||
-                byte_item(var_bytes[1]) isa ExprVarRef
-            )
-
-        out = if is_var
-            # Mode 2/3: substitute count into template variable, or emit as-is.
-            sub = _pure_substitute_first_var(tpl_bytes, 1, length(tpl_bytes), cnt_mork)
-            sub !== nothing ? sub : tpl_bytes   # mode 3: no variable in template
-        else
-            # Mode 1: fixed guard — skip unless count matches literal
-            var_bytes == cnt_mork || continue
-            tpl_bytes
+    # Group by <result> alone; count every stored entry beneath it, and remember which distinct
+    # <source> slots occur there so each of the three branches can be tested independently
+    # (upstream's three `if`s are not mutually exclusive — sinks.rs:584/595/603).
+    counts = Dict{Vector{UInt8}, Int}()
+    slots  = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
+    order  = Vector{Vector{UInt8}}()
+    rz = read_zipper(s.unique)
+    while zipper_to_next_val!(rz)
+        parsed = _redsink_parse_entry(collect(zipper_path(rz)); symbol_value = false)
+        parsed === nothing && continue
+        (rbytes, source, _value) = parsed
+        if !haskey(counts, rbytes)
+            push!(order, rbytes); counts[rbytes] = 0; slots[rbytes] = Vector{UInt8}[]
         end
+        counts[rbytes] += 1
+        source in slots[rbytes] || push!(slots[rbytes], source)
+    end
 
-        old = get_val_at(btm, out)
-        set_val_at!(btm, out, UNIT_VAL)
-        old === nothing && (changed = true)
+    changed = false
+    for rbytes in order
+        cnt_str = string(counts[rbytes])
+        cnt_sym = vcat(item_byte(ExprSymbol(UInt8(ncodeunits(cnt_str)))), Vector{UInt8}(cnt_str))
+        for source in slots[rbytes]
+            t = byte_item(source[1])
+            out = if t isa ExprNewVar
+                rbytes                                   # branch 2 — ignored guard
+            elseif t isa ExprVarRef
+                k = Int(t.idx)                           # branch 3 — substitute at index k, re-basing
+                k < _expr_newvars(rbytes, 1, length(rbytes)) ?
+                    _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, cnt_sym) : nothing
+            else
+                source == cnt_sym ? rbytes : nothing     # branch 1 — fixed literal
+            end
+            out === nothing && continue
+            old = get_val_at(btm, out)
+            set_val_at!(btm, out, UNIT_VAL)
+            old === nothing && (changed = true)
+        end
     end
     changed
 end
@@ -428,10 +415,16 @@ end
 # either sink and its shape is the one case where the old and new code agree. Regression:
 # `test/integration/sink_and_sum_branches.jl` (9 probes, upstream-binary ground truth).
 
-# Parse one accumulated entry `<result-expr> <source> <value-sym>`.
-# `<source>` is a NewVar/VarRef (1 byte) or a literal Symbol (tag + payload); `<value>` is a Symbol.
-# Returns (result_bytes, source_node_bytes, value_payload_bytes) or nothing if the layout doesn't fit.
-function _redsink_parse_entry(p::Vector{UInt8})
+# Parse one accumulated entry `<result-expr> <source> <value>`.
+# `<source>` is a NewVar/VarRef (1 byte) or a literal Symbol (tag + payload).
+# Returns (result_bytes, source_node_bytes, value_bytes) or nothing if the layout doesn't fit.
+#
+# `symbol_value` controls how `<value>` is read. The reducing sinks (And/Sum/Float) fold a NUMBER, so
+# they need the symbol PAYLOAD and must decline anything else — upstream reads `p[clen+1..]` assuming a
+# symbol there. CountSink only COUNTS entries and never looks at the value, which is routinely a
+# compound expression (`(count (all $k) $k (cux $z $y $x))`); requiring a symbol there silently dropped
+# every entry and made the count 0 (caught by the mode-1/2/3 regressions, 2026-07-26).
+function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
     isempty(p) && return nothing
     rspan = expr_span(MORK.Expr(p), 1)              # first complete sub-expression = <result>
     i = length(rspan) + 1
@@ -442,9 +435,14 @@ function _redsink_parse_entry(p::Vector{UInt8})
     source = Vector{UInt8}(p[i:(i + slen - 1)])
     j = i + slen
     j <= length(p) || return nothing
-    tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
-    xsz = Int(tx.size); j + xsz <= length(p) || return nothing
-    (Vector{UInt8}(rspan), source, Vector{UInt8}(p[(j + 1):(j + xsz)]))
+    value = if symbol_value
+        tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
+        xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+        Vector{UInt8}(p[(j + 1):(j + xsz)])
+    else
+        Vector{UInt8}(p[j:end])                      # opaque to CountSink
+    end
+    (Vector{UInt8}(rspan), source, value)
 end
 
 """
@@ -477,17 +475,22 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
         (rbytes, source) = key
         total = groups[key]
         t = byte_item(source[1])
+        # `enc` may decline (return nothing) when the reduction cannot be represented as a symbol —
+        # see `_freduce_enc`, where a float can render wider than the Rule-of-64 payload limit.
+        encoded = t isa ExprNewVar ? nothing : enc(total)
         out = if t isa ExprNewVar
-            rbytes                                   # branch 2 — ignored guard
+            rbytes                                   # branch 2 — ignored guard (value discarded)
+        elseif encoded === nothing
+            nothing
         elseif t isa ExprVarRef
             k = Int(t.idx)                           # branch 3 — substitute at index k, re-basing
             # Upstream indexes `vars[k]` and panics if k is out of range; a malformed template must not
             # take the engine down, so we skip that group instead (a CHECK, not a silent mask — reaching
             # this means the `<source>` backref does not name a NewVar of `<result>`).
             k < _expr_newvars(rbytes, 1, length(rbytes)) ?
-                _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, enc(total)) : nothing
+                _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, encoded) : nothing
         else                                         # branch 1 — SIZES fixed literal
-            enc(total) == source ? rbytes : nothing
+            encoded == source ? rbytes : nothing
         end
         out === nothing && continue
         old = get_val_at(btm, out)
@@ -1129,13 +1132,31 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
 
     formula_start > length(formula_buf) && return nothing
 
-    # Evaluate formula — returns a complete MORK sub-expression (header included)
-    result_mork = _pure_eval_formula(formula_buf, formula_start)
-    result_mork === nothing && return nothing
-
-    # Substitute the sink var with the evaluated result, re-basing trailing de-Bruijn vars.
+    # Dispatch on the `<source>` slot, as every other sink does. Previously this slot was never
+    # inspected at all: the formula was always evaluated and substituted at the template's FIRST
+    # variable, which is only correct when that happens to be the slot k names (fixed 2026-07-26).
     tpl_end = _expr_end_offset(tpl_buf, tpl_start)
-    out = _pure_substitute_first_var(tpl_buf, tpl_start, tpl_end - 1, result_mork)
+    tpl_bytes = Vector{UInt8}(tpl_buf[tpl_start:(tpl_end - 1)])
+    src_start = Int(args[3].offset) + 1
+    src_start > length(tpl_buf) && return nothing
+    src_tag = byte_item(tpl_buf[src_start])
+
+    out = if src_tag isa ExprNewVar
+        # NewVar "ignored guard" (sinks.rs:1148-1155): emit the template with its variable INTACT.
+        # The formula is not evaluated at all — upstream discards the value here.
+        tpl_bytes
+    elseif src_tag isa ExprVarRef
+        # VarRef(k) (sinks.rs:1156-1186): evaluate, then splice in AT INDEX k, re-basing trailing vars.
+        result_mork = _pure_eval_formula(formula_buf, formula_start)
+        result_mork === nothing && return nothing
+        k = Int(src_tag.idx)
+        k < _expr_newvars(tpl_bytes, 1, length(tpl_bytes)) ?
+            _expr_substitute_one_de_bruijn(tpl_bytes, 1, length(tpl_bytes), k, result_mork) : nothing
+    else
+        # A fixed-literal or compound `<source>` slot is `todo!()` upstream (sinks.rs:1136/:1145),
+        # i.e. a process abort. We decline the write rather than reproduce a crash.
+        nothing
+    end
     out === nothing && return nothing
 
     old = get_val_at(btm, out)
@@ -1242,117 +1263,79 @@ end
 
 sink_finalize!(s::PureSink, ::SinkBtm) = (c=s.changed; s.changed=false; c)
 
-# Float reduction sinks
-# Mirrors FloatReductionSink<Sum/Min/Max/Prod> in sinks.rs.
-# Template format: (fsum (result-tpl) $c $x) where:
-#   arg2 = result template  (e.g. "(sum $c)")
-#   arg3 = key/context var  ($c — groups the reduction)
-#   arg4 = value            ($x — the numeric value, already substituted)
+# Float reduction sinks — ports FloatReductionSink<Sum/Min/Max/Prod> (sinks.rs:975-1081).
+# Template: `(fsum <result> <source> <value>)`. Structurally IDENTICAL to And/Sum — same three-branch
+# finalize (see `_redsink_finalize!`) over the same accumulate-then-group shape — differing only in
+# (init, accumulate, encode). So it routes through the shared implementation.
+#
+# FIXED 2026-07-26 (three defects, all silent):
+#   * It stored only the UNinstantiated template from `s.expr` and grouped by the source slot alone,
+#     so matches that bind different values into `<result>` collapsed into ONE group — upstream groups
+#     by the INSTANTIATED path and emits `(tot a 3)`/`(tot b 10)` where we emitted `(tot 13.0 13.0)`.
+#     Storing the instantiated path (as upstream's `unique.insert(mpath, ())` does) fixes the grouping.
+#   * It collapsed upstream's NewVar and VarRef branches into one and substituted at the template's
+#     FIRST variable rather than at the de-Bruijn index k named by `<source>`.
+#   * It rendered the reduction with Julia's `string(::Float64)`, so `61.0` serialised as "61.0" where
+#     Rust's `f64::to_string()` gives "61" (and `1e20` as "1.0e20" vs 21 literal digits) —
+#     see `_f64_rust_string`.
 mutable struct FloatReductionSink{R} <: AbstractSink
     expr::MORK.Expr
     op::Symbol   # :sum, :min, :max, :prod
-    # Groups: key_bytes → Vector{Float64}. A Dict (hashed), NOT a Vector + per-value `findfirst`:
-    # the old linear key-scan was O(#keys) PER inserted value ⇒ O(N²) group-by, which made `fsum`
-    # super-linear (measured 6s @ 50k edges) and untractable at connectome scale. Hashing the key
-    # gives O(1) insert ⇒ O(E) total. (sink_finalize! iterates `(k,v) in by_key` — works unchanged.)
-    by_key::Dict{Vector{UInt8}, Vector{Float64}}
+    unique::PathMap{UnitVal}
 end
 
 FloatReductionSink(e::MORK.Expr, op::Symbol) =
-    FloatReductionSink{op}(e, op, Dict{Vector{UInt8}, Vector{Float64}}())
+    FloatReductionSink{op}(e, op, PathMap{UnitVal}())
+
+# Bytes of the `(<keyword>` prefix to strip from an instantiated template: the arity byte + the
+# keyword's SymbolSize tag + its payload. Upstream spells this `2 + NAME.len()` per sink
+# (sinks.rs:987 for the float family, :552 CountSink, :845 SumSink); reading the size off the
+# expression itself keeps it correct for every keyword length.
+_sink_keyword_prefix_len(e::MORK.Expr) =
+    (length(e.buf) >= 2 && byte_item(e.buf[2]) isa ExprSymbol) ?
+        2 + Int(byte_item(e.buf[2]).size) : 5
 
 function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
-    # path = bound expression bytes: (fXXX <tpl> <key> <value>)
-    length(path) < 5 && return nothing
-    args = ExprEnv[]
-    ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(path)), args)
-    length(args) < 4 && return nothing
-
-    # Extract key bytes (arg3) — the group-by variable/value
-    key_start = Int(args[3].offset) + 1
-    key_end = _expr_end_offset(path, key_start)
-    key_bytes = path[key_start:(key_end - 1)]
-
-    # Extract value bytes (arg4) — should be a Symbol containing a float string
-    val_start = Int(args[4].offset) + 1
-    val_start > length(path) && return nothing
-    vtag = byte_item(path[val_start])
-    vtag isa ExprSymbol || return nothing
-    val_str = String(path[(val_start + 1):(val_start + Int(vtag.size))])
-    fval = tryparse(Float64, val_str)
-    fval === nothing && return nothing
-
-    # Accumulate the value under its group key — O(1) hashed insert (was an O(#keys) linear scan).
-    push!(get!(() -> Float64[], s.by_key, key_bytes), fval)
+    # Store the INSTANTIATED `<result> <source> <value>` (upstream: unique.insert(mpath, ())).
+    plen = _sink_keyword_prefix_len(s.expr)
+    length(path) > plen || return nothing
+    set_val_at!(s.unique, path[(plen + 1):end], UNIT_VAL)
 end
 
-function sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool
-    isempty(s.by_key) && return false
-    changed = false
-    op = s.op
+# Rust `f64::min`/`max` IGNORE NaN (returning the non-NaN operand); Julia's propagate it. Seeds are
+# upstream's exactly: Sum 0.0, Prod 1.0, Min f64::MAX, Max f64::MIN — note Min/Max seed at the finite
+# extrema, NOT ±Inf (sinks.rs:955/960/965/970).
+_freduce_init(op::Symbol) =
+    op === :sum ? 0.0 : op === :prod ? 1.0 :
+    op === :min ? floatmax(Float64) : -floatmax(Float64)
 
-    # Extract result template (arg2 of the sink expression)
-    args = ExprEnv[]
-    ee_args!(ExprEnv(UInt8(0), UInt8(0), UInt32(0), s.expr), args)
-    length(args) < 2 && return false
-    tpl_start = Int(args[2].offset) + 1
-    tpl_buf = args[2].base.buf
-    tpl_end = _expr_end_offset(tpl_buf, tpl_start)
-    tpl_bytes = tpl_buf[tpl_start:(tpl_end - 1)]
-
-    for (key_bytes, values) in s.by_key
-        isempty(values) && continue
-        result = if op === :sum
-            sum(values)
-        elseif op === :min
-            minimum(values)
-        elseif op === :max
-            maximum(values)
-        elseif op === :prod
-            prod(values)
-        else
-            continue
-        end
-
-        # Format result as a MORK symbol
-        result_str = string(result)
-        result_mork = vcat(item_byte(ExprSymbol(UInt8(length(result_str)))),
-            Vector{UInt8}(result_str))
-
-        # Substitute result into the template:
-        # If key_bytes is a variable (NewVar/VarRef), substitute result directly.
-        # Otherwise, prepend key_bytes and append result (result stored as key→result).
-        if length(key_bytes) == 1 && (
-            byte_item(key_bytes[1]) isa ExprNewVar ||
-            byte_item(key_bytes[1]) isa ExprVarRef
-        )
-            # Free context variable — substitute result into template's first var
-            out = _pure_substitute_first_var(tpl_bytes, 1, length(tpl_bytes), result_mork)
-            out === nothing && continue
-            old = get_val_at(btm, out)
-            set_val_at!(btm, out, UNIT_VAL)
-            old === nothing && (changed = true)
-        else
-            # Bound key — substitute key into template, then append result
-            # Produces: (sum <key_value> <result>)
-            # First sub the key into the template
-            keyed = _pure_substitute_first_var(tpl_bytes, 1, length(tpl_bytes), key_bytes)
-            keyed === nothing && continue
-            # Append result value as next atom
-            out_bytes = vcat(keyed, result_mork)
-            # Adjust the arity of the outermost expression
-            if !isempty(out_bytes) && byte_item(out_bytes[1]) isa ExprArity
-                old_arity = Int(byte_item(out_bytes[1]).arity)
-                out_bytes[1] = item_byte(ExprArity(UInt8(old_arity + 1)))
-            end
-            old = get_val_at(btm, out_bytes)
-            set_val_at!(btm, out_bytes, UNIT_VAL)
-            old === nothing && (changed = true)
-        end
+function _freduce_acc(op::Symbol)
+    (running::Float64, value::Vector{UInt8}) -> begin
+        v = tryparse(Float64, String(copy(value)))   # upstream .unwrap()s; we skip unparseable
+        v === nothing && return nothing
+        op === :sum  ? running + v :
+        op === :prod ? running * v :
+        op === :min  ? (isnan(v) ? running : isnan(running) ? v : min(running, v)) :
+                       (isnan(v) ? running : isnan(running) ? v : max(running, v))
     end
-    empty!(s.by_key)
-    changed
 end
+
+function _freduce_enc(total::Float64)
+    str = _f64_rust_string(total)
+    n = ncodeunits(str)
+    # A reduction can render wider than a symbol can hold: `1e300` expands to 302 decimal digits
+    # (Rust Display never uses exponent form). Upstream writes `SymbolSize(len as _)`, and that
+    # `as _` TRUNCATES the length byte — 302 & 0xff = 46 — so it emits a silently CORRUPTED 46-char
+    # symbol (verified against the release binary on g3_bigsymbol). We refuse the write instead:
+    # reproducing deliberate corruption is worse than dropping an unrepresentable value, and
+    # crashing the engine on a large float is worse still. Related to the standing Rule-of-64 gap
+    # (no general symbol-overflow guard on the write path).
+    (n < 1 || n > 63) && return nothing        # Rule of 64: a symbol payload is 1..63 bytes
+    vcat(item_byte(ExprSymbol(UInt8(n))), Vector{UInt8}(str))
+end
+
+sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool =
+    _redsink_finalize!(s.unique, btm, _freduce_init(s.op), _freduce_acc(s.op), _freduce_enc)
 
 # =====================================================================
 # ASink — dispatch union
