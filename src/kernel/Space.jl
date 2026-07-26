@@ -1788,12 +1788,23 @@ function space_interpret!(s::Space, rt::MORK.Expr;
         return _exec_err_comma_pat(dbg())
 
     # ── Validate template list: must start with "," or "O" ───────────
+    # These guards MIRROR the pattern-side ones above, and upstream's :1670-1671. Only the ARITY check
+    # was ported here; the `SymbolSize(1)` head check was not — so `tpl_buf[tpl_off + 3]` below read
+    # past the buffer for any template whose head is not a 1-char symbol. `(exec 0 (, (fact $x)) ($x))`
+    # — an arity-1 template holding just a variable — CRASHED the whole calculus with a BoundsError,
+    # where upstream returns a clean Err, drops that exec, and carries on running the others
+    # (verified against the binary: it still emits `(out a)` from the following exec). A crash here is
+    # strictly worse than a wrong answer: it takes down every unrelated exec in the same run.
     tpl_ee = args[4]
     tpl_buf = tpl_ee.base.buf
     tpl_off = Int(tpl_ee.offset)
     length(tpl_buf) <= tpl_off && return _exec_err_comma_tpl(dbg())
     tt = byte_item(tpl_buf[tpl_off + 1])
     (tt isa ExprArity && tt.arity > 0) || return _exec_err_comma_tpl(dbg())
+    length(tpl_buf) <= tpl_off + 1 && return _exec_err_comma_tpl(dbg())
+    tt2 = byte_item(tpl_buf[tpl_off + 2])
+    (tt2 isa ExprSymbol && tt2.size == 1) || return _exec_err_comma_tpl(dbg())
+    length(tpl_buf) <= tpl_off + 2 && return _exec_err_comma_tpl(dbg())
 
     pat_expr = MORK.Expr(pat_buf[(pat_off + 1):end])
     tpl_expr = MORK.Expr(tpl_buf[(tpl_off + 1):end])
@@ -1913,8 +1924,19 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
             retry_cnt -= 1
             sleep(0.001)
         else
-            @warn "space_metta_calculus!: $(exec_error_message(err))"
-            break
+            # Upstream LOGS AND CONTINUES — `if let Err(e) = self.interpret(xe) { debug!(…) }`
+            # (space.rs:1707-1709) — and still counts the step, because `done` increments once per
+            # iteration regardless of the result. The exec was already REMOVED unconditionally before
+            # interpretation (space.rs:1704 ≡ our :1907) and is NOT re-inserted here, so proceeding
+            # simply moves on to the next exec.
+            #
+            # We used to `break`. That made ONE malformed exec silently abort every REMAINING exec in
+            # the run: `(exec 0 (, (fact $x)) ($x))` followed by a perfectly good exec produced only
+            # `(fact a)`, where upstream drops the bad exec and still emits `(out a)`. Logged at debug
+            # (not warn) to match upstream's level — these are malformed USER programs, not engine
+            # faults, and a halting warn is exactly the behaviour being removed.
+            @debug "space_metta_calculus!: $(exec_error_message(err))"
+            done += 1
         end
     end
     done
