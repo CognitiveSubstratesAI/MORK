@@ -1730,45 +1730,25 @@ function space_interpret!(s::Space, rt::MORK.Expr;
     ee_args!(ee_rt, args)
     length(args) < 4 && return _exec_err_arity4(dbg())
 
-    # ── Validate loc arg: (thread_id priority) pair OR plain ground atom ──
-    # Server branch requires arity-2 (thread_id priority) pair.
-    # For backward compatibility with old-format (exec 0 (, ...) (, ...))
-    # we accept any loc arg that is ground — just like `debug_assert!(loc.variables() == 0)`.
-    # When loc IS arity-2, additionally validate thread_id and priority are ground.
+    # ── Validate loc arg ─────────────────────────────────────────────
+    # Upstream's ONLY loc check is `debug_assert!(loc.variables() == 0)` (space.rs:1666) — a DEBUG
+    # assertion, ELIDED IN RELEASE. Since the release binary is our differential oracle, a var-bearing
+    # loc must NOT be rejected. We previously read that debug_assert as a runtime contract and returned
+    # an error for a variable in either the thread_id or the priority slot, which silently dropped
+    # every such exec (7 probes in the space.rs sweep produced NOTHING where upstream produced output).
+    #
+    # Behaviour MEASURED against the release binary rather than inferred (2026-07-26):
+    #   (exec (0 $j)  …)  var priority  -> RUNS, emits (out1 $a)
+    #   (exec ($t 0)  …)  var thread    -> RUNS, emits (out2 $a)
+    #   (exec ($t $j) …)  both var      -> RUNS, emits (out4 $a)
+    #   (exec $L      …)  BARE var loc  -> does NOT run
+    # So an arity-2 loc runs regardless of variables, and only a bare-variable loc is skipped — which
+    # is the one check we keep.
     loc_ee = args[2]
     loc_buf = loc_ee.base.buf
     loc_off = Int(loc_ee.offset)
     if length(loc_buf) > loc_off
         lt = byte_item(loc_buf[loc_off + 1])
-        if lt isa ExprArity && lt.arity == 2
-            # New format: validate both children are ground
-            loc_sub_args = ExprEnv[]
-            ee_loc = ExprEnv(UInt8(0), UInt8(0), UInt32(loc_off), loc_ee.base)
-            ee_args!(ee_loc, loc_sub_args)
-            if length(loc_sub_args) >= 2
-                tid_ee = loc_sub_args[2]
-                tid_buf = tid_ee.base.buf
-                tid_off = Int(tid_ee.offset)
-                if length(tid_buf) > tid_off && (
-                    byte_item(tid_buf[tid_off + 1]) isa ExprNewVar ||
-                    byte_item(tid_buf[tid_off + 1]) isa ExprVarRef
-                )
-                    return _exec_err_other(dbg())
-                end
-            end
-            if length(loc_sub_args) >= 3
-                pri_ee = loc_sub_args[3]
-                pri_buf = pri_ee.base.buf
-                pri_off = Int(pri_ee.offset)
-                if length(pri_buf) > pri_off && (
-                    byte_item(pri_buf[pri_off + 1]) isa ExprNewVar ||
-                    byte_item(pri_buf[pri_off + 1]) isa ExprVarRef
-                )
-                    return _exec_err_ground_priority(dbg())
-                end
-            end
-        end
-        # Old format (plain atom): accepted as long as it is not a raw variable
         if lt isa ExprNewVar || lt isa ExprVarRef
             return _exec_err_thread_pair(dbg())
         end
