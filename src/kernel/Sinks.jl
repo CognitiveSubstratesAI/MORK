@@ -743,13 +743,15 @@ end
 # =====================================================================
 
 # Anti-unification state — mirrors AuState in mork_expr/src/lib.rs.
-# memo: (offset_in_e1, offset_in_e2) → variable_index (UInt8)
-# Memoizing ensures the same disagreement pair reuses the same variable (LGG correctness).
+# memo: (lhs-bytes, rhs-bytes) → variable_index. Keyed by the CONTENT of the disagreeing pair, as
+# upstream does (`(RelExprEnv::from(lhs), RelExprEnv::from(rhs))`, lib.rs:2284) — NOT by byte offsets,
+# which are unique per position and would make the memo unhittable. The memo is what makes the result
+# a LEAST general generalisation rather than merely *a* generalisation.
 mutable struct _AuState
     next_var::UInt8
-    memo::Dict{Tuple{Int, Int}, UInt8}   # (i1,i2) → var_idx
+    memo::Dict{Tuple{Vector{UInt8}, Vector{UInt8}}, UInt8}
 end
-_AuState() = _AuState(UInt8(0), Dict{Tuple{Int, Int}, UInt8}())
+_AuState() = _AuState(UInt8(0), Dict{Tuple{Vector{UInt8}, Vector{UInt8}}, UInt8}())
 
 mutable struct AUSink <: AbstractSink
     expr::MORK.Expr
@@ -797,19 +799,38 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
         return (c1, c2)
     end
 
-    # Disagreement (including variables treated as atoms per upstream).
-    # Memoize: same (i1,i2) pair → reuse variable via VarRef (LGG correctness).
-    key = (i1, i2)
+    # Disagreement (including variables treated as atoms per upstream): introduce or REUSE a
+    # generalisation variable.
+    #
+    # The memo MUST be keyed by the CONTENT of the disagreeing pair — upstream uses
+    # `(RelExprEnv::from(lhs), RelExprEnv::from(rhs))` (lib.rs:2284) — so that the SAME pair recurring
+    # at a DIFFERENT position reuses the SAME variable. That is the defining property of a least
+    # general generalisation. We keyed by the byte OFFSETS `(i1, i2)`, which are unique per position,
+    # so the memo could NEVER hit and every disagreement got a fresh variable:
+    #     (f a b a) ⊓ (f x y x)          gave (f $a $b $c)      upstream (f $a $b $a)
+    #     (g (h a) (h a)) ⊓ (g (h b) (h b))  gave two distinct vars   upstream one shared var
+    # i.e. we produced a strictly MORE GENERAL expression than the lgg. Fixed 2026-07-26.
+    e1_end = _expr_end_offset(e1, i1)
+    e2_end = _expr_end_offset(e2, i2)
+    s1 = e1_end - i1
+    s2 = e2_end - i2
+    key = (Vector{UInt8}(view(e1, i1:(e1_end - 1))), Vector{UInt8}(view(e2, i2:(e2_end - 1))))
     if haskey(st.memo, key)
         push!(out, item_byte(ExprVarRef(st.memo[key])))
-    else
+    elseif st.next_var < 0x40
         v = st.next_var
         st.memo[key] = v
         st.next_var = UInt8(v + 1)
         push!(out, item_byte(ExprNewVar()))
+    else
+        # Rule of 64: a VarRef index must fit in 6 bits, so we cannot memoise a 65th distinct
+        # disagreement. Upstream fails the WHOLE anti-unification here
+        # (`AntiUnificationFailure::TooManyVars`, lib.rs:2291-2292); `_au_merge!` has no error channel,
+        # so we emit an un-memoised fresh NewVar instead — valid output, strictly more general than
+        # the lgg, and it cannot crash. DOCUMENTED DIVERGENCE, only reachable with >64 distinct
+        # disagreement pairs in one anti-unification.
+        push!(out, item_byte(ExprNewVar()))
     end
-    s1 = _expr_end_offset(e1, i1) - i1
-    s2 = _expr_end_offset(e2, i2) - i2
     (s1, s2)
 end
 

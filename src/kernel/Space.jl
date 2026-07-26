@@ -959,7 +959,25 @@ end
 end
 
 @inline function _coref_descend_to_check!(loc::ReadZipperCore, bytes)
-    zipper_descend_to_check!(loc, bytes)
+    # ⚠️ CONTRACT NORMALISATION. The three underlying primitives disagree about what they leave
+    # descended when the check FAILS:
+    #   * `pz_descend_to_check!`  (ProductZipper.jl:345-348) and `pzg_descend_to_check!` RESTORE —
+    #     they ascend back whatever they descended.
+    #   * `zipper_descend_to_check!` (ReadZipperCore) does NOT: `_descend_to_internal!`
+    #     (Zipper.jl:440-442) `append!`s ALL of `k` to the prefix buffer and never undoes it.
+    # The coref DFS's SymbolSize branch compensates for the RESTORING contract — on failure it
+    # ascends ONE byte (the symbol tag) rather than `size + 1`. Under the non-restoring primitive that
+    # UNDER-ascends by `size`, leaving the cursor that many bytes too deep and corrupting every
+    # enclosing `vs!` / k-path loop.
+    #
+    # LATENT, not live: this dispatch is reachable only via `space_query_coref` with n_src == 1, which
+    # has ZERO callers workspace-wide — every MM2 path goes through ProductZipper/G. Normalising here,
+    # at the dispatch layer where the polymorphism already lives, removes the landmine without
+    # touching the verified-faithful DFS or PathMap's shared primitive (whose only caller is this
+    # function). Found by the space.rs cross-check, 2026-07-26.
+    ok = zipper_descend_to_check!(loc, bytes)
+    ok || zipper_ascend!(loc, length(bytes))
+    ok
 end
 @inline function _coref_descend_to_check!(loc::ProductZipper, bytes)
     pz_descend_to_check!(loc, bytes)
