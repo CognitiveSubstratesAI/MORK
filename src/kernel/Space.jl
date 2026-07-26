@@ -1387,6 +1387,18 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     # win, result is order-independent. The struct already collects into `s.remove`; it
     # just was never marked accumulating, so it was created fresh-per-match.
     name == "-" && return true
+    # "U" / "hash" / "ACT" — the SAME omission as "and" and "-" above, found 2026-07-26 by cross-check.
+    # The rule is mechanical: a sink belongs here iff its `sink_apply!` stores into SINK STATE that
+    # `sink_finalize!` later consumes, rather than writing to `btm` immediately. Treated as immediate,
+    # such a sink is rebuilt fresh per match and finalized per match, so it only ever sees ONE entry:
+    #   * USink   accumulates a running MGU in `s.buf`, unifying each match into it. Per-match it
+    #             emitted one atom PER MATCH instead of a single unified result — `(u (f a b))`
+    #             upstream vs our `(u (f $a b))` + `(u (f a $b))` — and conflicting matches, which
+    #             upstream resolves to NOTHING, each produced their own atom.
+    #   * HashSink accumulates matched paths in `s.unique` and hashes the set.
+    #   * ACTSink  accumulates paths in `s.tmp` and writes the .act file on finalize; per-match each
+    #             finalize OVERWROTE the file, so only the LAST match survived (6 matches -> 1 atom).
+    (name == "U" || name == "hash" || name == "ACT") && return true
     false
 end
 
