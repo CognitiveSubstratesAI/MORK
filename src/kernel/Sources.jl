@@ -192,11 +192,29 @@ function source_factor(s::CmpSource, btm::PathMap{UnitVal})
     # Mirrors CmpSource::policy in sources.rs
     function cmp_policy(payload, path::Vector{UInt8}, c::Int)
         if c == 0
-            single = PathMap{UnitVal}()
-            set_val_at!(single, path, UNIT_VAL)
-            if cmp == 0  # ==: secondary = single-entry PathMap at this path
+            if cmp == 0  # ==: secondary = single-entry PathMap at the SHIFTED path
+                # Upstream enrolls a SHIFTED copy (sources.rs:142-146):
+                #     e.shift(e.newvars() as _, &mut ExprZipper::new(Expr{ ptr: qv.as_mut_ptr() }))
+                # `Expr::shift` (expr/src/lib.rs:620) leaves NewVar alone and rewrites
+                # VarRef(i) → VarRef(i+n), re-basing this RHS copy so its back-references point at
+                # the RHS's OWN introduced variable inside the combined `(== lhs rhs)` expression,
+                # not at the LHS's. Upstream's comment at :142 calls the unshifted form a bug and
+                # the very next line fixes it — we ported the code WITHOUT the fix.
+                #
+                # Effect (space.rs sweep, s2_isrc_eq_debruijn): `(== (p $x $y) (p $z $w))` over the
+                # var-bearing atom `(p $u $u)` gave `(eqr $a $a $b $a)` — the FOURTH variable
+                # corefered with the FIRST pair — where upstream gives `(eqr $a $a $b $b)`.
+                # Same de-Bruijn re-basing family as the PureSink bug; `_expr_shift!` is the port of
+                # `Expr::shift` added for that fix.
+                shifted = UInt8[]
+                _expr_shift!(path, _expr_newvars(path, 1, length(path)), shifted)
+                single = PathMap{UnitVal}()
+                set_val_at!(single, shifted, UNIT_VAL)
                 return (payload, read_zipper(single))
             else          # !=: secondary = btm minus this path (COW-shared, no deepcopy)
+                # NB no shift here: upstream's `!=` branch removes the RAW path (sources.rs:148-151).
+                single = PathMap{UnitVal}()
+                set_val_at!(single, path, UNIT_VAL)
                 # psubtract returns an AlgebraicResult, not a bare PathMap: Element holds
                 # the subtracted map; Identity (SELF_IDENT) means btm was unchanged (path
                 # ∉ btm); None means the result is empty (btm ⊆ {path}). Mirror the
