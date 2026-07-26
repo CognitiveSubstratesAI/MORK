@@ -382,6 +382,79 @@ function _expr_has_var(bytes::Vector{UInt8})::Bool
     false
 end
 
+"""
+    _relation_has_var_atom(btm, head_prefix) → Bool
+
+True if ANY atom stored under `head_prefix` carries a variable — i.e. the relation holds a
+(partial) RULE / higher-order pattern rather than pure ground data.
+
+**Every trie-join fast path MUST bail to ProductZipper when this holds.** Upstream matches a
+query against such an atom by UNIFICATION: its coreferential DFS descends into data-side
+variable bytes and keeps going (the `vs!` macro, space.rs:94-111, invoked at :133/:183/:188/:197),
+so a stored `(p \$x)` behaves as a WILDCARD that matches every `(p …)` query. Exact-byte trie
+keying cannot express that — a meet/keymap compares bytes, so a var byte simply fails to match
+any ground key and the join SILENTLY UNDER-GENERATES.
+
+Found 2026-07-26 by differential probes: with the fast paths on, `(, (p \$a) (q \$a))` over a
+space containing `(p \$x)` dropped the `(out a)` result upstream produces, and
+`(, (f \$x) (g \$x))` over `(f \$)` produced NOTHING at all. Disabling `_TRIE_JOIN_ENABLED`
+took the space.rs probe corpus from 33/41 to 40/41 byte-exact — all seven recovered probes were
+this one cause, across all five fast paths (P1b/P2/P2c/P3/P5).
+
+This is the SECOND instance of this defect class in the trie-join lever: the P5 connected join
+previously reported "0 matches, handled" instead of bailing when a stored relation's shape
+diverged from the query's ground prefix. The lesson is the same — an exact-byte optimization must
+DECLINE on var-bearing data, never silently return fewer rows.
+
+Cost: one subtrie scan per factor, the same order as the keymap/argset build the fast path
+performs anyway, and it runs only when a fast path has already matched the query SHAPE.
+"""
+function _relation_has_var_atom(btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8})::Bool
+    rz = read_zipper_at_path(btm, collect(head_prefix))
+    while zipper_to_next_val!(rz)
+        _expr_has_var(collect(zipper_path(rz))) && return true
+    end
+    false
+end
+
+# True if ANY of the given relations holds a var-bearing atom (see above).
+_any_relation_has_var_atom(btm::PathMap{UnitVal}, hps) =
+    any(hp -> _relation_has_var_atom(btm, hp), hps)
+
+"""
+    _factor_head_prefix(src) → Vector{UInt8} | nothing
+
+The `[Arity][Symbol-head]` prefix of a query factor — the RELATION it reads, with no argument bytes.
+`nothing` when the head is not a plain symbol (compound or variable head), which callers must treat
+as UNSAFE for exact-byte keying.
+
+Why the head, and not the classify's leading prefix: upstream calls `vs!` at the **SymbolSize** branch
+too (space.rs:187-188) — BEFORE attempting the exact byte match — so a data-side variable is absorbed
+at ANY argument position where the query holds a ground byte. A fast path that anchors at a longer
+ground prefix (factor `(s a \$x)` anchors at `(s a`) therefore cannot see a var atom stored as
+`(s \$z 9)`, which lives under `(s \$…` — yet upstream matches it, because `\$z` unifies with `a`.
+Scanning from the relation head is what makes such atoms visible.
+
+(Found 2026-07-26: guarding on the leading prefix recovered 5 of 7 probes and left exactly the two
+whose var atom hid behind a ground argument — s2_p2c_hidden_varatom, s2_p5_hidden_varatom.)
+"""
+function _factor_head_prefix(src::ExprEnv)::Union{Nothing, Vector{UInt8}}
+    fa = ExprEnv[]; ee_args!(src, fa)
+    length(fa) >= 2 || return nothing
+    buf = src.base.buf
+    byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol || return nothing   # compound/variable head
+    Vector{UInt8}(buf[(Int(src.offset) + 1):Int(fa[2].offset)])
+end
+
+# True if ANY query factor reads a relation holding a var-bearing atom — the soundness condition for
+# every trie-join fast path. A factor whose head is not a plain symbol cannot be bounded this cheaply,
+# so it counts as unsafe (conservative: the query falls through to the coref DFS, which is correct).
+_any_factor_relation_has_var_atom(btm::PathMap{UnitVal}, sources::Vector{ExprEnv}) =
+    any(sources) do src
+        hp = _factor_head_prefix(src)
+        hp === nothing ? true : _relation_has_var_atom(btm, hp)
+    end
+
 # Index a factor's stored atoms by the shared-var value reached via `varpath`,
 # anchoring the read at `leading_prefix`. Returns (keymap, sound). `sound` is false
 # if any stored atom carries a VARIABLE at the join-key position (a stored rule /

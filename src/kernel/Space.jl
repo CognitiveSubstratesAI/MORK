@@ -718,14 +718,30 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # relations' arg-value subtries instead of the naive ProductZipper (N^k). Any other
     # shape, or an anchored (non-empty prefix) query, falls through UNCHANGED below.
     # Defined in kernel/TrieJoin.jl; validated ≡ ProductZipper (test/integration/trie_join.jl).
+    # ⚠️ EVERY fast path below is guarded by `_any_relation_has_var_atom`. A stored atom carrying a
+    # variable is a higher-order pattern that upstream matches by UNIFICATION — its coref DFS descends
+    # into data-side variable bytes (`vs!`, space.rs:94-111) so `(p $x)` acts as a WILDCARD. Exact-byte
+    # trie keying cannot express that and SILENTLY UNDER-GENERATES, so these paths must DECLINE on
+    # var-bearing data and let the coref DFS below handle it (see `_relation_has_var_atom` for the
+    # measured evidence: the probe corpus went 33/41 → 40/41 once the fast paths stopped firing here).
+    # The scan is LAZY and memoised: `_tj_safe()` runs `_any_factor_relation_has_var_atom` at most
+    # ONCE per query, and only after some `_classify_*` has already matched the query SHAPE. Ordering
+    # matters — an eager check before the classifies made EVERY query pay a relation scan, including
+    # the majority that match no fast path at all, which cost ~31% of total suite time (measured
+    # 2m30 -> 3m17 across two runs each side). The classifies are pattern-only and cheap; the scan
+    # touches data, so it must come second.
+    _tj_var_safe = Ref{Union{Nothing, Bool}}(nothing)
+    _tj_safe() = (_tj_var_safe[] === nothing &&
+                      (_tj_var_safe[] = !_any_factor_relation_has_var_atom(btm, sources));
+                  _tj_var_safe[]::Bool)
     if isempty(prefix) && _TRIE_JOIN_ENABLED[]
         _tj_ok, _tj_hps = _classify_empty_tail(sources)
-        if _tj_ok
+        if _tj_ok && _tj_safe()
             return _trie_join_emit!(btm, sources, _tj_hps, effect, bindings_scratch, pairs_scratch)
         end
         # P2: general binary join (e.g. (edge $x $y)(edge $y $z)) via key-rotation.
         _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
-        if _bj_ok
+        if _bj_ok && _tj_safe()
             return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
                                             effect, bindings_scratch, pairs_scratch)
         end
@@ -733,7 +749,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         # e.g. ((join ($ctx case/0)) $a)(eval ($a) -> $b). Tried only after the
         # top-level P2 fails. Defined in kernel/TrieJoin.jl.
         _nbj_ok, _nlp1, _nvp1, _nlp2, _nvp2 = _classify_binary_join_nested(sources)
-        if _nbj_ok
+        if _nbj_ok && _tj_safe()
             _nh, _nc = _nested_binary_join_emit!(btm, sources, _nlp1, _nvp1, _nlp2, _nvp2,
                                             effect, bindings_scratch, pairs_scratch)
             _nh && return _nc      # else: stored higher-order key — fall through to ProductZipper
@@ -741,14 +757,14 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         # P3: strict k≥3 chain join (e.g. (edge $x $y)(edge $y $z)(edge $z $w)) via
         # recursive streaming. Non-chain k≥3 shapes fall through to ProductZipper.
         _ch_ok, _ch_hps = _classify_chain(sources)
-        if _ch_ok
+        if _ch_ok && _tj_safe()
             return _chain_join_emit!(btm, sources, _ch_hps, effect, bindings_scratch, pairs_scratch)
         end
         # P5: pipelined hash join for any CONNECTED k≥3 conjunction the chain rejects
         # (e.g. going-wide (0 join) case/2 = k-way star + eval consumer). Defined in
         # kernel/TrieJoin.jl. Bails to ProductZipper on a higher-order (var) key.
         _cn_ok, _cn_ord, _cn_occ, _cn_lps = _classify_connected(sources)
-        if _cn_ok
+        if _cn_ok && _tj_safe()
             _cnh, _cnc = _connected_join_emit!(btm, sources, _cn_ord, _cn_occ, _cn_lps,
                                            effect, bindings_scratch, pairs_scratch)
             _cnh && return _cnc
