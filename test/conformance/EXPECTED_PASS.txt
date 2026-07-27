@@ -119,6 +119,10 @@ sinks/g8_act_groundpayload
 sinks/g8_act_mixed
 sinks/g8_act_two_same_file
 sinks/g8_disp_pure
+sinks/g9_head_2of3_control
+sinks/g9_tail_2of3
+sinks/g9_tail_3of5
+sinks/g9_tail_pair_template
 space/meta_ana_coalgebra
 space/mm1_forward_full_proof
 space/s1_barevar_source

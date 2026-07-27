@@ -1,0 +1,6 @@
+(bar x)
+(foo 1)
+(foo 2)
+(foo 3)
+(cux x 2)
+(cux x 3)
