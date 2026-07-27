@@ -1,0 +1,45 @@
+    ((step base)
+      (, (goal (: $proof $conclusion)) (kb (: $proof $conclusion)))
+      (, (ev (: $proof $conclusion) ) ))
+
+    ((step abs)
+      (, (goal (: $proof $conclusion)))
+      (, (goal (: $lhs (-> $synth $conclusion)) ) ))
+
+    ((step rev)
+      (, (ev (: $lhs (-> $a $r)))  (goal (: $k $r)) )
+      (, (goal (: $rhs $a) ) ))
+
+    ((step abs2)
+      (, (goal (: $proof $conclusion)))
+      (, (goal (: $lhs (-> $syntha $synthb $conclusion)) ) ))
+
+    ((step rev2)
+      (, (ev (: $lhs (-> $a $b $r)))  (goal (: $k $r)) )
+      (, (goal (: $ap $a)) (goal (: $bp $b)) ))
+
+    ((step app)
+      (, (ev (: $lhs (-> $a $r)))  (ev (: $rhs $a))  )
+      (, (ev (: (@ $lhs $rhs) $r) ) ))
+      
+    ((step app2)
+      (, (ev (: $f (-> $a $b $r)))  (ev (: $ap $a)) (ev (: $bp $b))  )
+      (, (ev (: (@ $f $ap $bp) $r) ) ))
+
+    (exec zealous
+            (, ((step $x) $p0 $t0)
+               (exec zealous $p1 $t1) )
+            (, (exec $x $p0 $t0)
+               (exec zealous $p1 $t1) ))
+    
+    (kb (: ax-mp (-> $𝜑 (→ $𝜑 $𝜓) $𝜓)))
+    (kb (: ax-1 (→ $𝜑 (→ $𝜓 $𝜑))))
+    (kb (: ax-2 (→ (→ $𝜑 (→ $𝜓 $𝜒)) (→ (→ $𝜑 $𝜓) (→ $𝜑 $𝜒)))))
+    (kb (: ax-3 (→ (→ (¬ $𝜑) (¬ $𝜓)) (→ $𝜓 $𝜑))))
+
+    (kb (: mp2b.1 𝜑))
+    (kb (: mp2b.2 (→ 𝜑 𝜓)))
+    (kb (: mp2b.3 (→ 𝜓 𝜒)))
+
+    (goal (: $proof 𝜒))
+    

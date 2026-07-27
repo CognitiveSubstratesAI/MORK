@@ -97,9 +97,9 @@ function _conf_expected(path::AbstractString)::Vector{String}
     _conf_sorted(lines)
 end
 
-"Run every vendored probe; return (passing::Set{String}, total::Int)."
+"Run every vendored probe; return (passing::Set{String}, total::Int, orphans::Vector{String}).\n`orphans` are .mm2 files with NO .expected — they run nothing and must be reported, not skipped."
 function conformance_results()
-    passing = Set{String}(); total = 0
+    passing = Set{String}(); total = 0; orphans = String[]
     for group in ("sinks", "space")
         dir = joinpath(_CONF_DIR, group)
         isdir(dir) || continue
@@ -107,11 +107,18 @@ function conformance_results()
             endswith(f, ".mm2") || continue
             name = group * "/" * f[1:(end - 4)]
             exp_path = joinpath(dir, f[1:(end - 4)] * ".expected")
-            isfile(exp_path) || continue
+            # A .mm2 with no .expected used to `continue` BEFORE `total += 1`, so it vanished from
+            # the corpus silently — never run, never counted, never reported. That is strictly worse
+            # than a missing probe: the count still looks healthy. It bit a probe added 2026-07-27
+            # within hours. Record it and let the gate SHOUT instead of skipping.
+            if !isfile(exp_path)
+                push!(orphans, name)
+                continue
+            end
             total += 1
             got = _conf_run_probe(joinpath(dir, f))
             got !== nothing && got == _conf_expected(exp_path) && push!(passing, name)
         end
     end
-    (passing, total)
+    (passing, total, orphans)
 end

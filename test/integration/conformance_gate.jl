@@ -31,7 +31,11 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     end
 
     expected = Set{String}(strip(l) for l in eachline(baseline_path) if !isempty(strip(l)))
-    passing, total = conformance_results()
+    passing, total, orphans = conformance_results()
+    # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
+    # corpus count look healthy while a probe silently does nothing.
+    isempty(orphans) || @info "conformance: .mm2 with NO .expected (inert, never run)" orphans
+    @test isempty(orphans)
 
     @test total > 0
     @info "conformance corpus" total passing = length(passing) baseline = length(expected)
