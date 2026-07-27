@@ -4591,6 +4591,17 @@ const _MORK_TS = @testset "MORK" begin
     #                        run first) — state dependence, unresolved.
     #   sink_float_reduce    consistent with the already-catalogued FloatReduction grouping
     #                        divergence in the conformance corpus.
+    # bc1/bc2/bc3/mm2_bc fixed + wired 2026-07-27: each carried a locally-invented
+    # `@test steps < N` that could NEVER pass — their `(exec zealous …)` driver RE-ADDS ITSELF, so
+    # the program never halts and `steps` always equals the budget (100<100, 30<30, 60<60,
+    # 10000<10000). Upstream asserts NO halting for any of them (bc3's only assert! is commented
+    # out; mm2_bc has none). Replaced with `steps == N` (pins the non-halting contract) plus a real
+    # content assertion — for bc1 that is upstream's own proof atom, which we produce exactly.
+    include("integration/bc1.jl")
+    include("integration/bc2.jl")
+    include("integration/bc3.jl")
+    include("integration/mm2_bc.jl")
+
     include("integration/basic.jl")
     include("integration/bench_tile_puzzle.jl")
     include("integration/coref_pattern_specificity.jl")

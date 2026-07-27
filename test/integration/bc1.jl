@@ -37,10 +37,14 @@ using MORK, Test
 (goal (: \$proof C))
 """
     )
+    # `(exec zealous …)` RE-ADDS ITSELF, so this program NEVER halts by design — 100 is a BUDGET,
+    # not a halting expectation. Upstream (main.rs:3597 `fn bc1`) asserts NO halting: it runs
+    # metta_calculus(100), prints the count, and asserts the proof atom below.
+    # The old `@test steps < 100` was invented locally and could NEVER pass (it evaluated 100 < 100).
     steps = space_metta_calculus!(s, 100)
-    @test steps < 100
+    @test steps == 100                      # consumed the whole budget — non-halting driver
     result = space_dump_all_sexpr(s)
-    # bc1 proves C (and possibly D) — check ev atom with relevant type was produced
-    @test occursin("(ev (: ", result) &&
-        (occursin("C))", result) || occursin("D))", result))
+    # UPSTREAM'S ACTUAL ASSERTION (main.rs:3642) — the full proof of D by modus-ponens chaining.
+    # Far stronger than the previous `occursin("(ev (: ")` + "C))"/"D))" substring disjunction.
+    @test occursin("(ev (: (@ (@ MP cd) (@ (@ MP bc) (@ (@ MP ab) a))) D))", result)
 end

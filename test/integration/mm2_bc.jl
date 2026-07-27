@@ -32,7 +32,10 @@ using MORK, Test
   """
     )
     steps = space_metta_calculus!(s, 10_000)
-    @test steps < 10_000
+    # Zealous driver re-adds itself ⇒ never halts; 10_000 is a BUDGET. Upstream asserts NO
+    # halting here (its only assert! is COMMENTED OUT for bc3; mm2_bc has none), so
+    # `@test steps < 10_000` was invented locally and could never pass (10000 < 10000).
+    @test steps == 10_000
     result = space_dump_all_sexpr(s)
     # lift rule must fire: kb facts become ev facts
     @test occursin("(ev (: (t) (term)))", result)

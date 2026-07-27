@@ -39,9 +39,17 @@ using MORK, Test
 (goal (: \$proof χ))
 """
     )
+    # Zealous driver re-adds itself ⇒ never halts; 30 is a BUDGET. Upstream (main.rs:3645 `fn bc2`)
+    # asserts no halting. `@test steps < 30` was invented locally and could never pass (30 < 30).
     steps = space_metta_calculus!(s, 30)
-    @test steps < 30
+    @test steps == 30
     result = space_dump_all_sexpr(s)
+    # ⚠️ NOT upstream's assertion — our program is a DIFFERENT FORMULATION from upstream's
+    # `fn bc2` (main.rs:3645). Upstream asserts `(@ ax-mp (@ ax-mp mp2b.1 mp2b.2) mp2b.3)`; this
+    # program has no `ax-mp` symbol at all and chains modus ponens by direct application. So we
+    # assert what THIS program proves: mp2b.1 : φ, mp2b.2 : φ→ψ, mp2b.3 : ψ→χ  ⊢  χ.
+    # (Whether bc2.jl SHOULD be re-ported to match upstream's program is open — see session log.)
+    @test occursin("(@ mp2b.3 (@ mp2b.2 mp2b.1))", result)
     # bc2 proves χ from modus ponens chain — ev atom with χ should exist
     @test occursin("(ev (: ", result) || space_val_count(s) > 5
 end
