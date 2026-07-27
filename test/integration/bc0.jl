@@ -41,9 +41,17 @@ using MORK, Test
 (goal (: \$proof C))
 """
     )
-    steps = space_metta_calculus!(s, 10_000)
-    @test steps < 10_000
+    # ⚠️ THIS TEST USED TO HANG THE ENTIRE SUITE. Cause was the BUDGET, not the engine.
+    # `(step abs)` is divergent by construction — every goal spawns a strictly LARGER goal
+    # ((-> $synth $conclusion), then (-> $s2 (-> $synth $conclusion)), …) — and `(exec zealous …)`
+    # re-adds itself, so the program never halts and term size grows without bound. The old budget
+    # of 10_000 (raised from upstream's 50 with the note "to account for step-counting differences")
+    # therefore asked for 10_000 steps of exponential term growth: it ran >4 min at 100% CPU and
+    # silently swallowed THREE whole-suite sweeps before being isolated.
+    # Upstream (main.rs:3546 `fn bc0`) uses 50 and asserts the proof atom below.
+    steps = space_metta_calculus!(s, 50)
+    @test steps == 50                       # consumed the whole budget — non-halting by design
     result = space_dump_all_sexpr(s)
-    # Upstream asserts ground proof term; we check C was proved in some form
-    @test occursin("(ev (: ", result) && occursin("C))", result)
+    # UPSTREAM'S ACTUAL ASSERTION (main.rs:3594) — the ground proof term for C.
+    @test occursin("(ev (: (@ (@ MP bc) (@ (@ MP ab) a)) C))", result)
 end

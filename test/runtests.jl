@@ -4597,6 +4597,10 @@ const _MORK_TS = @testset "MORK" begin
     # 10000<10000). Upstream asserts NO halting for any of them (bc3's only assert! is commented
     # out; mm2_bc has none). Replaced with `steps == N` (pins the non-halting contract) plus a real
     # content assertion — for bc1 that is upstream's own proof atom, which we produce exactly.
+    # bc0 additionally had its budget raised 10_000 (from upstream's 50) on a program whose
+    # `(step abs)` rule grows terms without bound — so it ran >4 min at 100% CPU and HUNG the
+    # suite. Restored to upstream's 50: now 3.4s.
+    include("integration/bc0.jl")
     include("integration/bc1.jl")
     include("integration/bc2.jl")
     include("integration/bc3.jl")
