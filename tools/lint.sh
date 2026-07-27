@@ -70,6 +70,29 @@ else
     echo "PASS: all integration test step caps safe (<=100k)"
 fi
 
+# ── Check 6: halting assertion bound must match the cap actually passed ─────
+# A `space_metta_calculus!(s, CAP)` followed by `@test steps < BOUND` with BOUND > CAP is
+# VACUOUS — the call can never return more than CAP, so the halting check can never fail.
+# Two of these existed (roman_disjoin_final, process_calculus_reverse): both were introduced
+# by lowering caps to <=100k in 92124ea WITHOUT lowering the assertion bound left behind.
+VACUOUS=$(awk '
+    match($0, /space_metta_calculus!\([^,]+, *([0-9_]+)\)/, m) { cap = m[1]; gsub(/_/, "", cap); f = FILENAME; l = FNR; next }
+    cap != "" && match($0, /@test +steps *< *([0-9_]+)/, b) {
+        bound = b[1]; gsub(/_/, "", bound)
+        if (bound + 0 > cap + 0) printf "%s:%d: asserts steps < %s but cap is %s\n", f, l, b[1], cap
+        cap = ""
+    }
+    /@test/ && cap != "" && !/steps *</ { next }
+' test/integration/*.jl test/runtests.jl 2>/dev/null)
+if [ -n "$VACUOUS" ]; then
+    echo ""
+    echo "FAIL: vacuous halting assertion (bound exceeds the cap passed — can never fail):"
+    echo "$VACUOUS"
+    ERRORS=$((ERRORS + 1))
+else
+    echo "PASS: all halting assertions bounded by their actual step cap"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 if [ $ERRORS -eq 0 ]; then

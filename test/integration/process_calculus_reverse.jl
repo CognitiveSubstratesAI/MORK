@@ -24,7 +24,9 @@ using MORK, Test
     """
     )
     steps = space_metta_calculus!(s, 100_000)
-    @test steps < 1_000_000_000
+    # must be < the CAP passed above: a run that hits the cap did not halt.
+    # (was `< 1_000_000_000` against a 100_000 cap — vacuous, could never fail.)
+    @test steps < 100_000
     result = space_dump_all_sexpr(s)
     # 2+2=4: result should contain (S (S (S (S Z)))) i.e. Peano 4
     @test occursin("(S (S (S (S Z))))", result)

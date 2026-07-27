@@ -4563,6 +4563,16 @@ const _MORK_TS = @testset "MORK" begin
     # Every missing branch was a SILENT DROP. 9 probes, ground truth from the upstream binary.
     include("integration/sink_and_sum_branches.jl")
 
+    # ── Multi-source exec workloads, un-skipped 2026-07-27 ────────────────────
+    # Both files @test_skip'd their real workload since 92124ea (2026-04-24) on a Rule-of-64
+    # PRECAUTION ("3-4 sources exceed the single-factor ProductZipper limit" / "needs a
+    # Rule-of-64 fix") — never an observed wrong answer. Both claims are FALSE: each program
+    # runs the untouched upstream workload to a natural halt, byte-identical to the upstream
+    # binary (mm1_forward 8 steps/1598 atoms, meta_ana 19 steps/9 atoms). Neither file was
+    # wired into this suite, so the skips had been masking ZERO coverage, not reduced coverage.
+    include("integration/mm1_forward.jl")
+    include("integration/meta_ana.jl")
+
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")

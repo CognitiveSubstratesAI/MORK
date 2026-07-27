@@ -18,7 +18,9 @@ using MORK, Test
     """
     )
     steps = space_metta_calculus!(s, 100_000)
-    @test steps < 10_000_000
+    # must be < the CAP passed above: a run that hits the cap did not halt.
+    # (was `< 10_000_000` against a 100_000 cap — vacuous, could never fail.)
+    @test steps < 100_000
     result = space_dump_all_sexpr(s)
     @test occursin("(disjoint 1 2)", result)
     @test occursin("(disjoint 2 3)", result)
