@@ -1,0 +1,10 @@
+; g3: integral-valued float reductions.  Rust f64::to_string() renders 7.0 as "7";
+; Julia string(7.0) gives "7.0".  All four reductions in one exec.
+(n 1.0)
+(n 2.0)
+(n 4.0)
+(exec 0 (, (n $x))
+  (O (fsum (sm $c) $c $x)
+     (fmin (mn $c) $c $x)
+     (fmax (mx $c) $c $x)
+     (fprod (pd $c) $c $x)))

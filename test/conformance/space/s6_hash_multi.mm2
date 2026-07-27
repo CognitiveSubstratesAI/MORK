@@ -1,0 +1,3 @@
+(p a)
+(p b)
+(exec 0 (, (p $z)) (O (hash (H $h) $h ($z))))

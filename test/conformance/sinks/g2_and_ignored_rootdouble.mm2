@@ -1,0 +1,6 @@
+; DECISIVE BTM-ROOT probe, AndSink branch 2 (NewVar ignored guard).
+;   double-prefixed => (seen (seen $))
+;   root-relative   => (seen $)
+(m a 6)
+(m a 3)
+(exec 0 (, (m $c $i)) (O (and (seen $z) $ignored $i)))

@@ -1,0 +1,7 @@
+; CONTROL for g1_count_varref_k1: same template, but the source backrefs the
+; FIRST NewVar. Here "index k" and "first var" coincide, so both ports agree.
+; upstream expected: (r 3 $)
+(f a)
+(f b)
+(f c)
+(exec 0 (, (f $x)) (O (count (r $a $b) $a $x)))

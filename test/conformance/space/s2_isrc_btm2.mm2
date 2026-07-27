@@ -1,0 +1,6 @@
+; I-pattern, TWO BTM sources joined on a shared variable (ProductZipperG path).
+(p 1)
+(p 2)
+(q 2)
+(q 3)
+(exec 0 (I (BTM (p $a)) (BTM (q $a))) (, (out $a)))

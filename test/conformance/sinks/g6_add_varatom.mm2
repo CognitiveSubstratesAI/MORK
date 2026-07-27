@@ -1,0 +1,3 @@
+(fact $v)
+(fact b)
+(exec 0 (, (fact $k)) (O (+ (out $k $k))))

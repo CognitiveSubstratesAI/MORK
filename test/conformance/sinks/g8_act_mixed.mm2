@@ -1,0 +1,7 @@
+; ACT sink alongside two BTM (+) sinks in ONE O-template list: exercises
+; prefix_subsumption_resources with a mixed BTM/ACT WriteResourceRequest set
+; (WriteResourceRequest::ACT never pjoins with a BTM -> its own resource slot).
+; Also a second accumulation check via read-back.
+(foo 1) (foo 2) (foo 3)
+(exec 0 (, (foo $a)) (O (+ (plus $a)) (ACT g8mix (cuu $a)) (+ (plus2 $a))))
+(exec 1 (I (ACT g8mix (cuu $a))) (, (back $a)))

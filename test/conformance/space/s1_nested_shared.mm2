@@ -1,0 +1,6 @@
+; shared var NESTED inside compound args on BOTH sides, at different depths.
+(r (s 1) t)
+(r (s 2) t)
+(m u (v 1))
+(m u (v 3))
+(exec 0 (, (r (s $x) t) (m u (v $x))) (, (out $x)))

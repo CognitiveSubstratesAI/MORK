@@ -1,0 +1,7 @@
+; the bound symbol is a strict PREFIX-length mismatch: pattern needs 3 bytes at arg 2
+; but only 2-byte and 4-byte siblings are stored -> descend_to_existing_byte on the
+; size byte FAILS (not the check). The `if` must fall through without ascending.
+(d abc ab)
+(d abc abcd)
+(d xyz xyz)
+(exec 0 (, (d $x $x)) (, (out $x)))

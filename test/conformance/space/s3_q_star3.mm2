@@ -1,0 +1,11 @@
+; s3: 3-way STAR join on ONE shared variable (the "empty tail" shape a trie-meet
+; fast path classifies). Intersection is a single value.
+(p 1)
+(p 2)
+(p 3)
+(q 2)
+(q 3)
+(r 3)
+(r 1)
+(exec 0 (, (p $v) (q $v) (r $v)) (, (all $v)))
+(exec 1 (, (p $v) (q $v) (r $v) (r $v)) (, (all4 $v)))

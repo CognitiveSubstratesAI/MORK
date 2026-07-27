@@ -1,0 +1,5 @@
+(v 1 a)
+(v 2 b)
+(v 3 c)
+(v 4 d)
+(exec 0 (, (v $i $x)) (O (tail 2 (g $x))))

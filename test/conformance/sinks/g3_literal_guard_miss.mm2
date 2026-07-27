@@ -1,0 +1,4 @@
+; g3: BRANCH 1 NEGATIVE -- sum = 3, literal is 4 => upstream emits NOTHING.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (no) 4 $x)))

@@ -1,0 +1,5 @@
+(edge a b)
+(edge b c)
+(edge c d)
+(path2 a c)
+(path2 b d)

@@ -1,0 +1,3 @@
+(f $a)
+(fact (f ab))
+(fact (f cd))

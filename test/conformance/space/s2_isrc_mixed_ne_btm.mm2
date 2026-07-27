@@ -1,0 +1,10 @@
+; query_multi_i multi-factor with DIFFERENT per-factor prefix lengths:
+; factor0 = != CmpSource  (PrefixZipper "[3]!=" , 4 bytes)
+; factor1 = BTM source    (PrefixZipper "[2]BTM", 5 bytes)
+; Exercises the factor-boundary arithmetic in our process_match
+; (Space.jl:505/517 adds ONE constant pzg_root_prefix_len to every factor_path).
+(p 1)
+(p 2)
+(c 1 x)
+(c 2 y)
+(exec 0 (I (!= (p $a) (p $b)) (BTM (c $a $v))) (, (out $a $b $v)))

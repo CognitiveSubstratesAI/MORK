@@ -1,0 +1,8 @@
+; s3: the read passed to query_multi_raw must be a SNAPSHOT isolated from the
+; write pass. Transitive-closure step that writes into the SAME relation it
+; reads. Upstream (read_copy = btm.clone() + add) yields ONLY the 1-step
+; extensions; a leaking (non-COW) read would also yield (e a d).
+(e a b)
+(e b c)
+(e c d)
+(exec 0 (, (e $x $y) (e $y $z)) (, (e $x $z)))

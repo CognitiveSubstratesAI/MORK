@@ -1,0 +1,7 @@
+(got p a 1)
+(got q b 2)
+(p a 1)
+(p b 9)
+(q b 2)
+(rel p a)
+(rel q b)

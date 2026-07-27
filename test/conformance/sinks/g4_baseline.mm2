@@ -1,0 +1,5 @@
+; g4 PureSink baseline: VarRef(k) branch, formula eval + substitution
+(v 7)
+(exec 0 (, (v $x))
+  (O (pure (result $r) $r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 1)))))
+)

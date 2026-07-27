@@ -1,0 +1,7 @@
+; TWO independent back-refs in one factor -> references[] save/restore across sibling
+; DFS subtrees; a leaked offset cross-contaminates $x and $y.
+(d 1 1 8 8)
+(d 1 1 8 9)
+(d 1 2 8 8)
+(d 2 2 9 9)
+(exec 0 (, (d $x $x $y $y)) (, (out $x $y)))

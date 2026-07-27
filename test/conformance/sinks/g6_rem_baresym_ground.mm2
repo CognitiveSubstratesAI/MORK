@@ -1,0 +1,4 @@
+alpha
+beta
+(fact a 1)
+(exec 0 (, (fact $k $x)) (O (- alpha)))

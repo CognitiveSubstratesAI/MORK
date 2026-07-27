@@ -1,0 +1,8 @@
+(big 1e20)
+(f32big 1e20)
+(inf inf)
+(n 1)
+(nan NaN)
+(negzero -0.0)
+(small 1e-7)
+(whole 61.0)

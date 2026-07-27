@@ -1,0 +1,9 @@
+; DE-BRUIJN INDEX discriminator: the 3rd arg back-refs the FIRST var, not the most
+; recently pushed one. A `references` table indexed by push-order rather than e.v
+; matches (d _ $y $y) instead and yields (out 1 2)->(out 1 2)? no: it yields the
+; WRONG set (e.g. (out 5 6) below instead of (out 1 2)/(out 3 4)).
+(d 1 2 1)
+(d 1 2 2)
+(d 3 4 3)
+(d 5 6 6)
+(exec 0 (, (d $x $y $x)) (, (out $x $y)))

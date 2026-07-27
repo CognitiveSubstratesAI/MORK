@@ -1,0 +1,6 @@
+; CountSink branch 1 (SIZES fixed literal), NEGATIVE: 3 distinct sources but the
+; literal is 5 -> upstream emits NOTHING. A port that always emits fails here.
+(f a)
+(f b)
+(f c)
+(exec 0 (, (f $x)) (O (count (bad) 5 $x)))

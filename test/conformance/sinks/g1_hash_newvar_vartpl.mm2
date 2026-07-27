@@ -1,0 +1,7 @@
+; HashSink branch 2 (NewVar ignored guard) with a VARIABLE in the template, so
+; the requested BTM root ("(h") is a STRICT prefix of the emitted template and
+; the un-stripped wz.move_to_path(ignored) doubling becomes VISIBLE.
+; upstream expected: (h (h $a))   -- template unchanged, root-prefixed.
+(s 1)
+(s 2)
+(exec 0 (, (s $x)) (O (hash (h $w) $q $x)))

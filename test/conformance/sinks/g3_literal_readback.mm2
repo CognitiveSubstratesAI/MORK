@@ -1,0 +1,5 @@
+; g3: same question for BRANCH 1 (fixed-literal guard hit).
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (yes) 3 $x)))
+(exec 1 (, (yes)) (O (+ (readback ok))))

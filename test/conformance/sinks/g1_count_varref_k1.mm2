@@ -1,0 +1,9 @@
+; CountSink branch 3 (VarRef k): source slot backrefs the SECOND NewVar of the
+; result template, so upstream must substitute AT INDEX 1, not at the first var.
+; template (r $a $b): $a = NewVar#0, $b = NewVar#1, source slot = VarRef(1).
+; upstream expected: (r $ 3)   [count spliced into the SECOND slot]
+; a "substitute the first variable" port emits (r 3 $) instead.
+(f a)
+(f b)
+(f c)
+(exec 0 (, (f $x)) (O (count (r $a $b) $b $x)))

@@ -1,0 +1,5 @@
+(co abc)
+(ex (a b c))
+(tn ((a b c) abc))
+(tu (abc abc))
+(w abc)

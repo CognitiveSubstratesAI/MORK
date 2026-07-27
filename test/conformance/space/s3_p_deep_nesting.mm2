@@ -1,0 +1,6 @@
+; s3: pattern variable must bind a NESTED compound across two factors ->
+; exercises the coref NewVar ARITIES branch (pushes `arity` fresh NewVars).
+(s (f (g 1) 2))
+(t (f (g 1) 2))
+(t (f (g 3) 4))
+(exec 0 (, (s $x) (t $x)) (, (eq $x)))

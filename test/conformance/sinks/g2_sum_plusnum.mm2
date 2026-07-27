@@ -1,0 +1,6 @@
+; SumSink NUMBER PARSER: upstream is u32::from_str_radix(s, 10), which ACCEPTS a leading '+'.
+; Julia's tryparse(UInt32, "+7") returns `nothing`, so our _sum_acc SILENTLY DROPS the entry.
+; upstream: 7 + 1 = 8   ours (predicted): 1
+(fact a +7)
+(fact b 1)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

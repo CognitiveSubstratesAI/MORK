@@ -1,0 +1,3 @@
+(fact (f $x b))
+(fact (f a $y))
+(exec 0 (, (fact $e)) (O (U $e)))

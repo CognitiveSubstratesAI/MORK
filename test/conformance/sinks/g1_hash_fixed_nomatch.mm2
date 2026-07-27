@@ -1,0 +1,8 @@
+; HashSink branch 1 (SIZES fixed literal), NEGATIVE.  The literal is 3 bytes;
+; upstream compares it against the FULL 16-byte hash, so a non-16-byte literal
+; can NEVER match.  upstream expected: NOTHING emitted.
+; A port that compares only the first <size> bytes of a shorter hash will emit
+; spuriously (~1/256 per 1-byte literal).
+(s 1)
+(s 2)
+(exec 0 (, (s $x)) (O (hash (hk) abc $x)))

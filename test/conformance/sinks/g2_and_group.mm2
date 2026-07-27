@@ -1,0 +1,7 @@
+; AndSink grouping: one AND per distinct (<result>,<source>) context.
+; a: 0x36 & 0x33 = 0x32 = '2'   b: 0x37 & 0x35 = 0x35 = '5'
+(m a 6)
+(m a 3)
+(m b 7)
+(m b 5)
+(exec 0 (, (m $c $i)) (O (and (cell $c $nv) $nv $i)))

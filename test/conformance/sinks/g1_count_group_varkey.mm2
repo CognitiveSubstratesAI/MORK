@@ -1,0 +1,10 @@
+; GROUPING KEY probe. Upstream groups ONLY by the result template and takes
+; val_count() of EVERYTHING under it (i.e. all <source-slot><value> pairs), then
+; asks whether the literal equal to that count EXISTS as a child of the slot.
+; Here the slot is a query variable taking values 1 and 3, and the value slot
+; a and b.  upstream: count = 2, and "2" is NOT among {1,3} -> emits NOTHING.
+; A port that groups by (template, slot-value) sees two groups of size 1 each,
+; and the group whose slot value is "1" matches its own count -> emits (r).
+(f 1 a)
+(f 3 b)
+(exec 0 (, (f $k $v)) (O (count (r) $k $v)))

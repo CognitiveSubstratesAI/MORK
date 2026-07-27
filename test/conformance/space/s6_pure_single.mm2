@@ -1,0 +1,4 @@
+(myhex 0x48)
+(exec 0 (, (myhex $x))
+        (O (pure (myparsedhex $i) $i (i16_to_string (i8_as_i16 (decode_hex $x)))))
+)

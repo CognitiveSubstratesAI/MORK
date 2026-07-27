@@ -1,0 +1,3 @@
+(fact a b)
+(fact c d)
+(exec 0 (, (fact $x $y)) (O (+ (f $x $y)) (- (f a b))))

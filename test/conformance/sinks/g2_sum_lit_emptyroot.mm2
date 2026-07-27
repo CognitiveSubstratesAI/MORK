@@ -1,0 +1,7 @@
+; Same branch-1 case as g2_sum_lit_hit, but a companion (+ $z) template requests the
+; EMPTY BTM root, which subsumes the sum sink's root => root_prefix_path() == [].
+; If g2_sum_lit_hit differs from this, the divergence is BTM-root handling, not branch logic.
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (+ $z) (sum (correct) 6 $x)))

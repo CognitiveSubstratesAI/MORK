@@ -1,0 +1,7 @@
+; higher-order head + 3 factors + two shared vars introduced in different factors.
+(p 5)
+(q 5)
+(rel p 1)
+(rel q 2)
+(ok 1)
+(exec 0 (, ($h 5) (rel $h $n) (ok $n)) (, (out $h $n)))

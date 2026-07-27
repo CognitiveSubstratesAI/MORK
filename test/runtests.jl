@@ -4542,6 +4542,14 @@ const _MORK_TS = @testset "MORK" begin
     # upstream reference.
     include("integration/ip_sudoku_andsink.jl")
 
+    # ── MM2 differential conformance gate (2026-07-26) ───────────────────────
+    # 277 probes vendored with the upstream binary's own output. A RATCHET: anything currently
+    # matching upstream must keep matching (else FAIL); anything not yet matching is a catalogued
+    # divergence that merely logs if it starts passing. This is what makes the nine silent defects
+    # fixed on 07-25/26 impossible to revert unnoticed — the 1933-test suite could not catch any of
+    # them, because no fixture exercised the shapes.
+    include("integration/conformance_gate.jl")
+
     # ── pure comparison ops (ported 2026-07-26) ──────────────────────────────
     # `{lt,gt,lte,gte,eq,ne} × {i8,i16,i32,i64,i128,f32,f64}` — the ONLY family missing from our
     # pure-op table (371 upstream ops, 42 absent). Each returns a 1-BYTE i8, not the operand width.

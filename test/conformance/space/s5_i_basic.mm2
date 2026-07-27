@@ -1,0 +1,3 @@
+(edge a b)
+(edge b c)
+(exec 0 (I (BTM (edge $x $y)) (BTM (edge $y $z))) (, (path $x $z)))

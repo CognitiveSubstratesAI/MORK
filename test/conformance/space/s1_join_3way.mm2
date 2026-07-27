@@ -1,0 +1,10 @@
+; 3 sources; $y is INTRODUCED in source 2 and back-referenced in source 3, while $x
+; (source 1) is ALSO used in source 3. Exercises references save/restore across
+; sibling DFS subtrees and non-adjacent de-Bruijn indices.
+(a 1)
+(a 2)
+(b 1 p)
+(b 2 q)
+(c 1 p)
+(c 2 r)
+(exec 0 (, (a $x) (b $x $y) (c $x $y)) (, (out $x $y)))

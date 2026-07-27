@@ -1,0 +1,10 @@
+; P3 strict-chain join (k=3, ours) vs ProductZipper+unify (upstream).
+; (r2 $v p) stores a VARIABLE at the chain-link key position.
+; CONTROL: a-b-c-d chain is fully ground.
+(r1 a b)
+(r2 b c)
+(r3 c d)
+(r1 m n)
+(r2 $v p)
+(r3 p q)
+(exec 0 (, (r1 $x0 $x1) (r2 $x1 $x2) (r3 $x2 $x3)) (, (out $x0 $x1 $x2 $x3)))

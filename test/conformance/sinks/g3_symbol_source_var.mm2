@@ -1,0 +1,5 @@
+; g3: BRANCH 1 NEGATIVE with a var-bearing result.  Literal source "zzz" can never
+; equal a rendered number => upstream emits NOTHING (no keyed (r zzz <sum>) atom).
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $z) zzz $x)))

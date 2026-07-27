@@ -1,0 +1,6 @@
+; AndSink WIDTH: upstream folds `total &= p[clen+1]` -- ONLY the first payload byte of a
+; multi-byte value symbol, and encodes the result as a ONE-byte symbol.
+; 'a'=0x61, 'c'=0x63 -> 0x61 & 0x63 = 0x61 = 'a'; the trailing bytes 'b'/'d' are ignored.
+(m k ab)
+(m k cd)
+(exec 0 (, (m $c $i)) (O (and (r $nv) $nv $i)))

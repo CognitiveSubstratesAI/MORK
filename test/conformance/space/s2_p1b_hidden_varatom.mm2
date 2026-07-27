@@ -1,0 +1,8 @@
+; P1b control for the same class, but with the variable AT the join position on
+; BOTH sides: (p $x) and (q $y) both store a var. Upstream unifies them
+; (var<->var), producing a match whose binding is itself a variable.
+(p $x)
+(q $y)
+(p z)
+(q z)
+(exec 0 (, (p $a) (q $a)) (, (out7 $a)))

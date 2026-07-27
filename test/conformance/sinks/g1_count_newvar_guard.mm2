@@ -1,0 +1,9 @@
+; CountSink branch 2 (NewVar "ignored guard"): the source slot is a FRESH var
+; that does NOT backref the template, so upstream emits the template UNCHANGED
+; (path minus the NewVar byte) - the count is computed and thrown away.
+; upstream expected: (r $)  -- template with its variable INTACT
+; a port that treats "source is a variable" as "substitute into the template"
+; emits (r 2) instead.
+(f a)
+(f b)
+(exec 0 (, (f $x)) (O (count (r $p) $q $x)))

@@ -1,0 +1,7 @@
+(out5 1 u k)
+(out5 9 u k)
+(s $a 9)
+(s a 1)
+(t 1 u)
+(t 9 u)
+(w u k)

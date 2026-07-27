@@ -1,0 +1,3 @@
+(fact a 1)
+(fact (nested x y) 2)
+(exec 0 (, (fact $k $x)) (O (+ $k)))

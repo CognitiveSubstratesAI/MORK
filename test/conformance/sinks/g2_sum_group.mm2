@@ -1,0 +1,6 @@
+; SumSink grouping: one group per distinct (<result>,<source>) context.
+(fact a 1)
+(fact a 2)
+(fact b 10)
+(fact b 20)
+(exec 0 (, (fact $k $x)) (O (sum (total $k $n) $n $x)))

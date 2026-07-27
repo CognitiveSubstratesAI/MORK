@@ -1,0 +1,6 @@
+; The shape ctl_model_checking.mm2 actually uses: (count (total $c) $c $i).
+; Single NewVar in the template, source = VarRef(0).
+(wanted 1 p)
+(wanted 2 q)
+(wanted 3 r)
+(exec 0 (, (wanted $i $_)) (O (count (total $c) $c $i)))

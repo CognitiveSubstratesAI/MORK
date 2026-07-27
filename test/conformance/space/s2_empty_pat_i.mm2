@@ -1,0 +1,2 @@
+; arity-1 I pattern list: the n_factors==1 early-return branch of query_multi_i.
+(exec 0 (I) (, (out2 a)))

@@ -1,0 +1,7 @@
+; g4 upstream accumulates sunk paths in a PathMap (dedup) then reduces once in finalize;
+; ours evaluates+writes immediately per match. Two matches -> one identical sunk path.
+(k a)
+(k b)
+(exec 0 (, (k $x))
+  (O (pure (d $r) $r (i64_to_string (i64_from_string 4))))
+)

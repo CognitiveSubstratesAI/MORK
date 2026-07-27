@@ -1,0 +1,8 @@
+; de-Bruijn ORDER discriminator: source 2 references BOTH vars in REVERSED order.
+; A `references` table indexed by push-order (instead of e.v) swaps $x/$y here and
+; yields (out 1 2)/(out 2 1)-style garbage or nothing.
+(e 1 2)
+(e 2 1)
+(e 1 3)
+(e 3 4)
+(exec 0 (, (e $x $y) (e $y $x)) (, (sym $x $y)))

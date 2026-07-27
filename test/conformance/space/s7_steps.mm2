@@ -1,0 +1,4 @@
+(fact a)
+(exec 0 (, (fact $x)) (, (o0 $x)))
+(exec 1 (, (fact $x)) (, (o1 $x)))
+(exec 2 (, (fact $x)) (, (o2 $x)))

@@ -1,0 +1,6 @@
+(fact a 1)
+(fact a 2)
+(fact b 10)
+(fact b 20)
+(total a 3)
+(total b 30)

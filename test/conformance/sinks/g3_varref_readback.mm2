@@ -1,0 +1,6 @@
+; g3: CONTROL -- BRANCH 3 (VarRef) explicitly strips wz.root_prefix_path(),
+; so (sm 3) should be a real atom and read back.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (sm $c) $c $x)))
+(exec 1 (, (sm 3)) (O (+ (readback ok))))

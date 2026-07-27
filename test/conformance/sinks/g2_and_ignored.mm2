@@ -1,0 +1,4 @@
+; AndSink branch 2 (NewVar "ignored guard"): source is a bare fresh var => emit <result>.
+(m a 6)
+(m a 3)
+(exec 0 (, (m $c $i)) (O (and (seen) $ignored $i)))

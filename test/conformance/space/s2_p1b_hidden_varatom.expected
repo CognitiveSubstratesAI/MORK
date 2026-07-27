@@ -1,0 +1,6 @@
+(out7 $a)
+(out7 z)
+(p $a)
+(p z)
+(q $a)
+(q z)

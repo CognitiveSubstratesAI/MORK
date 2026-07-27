@@ -1,0 +1,10 @@
+; SINGLE-source pattern -> ALWAYS the coref DFS (no trie-join fast path can claim it).
+; One NewVar must fire ALL THREE child loops: vars (matches the stored $), sizes
+; (1-byte a / 2-byte bb / 3-byte ccc, each its own SIZES class), arities ((n 1)).
+; Dropping any loop silently loses exactly that class of atom.
+(d a)
+(d bb)
+(d ccc)
+(d (n 1))
+(d $)
+(exec 0 (, (d $x)) (, (out $x)))

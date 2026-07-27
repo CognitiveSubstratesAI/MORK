@@ -1,0 +1,5 @@
+; s3: n_factors==1 early return in query_multi (space.rs:1017-1021).
+; Pattern (,) has arity 1 => zero sources => upstream calls effect ONCE with
+; empty bindings and loc = the pattern itself, returns 1.
+(seed 1)
+(exec 0 (, ) (, (fired)))

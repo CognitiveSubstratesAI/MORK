@@ -1,0 +1,9 @@
+; NEGATIVE twin of g1_hash_eq_same: the two sets DIFFER, so the hashes must
+; differ and no (same) may be emitted.
+(a 1)
+(a 2)
+(b 1)
+(b 3)
+(exec (0 0) (, (a $x)) (O (hash (ha $h) $h $x)))
+(exec (0 1) (, (b $x)) (O (hash (hb $h) $h $x)))
+(exec (1 0) (, (ha $h) (hb $h)) (, (same)))

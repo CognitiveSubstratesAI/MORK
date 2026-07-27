@@ -1,0 +1,13 @@
+; descend_to_check FAILURE inside a 3-factor join. The bound $x resolves to a 2-byte
+; symbol; at factor 3 the size byte (0xC2) EXISTS but the payload mismatches for the
+; first sibling and matches for a LATER one. An over- or under-ascend after the failed
+; check corrupts the caller's cursor and silently drops the later sibling.
+(f aa)
+(f bb)
+(g aa)
+(g bb)
+(h aa)
+(h ab)
+(h ba)
+(h bb)
+(exec 0 (, (f $x) (g $x) (h $x)) (, (out $x)))

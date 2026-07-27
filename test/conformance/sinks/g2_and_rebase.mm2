@@ -1,0 +1,5 @@
+; AndSink branch 3 RE-BASING: trailing VarRef(1) must shift to VarRef(0) after
+; substitute_one_de_bruijn(0, <and-result>).
+(m a 6)
+(m a 3)
+(exec 0 (, (m $c $i)) (O (and (cell $nv $w $w) $nv $i)))

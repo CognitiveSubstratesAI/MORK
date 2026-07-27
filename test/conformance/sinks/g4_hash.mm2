@@ -1,0 +1,11 @@
+; g4 hash_expr: upstream gxhash128 over the FULL expr span, 16 bytes LITTLE-endian
+(w abc)
+(exec 0 (, (w $x))
+  (O (pure (h $r) $r (encode_hex (hash_expr $x))))
+)
+(exec 0 (, (w $x))
+  (O (pure (hx $r) $r (encode_hex $x)))
+)
+(exec 0 (, (w $x))
+  (O (pure (b64 $r) $r (encode_base64url $x)))
+)

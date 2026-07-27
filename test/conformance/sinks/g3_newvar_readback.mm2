@@ -1,0 +1,6 @@
+; g3: does BRANCH 2 write a REAL (done) atom, or root_prefix ++ (done) (doubled)?
+; The dump serializer prints only the first expression of a path, so read it back.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (done) $c $x)))
+(exec 1 (, (done)) (O (+ (readback ok))))

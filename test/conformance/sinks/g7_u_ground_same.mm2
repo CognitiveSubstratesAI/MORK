@@ -1,0 +1,3 @@
+(fact (f a))
+(other (f a))
+(exec 0 (, ($t (f a))) (O (U (f a))))

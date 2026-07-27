@@ -1,0 +1,5 @@
+; s3: shared variable NESTED inside a compound argument (P2c-shaped).
+(f (g a) 1)
+(f (g b) 2)
+(h (g a))
+(exec 0 (, (f $x $n) (h $x)) (, (out $x $n)))

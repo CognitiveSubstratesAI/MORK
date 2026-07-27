@@ -1,0 +1,8 @@
+; HashSink branch 3 (VarRef k) -- the branch ctl_model_checking.mm2 uses as the
+; EG fixpoint termination test.  <source> backrefs the template's NewVar, so the
+; 16-byte big-endian pathmap Catamorphism hash (u128, gxhash) of the SUBTRIE of
+; collected <value>s is spliced into the template with substitute_one_de_bruijn.
+; upstream expected: (h <16 raw bytes>) -- a SymbolSize(16) literal.
+(s 1)
+(s 2)
+(exec 0 (, (s $x)) (O (hash (h $v) $v $x)))

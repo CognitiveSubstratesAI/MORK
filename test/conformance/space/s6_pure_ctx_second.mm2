@@ -1,0 +1,3 @@
+(v k1 1.5)
+(v k2 2.5)
+(exec 0 (, (v $k $x)) (O (pure (res $r $k) $r (f64_to_string (f64_from_string $x)))))

@@ -1,0 +1,3 @@
+(fact (f ab))
+(fact (f cd))
+(exec 0 (, (fact $e)) (O (AU $e)))

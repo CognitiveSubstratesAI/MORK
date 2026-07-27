@@ -1,0 +1,6 @@
+; a source that is a BARE VARIABLE: the whole atom is bound by the top-level NewVar
+; branch (vars + sizes + arities loops all fire at the trie root), then referenced.
+(t (w 5))
+(t (w 6))
+(u (w 5))
+(exec 0 (, $z (u (w 5))) (, (saw $z)))

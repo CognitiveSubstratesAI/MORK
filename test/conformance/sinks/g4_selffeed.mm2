@@ -1,0 +1,6 @@
+; g4 write TIMING: upstream defers every write to finalize(); ours writes per match.
+; The exec's own pattern reads the region the sink writes into.
+(n 1)
+(exec 0 (, (n $x))
+  (O (pure (n $r) $r (i64_to_string (sum_i64 (i64_from_string $x) (i64_from_string 1)))))
+)

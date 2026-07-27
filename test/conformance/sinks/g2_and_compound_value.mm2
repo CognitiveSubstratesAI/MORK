@@ -1,0 +1,7 @@
+; AndSink with a COMPOUND <value> slot. Upstream never inspects the value's TAG: branch 3 just
+; folds the raw byte p[clen+1], which here is the arity-2 expr's FIRST CHILD HEADER (0xC1 =
+; SymbolSize(1)), so it still emits a result.  Our _redsink_parse_entry demands a Symbol at the
+; value slot and returns `nothing`, dropping the whole group => nothing emitted (silent drop).
+(m a 6)
+(m a 3)
+(exec 0 (, (m $c $i)) (O (and (r $n) $n (v $i))))

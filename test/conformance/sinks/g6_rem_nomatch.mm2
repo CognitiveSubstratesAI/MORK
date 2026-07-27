@@ -1,0 +1,3 @@
+(fact a 1)
+(gone zzz)
+(exec 0 (, (gone $k)) (O (- (fact $k 9))))

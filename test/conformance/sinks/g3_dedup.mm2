@@ -1,0 +1,6 @@
+; g3: upstream accumulates into a PathMap<()> SET keyed by <result><source><value>,
+; so two matches producing the SAME triple collapse to ONE contribution.
+; Both facts give the triple ((tot $c), VarRef0, "1.5") -> upstream sum = 1.5.
+(edge a 1.5)
+(edge b 1.5)
+(exec 0 (, (edge $k $x)) (O (fsum (tot $c) $c $x)))

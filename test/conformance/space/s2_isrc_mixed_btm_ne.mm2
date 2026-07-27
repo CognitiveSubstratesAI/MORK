@@ -1,0 +1,7 @@
+; Same as s2_isrc_mixed_ne_btm but with the factor ORDER SWAPPED, so the
+; PRIMARY factor is the BTM source (5-byte prefix) and the != is secondary.
+(p 1)
+(p 2)
+(c 1 x)
+(c 2 y)
+(exec 0 (I (BTM (c $a $v)) (!= (p $a) (p $b))) (, (out2 $a $b $v)))

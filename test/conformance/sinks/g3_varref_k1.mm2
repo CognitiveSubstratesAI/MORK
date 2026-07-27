@@ -1,0 +1,7 @@
+; g3: BRANCH 3 must substitute AT INDEX k (the VarRef the <source> slot holds),
+; NOT at the template's first variable.  Here <result> = (r $z $c): $z is NewVar 0,
+; $c is NewVar 1, and <source> is VarRef(1) => the sum goes in the SECOND slot.
+; Expect (r $a 3), i.e. $z survives as a variable.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $z $c) $c $x)))

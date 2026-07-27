@@ -1,0 +1,8 @@
+; coref DFS: 2-source join on a shared variable (references record + VarRef resolve)
+(f 1)
+(f 2)
+(f 3)
+(g 2)
+(g 3)
+(g 4)
+(exec 0 (, (f $x) (g $x)) (, (out $x)))

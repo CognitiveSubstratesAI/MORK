@@ -1,0 +1,5 @@
+; g4 degenerate template: the whole result IS the sink var => empty BTM root
+(c 1)
+(exec 0 (, (c $x))
+  (O (pure $r $r (i64_to_string (i64_from_string 7))))
+)

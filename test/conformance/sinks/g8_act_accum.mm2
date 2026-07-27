@@ -1,0 +1,10 @@
+; ACTSink ACCUMULATION across matches.
+; Upstream: ONE ACTSink is built per O-template BEFORE the query (space.rs:1576) and
+; finalized ONCE after it (space.rs:1645), so all 6 (cux $a $b) paths land in ONE
+; g8acc.act.  exec 1 reads that file back via the (I (ACT ...)) source.
+; A port that builds a FRESH ACTSink per match and act_save()s per match would
+; overwrite the file each time and read back only the LAST path.
+(foo 1) (foo 2) (foo 3)
+(bar x) (bar y)
+(exec 0 (, (foo $a) (bar $b)) (O (ACT g8acc (cux $a $b))))
+(exec 1 (I (ACT g8acc (cux $a $b))) (, (got $a $b)))

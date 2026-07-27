@@ -1,0 +1,7 @@
+; s3: NEGATIVE - fully ground conjunction, one conjunct absent => 0 matches.
+; Also the positive ground conjunction (exercises the #variables==0 dead branch
+; of the upstream no_search variant, which the default variant never takes).
+(a 1)
+(b 2)
+(exec 0 (, (a 1) (b 3)) (, (bad)))
+(exec 1 (, (a 1) (b 2)) (, (good)))

@@ -1,0 +1,16 @@
+; g4 WHICH SLOT gets the value: upstream substitutes de-Bruijn index k taken from the
+; VarRef(k) in the <source> slot; a port that substitutes the template's FIRST var diverges
+; whenever the sink var is not the first variable of the result template.
+(v 7)
+(exec 0 (, (v $x))
+  (O (pure (s1 $r $a) $r (i64_to_string (i64_from_string $x))))
+)
+(exec 0 (, (v $x))
+  (O (pure (s2 $a $r) $r (i64_to_string (i64_from_string $x))))
+)
+(exec 0 (, (v $x))
+  (O (pure (s3 $a $b $r) $r (i64_to_string (i64_from_string $x))))
+)
+(exec 0 (, (v $x))
+  (O (pure (s4 $a $r $a) $r (i64_to_string (i64_from_string $x))))
+)

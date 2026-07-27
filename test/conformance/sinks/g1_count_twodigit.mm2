@@ -1,0 +1,6 @@
+; Two-digit count: exercises SymbolSize(2) on the literal guard and the decimal
+; rendering of the reduction (Rust usize::to_string vs Julia string(::Int)).
+; upstream expected: (ok12) emitted, and (r $a 12) from the VarRef branch.
+(f a) (f b) (f c) (f d) (f e) (f g)
+(f h) (f i) (f j) (f k) (f l) (f m)
+(exec 0 (, (f $x)) (O (count (ok12) 12 $x) (count (r $p $q) $q $x)))

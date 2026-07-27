@@ -1,0 +1,10 @@
+; TWO INDEPENDENT joins in one pattern: $x over (p,q), $y over (r,s). references[]
+; entries must be saved/restored per DFS branch or the second join is poisoned by
+; the first one's leftover offset.
+(p 1)
+(p 2)
+(q 2)
+(r 8)
+(r 9)
+(s 9)
+(exec 0 (, (p $x) (q $x) (r $y) (s $y)) (, (out $x $y)))

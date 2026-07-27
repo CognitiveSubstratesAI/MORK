@@ -1,0 +1,7 @@
+; DECISIVE BTM-ROOT probe, SumSink branch 2 (NewVar ignored guard). Same construction.
+;   double-prefixed => (seen (seen $))
+;   root-relative   => (seen $)
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (seen $z) $ignored $x)))

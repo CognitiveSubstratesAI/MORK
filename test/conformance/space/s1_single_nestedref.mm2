@@ -1,0 +1,7 @@
+; back-ref NESTED inside a compound arg: the bound alias must be spliced at the
+; correct depth, not at the top of the factor.
+(d 1 (w 1))
+(d 1 (w 2))
+(d (n 3) (w (n 3)))
+(d (n 3) (w (n 4)))
+(exec 0 (, (d $x (w $x))) (, (out $x)))

@@ -1,0 +1,7 @@
+; g3: BRANCH 3 substitute_one_de_bruijn RE-BASES trailing de-Bruijn vars.
+; <result> = (r $c $z $z): NewVar0=$c, NewVar1=$z, VarRef(1)=$z.  Substituting index 0
+; removes a binding, so the trailing NewVar1/VarRef(1) must shift to NewVar0/VarRef(0).
+; Expect (r 3 $a $a) -- a non-rebasing byte copy would leave a dangling VarRef.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $c $z $z) $c $x)))

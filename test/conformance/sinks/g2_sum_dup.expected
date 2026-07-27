@@ -1,0 +1,4 @@
+(fact a 5)
+(fact b 5)
+(fact c 7)
+(total 12)

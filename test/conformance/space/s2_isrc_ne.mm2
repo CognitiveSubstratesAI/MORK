@@ -1,0 +1,4 @@
+; != CmpSource: pairs of DISTINCT stored atoms.
+(p 1)
+(p 2)
+(exec 0 (I (!= (p $x) (p $y))) (, (ne $x $y)))

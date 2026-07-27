@@ -1,0 +1,19 @@
+; g3: byte-for-byte the program our test/integration/sink_float_reduce.jl runs.
+; Our test asserts "(max 61.0)" / "(sum 81.8)"; this is the upstream ground truth.
+(exec (1)
+    (, (n $x))
+    (O
+        (fmin (min $c) $c $x)
+        (fmax (max $c) $c $x)
+        (fsum (sum $c) $c $x)
+        (fprod (prod $c) $c $x)
+    )
+)
+(exec (2)
+    (, (n $x))
+    (O (- (n $x) ) )
+)
+(n 5.8)
+(n 9.6)
+(n 5.4)
+(n 61.0)

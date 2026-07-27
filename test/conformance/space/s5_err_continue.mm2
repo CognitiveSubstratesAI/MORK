@@ -1,0 +1,3 @@
+(f 1)
+(exec 0 (X (f $x)) (, (bad $x)))
+(exec 1 (, (f $x)) (, (good $x)))

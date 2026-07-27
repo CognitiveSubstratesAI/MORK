@@ -1,0 +1,6 @@
+(cell a 2)
+(cell b 5)
+(m a 3)
+(m a 6)
+(m b 5)
+(m b 7)

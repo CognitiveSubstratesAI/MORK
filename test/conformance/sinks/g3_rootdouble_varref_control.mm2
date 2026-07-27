@@ -1,0 +1,5 @@
+; g3: CONTROL -- BRANCH 3 DOES strip wz.root_prefix_path() (sinks.rs:1072),
+; so no doubling: expect (r 3 $a)-shaped output, not (r (r ...)).
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $c $z) $c $x)))

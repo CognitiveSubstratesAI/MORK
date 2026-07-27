@@ -1,0 +1,4 @@
+(deep (nested (thing a)))
+(deep (nested (thing b)))
+(fact a 1)
+(fact b 2)

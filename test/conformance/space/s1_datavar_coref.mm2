@@ -1,0 +1,7 @@
+; data atom with a REPEATED variable. The coref DFS deliberately does NOT track
+; data-side coreference (space.rs:81/101-105), so it OVER-generates and `unify` is
+; the decider. Both engines must land on the same final set.
+(p $a $a)
+(q 1 2)
+(q 3 3)
+(exec 0 (, (p $u $v) (q $u $v)) (, (out $u $v)))

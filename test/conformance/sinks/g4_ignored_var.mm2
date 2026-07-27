@@ -1,0 +1,5 @@
+; g4 "ignored guard" with a template that still has a free var (sink var unused in template)
+(c 1)
+(exec 0 (, (c $x))
+  (O (pure (z $a) $r (i64_to_string (i64_from_string 7))))
+)

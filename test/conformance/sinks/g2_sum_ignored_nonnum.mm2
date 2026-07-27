@@ -1,0 +1,8 @@
+; SumSink branch 2 (NewVar ignored guard) NEVER LOOKS AT THE VALUES upstream: with the source
+; slot a bare NewVar, branch 1 (child_mask & SIZES) cannot fire and branch 3 needs a VarRef, so
+; NOTHING parses the values and (seen) is emitted unconditionally -- no panic even though every
+; value is non-numeric.  Our port folds the values FIRST and only creates the group if at least
+; one entry parses, so an all-non-numeric group is silently dropped and (seen) never appears.
+(fact a xyz)
+(fact b pqr)
+(exec 0 (, (fact $k $x)) (O (sum (seen) $ignored $x)))

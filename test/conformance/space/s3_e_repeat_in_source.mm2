@@ -1,0 +1,8 @@
+; s3: coreference WITHIN one source (references[] De Bruijn indexing) plus a
+; second source that also uses the same variable.
+(p a a)
+(p a b)
+(p b b)
+(q a)
+(q b)
+(exec 0 (, (p $x $x) (q $x)) (, (r $x)))

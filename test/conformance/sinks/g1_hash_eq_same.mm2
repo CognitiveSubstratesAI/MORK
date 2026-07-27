@@ -1,0 +1,10 @@
+; The real CTL EG termination test, minimised: hash two IDENTICAL sets through
+; two HashSinks and join on hash equality.
+; upstream expected: (same) IS emitted (equal subtries hash equal).
+(a 1)
+(a 2)
+(b 1)
+(b 2)
+(exec (0 0) (, (a $x)) (O (hash (ha $h) $h $x)))
+(exec (0 1) (, (b $x)) (O (hash (hb $h) $h $x)))
+(exec (1 0) (, (ha $h) (hb $h)) (, (same)))

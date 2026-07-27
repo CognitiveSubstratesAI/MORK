@@ -1,0 +1,8 @@
+(f (a b))
+(f (c d))
+(f zz)
+(g (a b))
+(g (c e))
+(g zz)
+(out (a b))
+(out zz)

@@ -1,0 +1,5 @@
+; g3: <source> is a COMPOUND expression -- not in SIZES, not NewVar, not VarRef.
+; Upstream has no branch for it => emits NOTHING.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $z) (k 1) $x)))

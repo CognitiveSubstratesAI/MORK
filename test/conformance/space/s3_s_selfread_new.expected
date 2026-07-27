@@ -1,0 +1,3 @@
+(saw (exec 0 (, $a) (, (saw $a))))
+(saw (z 1))
+(z 1)

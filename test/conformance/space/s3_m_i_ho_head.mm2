@@ -1,0 +1,8 @@
+; s3: I-pattern (ProductZipperG branch of query_multi_i, space.rs:1148-1152)
+; with a VARIABLE HEAD in the second source -> coref DFS must bind the functor.
+(rel p a)
+(rel q b)
+(p a 1)
+(q b 2)
+(p b 9)
+(exec 0 (I (BTM (rel $f $x)) (BTM ($f $x $v))) (, (got $f $x $v)))

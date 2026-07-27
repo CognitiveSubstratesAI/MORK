@@ -1,0 +1,6 @@
+; g3: BRANCH 1 (fixed literal) root-prefix DOUBLING.  root = [2]"r"; sum = 1 != 3?
+; sum over {1.0,2.0} = 3 == literal 3 => emits, and the emitted path is root ++ <result>.
+; Prediction: (r (r $a)).
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (r $z) 3 $x)))

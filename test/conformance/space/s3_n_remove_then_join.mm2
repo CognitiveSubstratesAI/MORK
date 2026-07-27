@@ -1,0 +1,12 @@
+; s3: remove ONE atom (may leave a dangling trie node in a non-pruning impl),
+; then run a 2-source coreferential join whose remaining chains still match.
+; Upstream's query_multi_raw has NO value-gate; our port adds get_val_at().
+; If the removed atom (e c d) were still traversable we would ALSO see (p2 b d).
+(e a b)
+(e b c)
+(e c d)
+(e x b)
+(drop c)
+(exec 0 (, (drop $k)) (O (- (e $k d))))
+(exec 1 (, (e $s $m) (e $m $t)) (, (p2 $s $t)))
+(exec 2 (, (p2 $u $v)) (, (readback $u $v)))

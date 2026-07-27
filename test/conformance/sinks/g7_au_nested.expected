@@ -1,0 +1,3 @@
+(fact (p (q a) r))
+(fact (p (q b) r))
+(p (q $a) r)

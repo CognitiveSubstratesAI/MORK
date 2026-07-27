@@ -1,0 +1,8 @@
+; g4 quote ('): special-cased in push_eval upstream, plain arg-copy in ours
+(c 1)
+(exec 0 (, (c $x))
+  (O (pure (q1 $r) $r (' (some (nested expr)))))
+)
+(exec 0 (, (c $x))
+  (O (pure (q2 $r) $r (collapse_symbol (' (a b)))))
+)

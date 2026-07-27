@@ -1,0 +1,6 @@
+; g3: BRANCH 2 -- <source> is a bare NewVar (the "ignored guard").
+; Upstream emits <result> UNCHANGED (path minus the NewVar byte); the reduction
+; value is computed but discarded.  Result has NO variable slot.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (done) $c $x)))

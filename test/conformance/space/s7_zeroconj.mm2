@@ -1,0 +1,2 @@
+(fact a)
+(exec 0 (,) (, (out z)))

@@ -1,0 +1,11 @@
+; s3: variable introduced in source 1, re-used in source 2, and a SECOND
+; variable introduced in source 2 and back-referenced in source 3.
+; POSITIVE (exec 0) and NEGATIVE (exec 1) in one space.
+(a 1)
+(b 1 x)
+(c x)
+(a 5)
+(b 2 y)
+(c y)
+(exec 0 (, (a $u) (b $u $w) (c $w)) (, (ok $u $w)))
+(exec 1 (, (a $u) (b $u $w) (c $w) (c $u)) (, (bad $u $w)))

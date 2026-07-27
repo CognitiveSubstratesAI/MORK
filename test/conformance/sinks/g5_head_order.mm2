@@ -1,0 +1,5 @@
+(v 1 d)
+(v 2 b)
+(v 3 c)
+(v 4 a)
+(exec 0 (, (v $i $x)) (O (head 2 (g $x))))

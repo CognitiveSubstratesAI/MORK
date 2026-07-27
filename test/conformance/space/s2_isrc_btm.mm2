@@ -1,0 +1,4 @@
+; I-pattern, single BTM source. Ground truth for the [2]BTM PrefixZipper wrapping.
+(foo 1)
+(foo 2)
+(exec 0 (I (BTM (foo $x))) (, (out $x)))

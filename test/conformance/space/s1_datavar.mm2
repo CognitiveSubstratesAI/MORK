@@ -1,0 +1,10 @@
+; DATA-side variables: the stored atoms contain $. Exercises the `vs!` macro (the
+; child-mask VARS loop) in the Symbol, Arity and VarRef branches — a data var byte
+; ABSORBS the whole remaining pattern sub-term. Dropping vs! from any branch loses
+; these matches silently.
+(f $)
+(g 7)
+(h (k $))
+(j (k 9))
+(exec 0 (, (f $x) (g $x)) (, (o1 $x)))
+(exec 1 (, (h $y) (j $y)) (, (o2 $y)))

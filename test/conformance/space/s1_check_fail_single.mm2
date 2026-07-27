@@ -1,0 +1,11 @@
+; descend_to_check FAILURE followed by a SIBLING that must still match, on the
+; guaranteed-coref single-source path. For first-arg `aa`/`cc` the size byte 0xC2
+; EXISTS at arg 2 but the payload differs -> check fails; the cursor must be restored
+; to EXACTLY the pre-symbol position or the later `bb`/`dd` siblings are lost.
+; upstream: ascend(size+1) after a check that left the full descent;
+; ours: ascend(1) after a check that restored itself. Net position must agree.
+(d aa ab)
+(d bb bb)
+(d cc cd)
+(d dd dd)
+(exec 0 (, (d $x $x)) (, (out $x)))

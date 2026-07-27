@@ -1,0 +1,10 @@
+; g3: per-(result,source) grouping holds for ALL FOUR reductions, not just fsum.
+(edge a 1.0)
+(edge a 4.0)
+(edge b 10.0)
+(edge b 20.0)
+(exec 0 (, (edge $k $x))
+  (O (fsum  (s $k $c) $c $x)
+     (fmin  (i $k $c) $c $x)
+     (fmax  (a $k $c) $c $x)
+     (fprod (p $k $c) $c $x)))

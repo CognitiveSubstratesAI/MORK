@@ -1,0 +1,8 @@
+; Same blind spot as s2_p5_hidden_varatom but on the P2c nested binary join
+; (exactly 2 factors). `_nested_keymap` anchors at leading_prefix "[3] s a";
+; `(s $z 9)` is not under it, so the higher-order bail never sees it.
+(s a 1)
+(s $z 9)
+(t 1 u)
+(t 9 u)
+(exec 0 (, (s a $x) (t $x $y)) (, (out6 $x $y)))

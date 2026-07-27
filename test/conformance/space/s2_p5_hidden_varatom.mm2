@@ -1,0 +1,12 @@
+; P5 connected hash-join (k=3). `(s $z 9)` carries a variable at a position the
+; PATTERN has GROUND (`(s a $x)`), so it does not live under our factor's leading
+; ground prefix "[3] s a" and is never scanned. Our :hov bail only inspects atoms
+; that WERE scanned, and the `_outer_head_prefix` cross-check only runs when the
+; deep scan found ZERO atoms -- `(s a 1)` makes it non-zero, so the check is skipped.
+; Upstream unifies `(s a $x)` with `(s $z 9)` ($z:=a, $x:=9).
+(s a 1)
+(s $z 9)
+(t 1 u)
+(t 9 u)
+(w u k)
+(exec 0 (, (s a $x) (t $x $y) (w $y $r)) (, (out5 $x $y $r)))

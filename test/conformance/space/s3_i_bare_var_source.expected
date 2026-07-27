@@ -1,0 +1,7 @@
+(a 1)
+(b (c 2))
+(k q)
+(saw (a 1))
+(saw (b (c 2)))
+(saw (exec 0 (, $a (k $b)) (, (saw $a))))
+(saw (k q))

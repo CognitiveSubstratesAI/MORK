@@ -1,0 +1,3 @@
+(fact (g (h a) (h a)))
+(fact (g (h b) (h b)))
+(g (h $a) (h $a))

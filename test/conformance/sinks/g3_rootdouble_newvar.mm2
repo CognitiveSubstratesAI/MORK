@@ -1,0 +1,6 @@
+; g3: BRANCH 2 root-prefix DOUBLING.  request() roots the write zipper at the sink
+; expr's constant prefix after "fsum" = [3]"res""p"; branch 2 then move_to_path()s
+; the FULL rooted path (it does NOT strip root_prefix_path() the way branch 3 does).
+; Prediction: emitted path = root ++ <result> => (res p (res p $a)).
+(n 1.0)
+(exec 0 (, (n $x)) (O (fsum (res p $z) $c $x)))

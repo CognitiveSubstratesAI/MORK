@@ -1,0 +1,6 @@
+; g3: -0.0 and inf rendering.  Rust "-0" / "inf"; Julia "-0.0" / "Inf".
+(n -0.0)
+(exec 0 (, (n $x)) (O (fmin (mn $c) $c $x)))
+(p inf)
+(p 1.0)
+(exec 1 (, (p $y)) (O (fsum (sp $c) $c $y)))

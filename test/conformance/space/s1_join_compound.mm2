@@ -1,0 +1,9 @@
+; shared var binds a COMPOUND: exercises the NewVar Arity loop (pushes `arity` NewVar
+; sentinels) and the multi-byte bound-VarRef alias into the live path buffer.
+(f (a b))
+(f (c d))
+(f zz)
+(g (a b))
+(g (c e))
+(g zz)
+(exec 0 (, (f $x) (g $x)) (, (out $x)))

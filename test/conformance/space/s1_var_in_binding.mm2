@@ -1,0 +1,8 @@
+; the shared var binds a term that ITSELF contains a variable byte: the bound-VarRef
+; ExprEnv aliases live path bytes that include a NewVar tag, and the tag walk must
+; consume it correctly on the other factor.
+(f (c $))
+(f (c 4))
+(g (c $))
+(g (c 5))
+(exec 0 (, (f $x) (g $x)) (, (out $x)))

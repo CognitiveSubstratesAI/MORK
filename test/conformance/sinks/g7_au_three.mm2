@@ -1,0 +1,4 @@
+(fact (f a))
+(fact (f b))
+(fact (f c))
+(exec 0 (, (fact $e)) (O (AU $e)))

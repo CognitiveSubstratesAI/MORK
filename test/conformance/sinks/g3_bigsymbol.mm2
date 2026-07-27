@@ -1,0 +1,5 @@
+; g3: Rust Display never uses exponent notation, so 1e301 renders as 302 characters --
+; more than a MORK SymbolSize (6 bits) can hold.  `SymbolSize(len as _)` truncates.
+(n 1e300)
+(n 10.0)
+(exec 0 (, (n $x)) (O (fprod (pd $c) $c $x)))

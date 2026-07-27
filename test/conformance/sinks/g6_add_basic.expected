@@ -1,0 +1,4 @@
+(fact a 1)
+(fact b 2)
+(out a 1)
+(out b 2)

@@ -1,0 +1,5 @@
+; s3: baseline 2-source coreferential join through query_multi_raw (space.rs:1216).
+(edge a b)
+(edge b c)
+(edge c d)
+(exec 0 (, (edge $x $y) (edge $y $z)) (, (path2 $x $z)))

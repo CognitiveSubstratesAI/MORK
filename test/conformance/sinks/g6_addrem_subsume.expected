@@ -1,0 +1,3 @@
+(fact a b)
+(fact c d)
+(f c d)

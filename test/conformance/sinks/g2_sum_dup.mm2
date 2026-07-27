@@ -1,0 +1,6 @@
+; SumSink de-duplication: the accumulator is a PathMap<()> (a SET) keyed on the whole
+; <result><source><value> path, so two IDENTICAL (k,x) matches collapse to ONE addend.
+(fact a 5)
+(fact b 5)
+(fact c 7)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

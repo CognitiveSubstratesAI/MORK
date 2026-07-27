@@ -1,0 +1,9 @@
+; P2 binary key-rotation join (ours) vs ProductZipper+unify (upstream).
+; (eb $w 3) stores a VARIABLE at the join key position (eb arg1).
+; CONTROL: (ea 9 8)+(eb 8 7) -> ground key 8 present in both keymaps.
+; DISCRIMINATOR: (ea 1 2)+(eb $w 3) needs $y=2 to unify with the stored var.
+(ea 1 2)
+(ea 9 8)
+(eb $w 3)
+(eb 8 7)
+(exec 0 (, (ea $x $y) (eb $y $z)) (, (out $x $y $z)))

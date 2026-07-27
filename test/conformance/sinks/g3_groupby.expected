@@ -1,0 +1,5 @@
+(edge a 1.0)
+(edge a 2.0)
+(edge b 10.0)
+(tot a 3)
+(tot b 10)

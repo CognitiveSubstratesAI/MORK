@@ -1,0 +1,5 @@
+; AndSink de-duplication is IRRELEVANT to & (idempotent) but pins that the accumulator is
+; still a set: two identical (c,i) matches fold once. 0x37 & 0x37 = 0x37 = '7'.
+(m a 7)
+(m b 7)
+(exec 0 (, (m $c $i)) (O (and (cell $nv) $nv $i)))

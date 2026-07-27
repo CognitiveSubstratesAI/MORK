@@ -1,0 +1,9 @@
+; CountSink branch 1 (SIZES fixed literal) with a VARIABLE in the result template.
+; Because e.prefix() stops at that variable, the requested BTM root ("(r") is a
+; STRICT prefix of the emitted template ("(r $"), so upstream's un-stripped
+; wz.move_to_path(fixed) produces a VISIBLY doubled atom.
+; upstream expected: (r (r $a))   -- NOT (r $a)
+; Branch 1 also does NOT substitute the count: the template's variable survives.
+(f a)
+(f b)
+(exec 0 (, (f $x)) (O (count (r $z) 2 $x)))

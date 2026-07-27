@@ -1,0 +1,8 @@
+; s3: source with a VARIABLE HEAD (higher-order). Coref DFS must bind $f
+; structurally; a join planner that keys on a ground functor cannot classify it.
+(rel p a)
+(rel q b)
+(p a 1)
+(q b 2)
+(p b 9)
+(exec 0 (, (rel $f $x) ($f $x $v)) (, (got $f $x $v)))

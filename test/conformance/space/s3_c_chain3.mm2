@@ -1,0 +1,6 @@
+; s3: 3-source chain join (k>=3) through query_multi_raw.
+(edge a b)
+(edge b c)
+(edge c d)
+(edge d e)
+(exec 0 (, (edge $x $y) (edge $y $z) (edge $z $w)) (, (path3 $x $w)))

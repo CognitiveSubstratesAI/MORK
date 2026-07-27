@@ -1,0 +1,7 @@
+; DISPATCHER control: "pure" (Arity(4)+SymbolSize(4)) IS in the release binary's default
+; feature set ("grounding", kernel/Cargo.toml:32), so the arm at sinks.rs:1296-1301 takes
+; the PureSink branch instead of panicking.  Emits (res 2) for (foo 2) — proving the
+; keyword both routes AND runs, so the panics captured for frobnicate/fsxy/fmix/fpqrs/
+; wasm/z3 are genuinely keyword-specific, not a blanket "any O-template aborts" artifact.
+(foo 2)
+(exec 0 (, (foo $a)) (O (pure (res $r) $r (i64_to_string (i64_from_string $a)))))

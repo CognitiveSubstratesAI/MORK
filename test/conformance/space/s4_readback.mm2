@@ -1,0 +1,5 @@
+(p 1)
+(p 2)
+
+(exec 0 (, (p $x)) (, (q $x $x) (q a $x) (q b c)))
+(exec 1 (, (q $u $v)) (, (seen $u $v)))

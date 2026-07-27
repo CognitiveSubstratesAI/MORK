@@ -1,0 +1,5 @@
+; g3: BRANCH 2 with a result that DOES contain a free variable.
+; Upstream still emits <result> unchanged -- it must NOT substitute the sum into $z.
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (res $z) $c $x)))

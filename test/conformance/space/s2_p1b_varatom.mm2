@@ -1,0 +1,10 @@
+; P1b empty-tail trie-join (ours) vs ProductZipper+unify (upstream).
+; (p $x) is a STORED atom carrying a VARIABLE at the join position.
+; Upstream unifies $a with the stored var, then with `a` -> (out a).
+; A byte-exact trie MEET of {$} and {a} is empty -> that match is silently DROPPED.
+; (p z)/(q z) is the ground CONTROL: present in both, proves the exec fired.
+(p $x)
+(q a)
+(p z)
+(q z)
+(exec 0 (, (p $a) (q $a)) (, (out $a)))

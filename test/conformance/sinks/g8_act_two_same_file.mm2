@@ -1,0 +1,9 @@
+; TWO ACT sinks in ONE O-template list naming the SAME file.  Upstream:
+; WriteResourceRequest::ACT(s).pjoin(ACT(o)) is Some iff s==o (sinks.rs:57), so the two
+; requests SUBSUME to a single resource slot -- but each ACTSink still owns its own `tmp`
+; PathMap and dumps to the same filename in sink order, so the LAST finalize wins and the
+; first sink's paths are lost.  Pins that upstream behaviour exactly.
+(foo 1) (foo 2)
+(exec 0 (, (foo $a)) (O (ACT g8two (aaa $a)) (ACT g8two (bbb $a))))
+(exec 1 (I (ACT g8two (aaa $a))) (, (gotA $a)))
+(exec 2 (I (ACT g8two (bbb $a))) (, (gotB $a)))

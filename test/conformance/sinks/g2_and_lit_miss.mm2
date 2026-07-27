@@ -1,0 +1,5 @@
+; NEGATIVE: AndSink branch 1 with a NON-matching literal must emit NOTHING.
+(m a 6)
+(m a 3)
+(m a 7)
+(exec 0 (, (m $c $i)) (O (and (nope) 7 $i)))

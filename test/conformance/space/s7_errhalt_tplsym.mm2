@@ -1,0 +1,3 @@
+(fact a)
+(exec 0 (, (fact $x)) bad)
+(exec 1 (, (fact $x)) (, (out $x)))

@@ -1,0 +1,7 @@
+; s3: a source that is a BARE variable => coref NewVar branch enumerates
+; VARS then SIZES then ARITIES over the whole trie. Reveals whether an extra
+; value-gate / child-count gate drops or adds atoms.
+(a 1)
+(b (c 2))
+(k q)
+(exec 0 (, $w (k $z)) (, (saw $w)))

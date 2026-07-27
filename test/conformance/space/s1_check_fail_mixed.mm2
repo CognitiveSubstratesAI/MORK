@@ -1,0 +1,9 @@
+; same, but the failing branches straddle DIFFERENT symbol-size classes and a compound,
+; so an over/under-ascend after a failed check corrupts the enclosing k-path cursor.
+(d a b)
+(d bb bb)
+(d ccc ccd)
+(d dddd dddd)
+(d (n 1) (n 2))
+(d (n 5) (n 5))
+(exec 0 (, (d $x $x)) (, (out $x)))

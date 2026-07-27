@@ -1,0 +1,8 @@
+(drop c)
+(e a b)
+(e b c)
+(e x b)
+(p2 a c)
+(p2 x c)
+(readback a c)
+(readback x c)

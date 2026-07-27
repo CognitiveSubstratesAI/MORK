@@ -1,0 +1,7 @@
+(saw (exec 0 (, $a (u (w 5))) (, (saw $a))))
+(saw (t (w 5)))
+(saw (t (w 6)))
+(saw (u (w 5)))
+(t (w 5))
+(t (w 6))
+(u (w 5))

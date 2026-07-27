@@ -1,0 +1,6 @@
+; ACTSink with ZERO matches.  Upstream finalize() runs unconditionally (space.rs:1645),
+; dumps an EMPTY tree, and returns `true` (sinks.rs:333 -> hard-coded true), so the .act
+; file IS created and the exec still reports "changed".
+; A port that early-returns false on an empty accumulator writes NO file at all.
+(foo 1)
+(exec 0 (, (nomatch $a)) (O (ACT g8empty (cux $a))))

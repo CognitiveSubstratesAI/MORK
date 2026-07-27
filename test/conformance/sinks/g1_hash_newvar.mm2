@@ -1,0 +1,7 @@
+; HashSink branch 2 (NewVar "ignored guard"): <source> is a FRESH var that does
+; not backref the template -> emit the template unchanged (path minus the NewVar
+; byte), root-prefixed exactly like CountSink.
+; upstream expected: (h (h j))   [root "(h" ++ template "(h j)"]
+(s 1)
+(s 2)
+(exec 0 (, (s $x)) (O (hash (h j) $q $x)))

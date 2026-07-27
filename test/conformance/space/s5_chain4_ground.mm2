@@ -1,0 +1,4 @@
+(e 1 2 x)
+(e 2 3 y)
+(e 3 4 z)
+(exec 0 (, (e $a $b $p) (e $b $c $q) (e $c $d $r)) (, (done)))

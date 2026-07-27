@@ -1,0 +1,2 @@
+(fact (f $a $a))
+(fact (f (g $a) $a))

@@ -1,0 +1,13 @@
+; CountSink branch 1 (SIZES fixed literal), POSITIVE: 3 distinct sources and the
+; literal in the source slot is 3 -> emit the result template.
+; ALSO pins the BTM-ROOT quirk: upstream's branch 1 passes prz.path() (which is
+; ROOTED at wz.root_prefix_path()) straight to the ROOT-RELATIVE wz.move_to_path,
+; so the emitted path is root ++ root-relative-template.  Here the root prefix is
+; e.prefix()[7..] = "(ok 3" so (ok) lands at "(ok 3" ++ "(ok)" -- which PRINTS as
+; (ok) but is NOT the atom (ok).  exec 1 reads it back: if (readback) is absent,
+; the write was double-prefixed.
+(f a)
+(f b)
+(f c)
+(exec 0 (, (f $x)) (O (count (ok) 3 $x)))
+(exec 1 (, (ok)) (, (readback)))

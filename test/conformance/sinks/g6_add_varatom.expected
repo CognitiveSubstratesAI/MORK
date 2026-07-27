@@ -1,0 +1,4 @@
+(fact $a)
+(fact b)
+(out $a $a)
+(out b b)

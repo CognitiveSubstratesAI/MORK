@@ -1,0 +1,5 @@
+; SumSink accumulator WIDTH: upstream accumulates u32. 3000000000+2000000000 = 5000000000,
+; which wraps mod 2^32 to 705032704 in a release build (overflow-checks off).
+(fact a 3000000000)
+(fact b 2000000000)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

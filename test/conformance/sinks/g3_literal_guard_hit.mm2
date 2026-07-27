@@ -1,0 +1,4 @@
+; g3: BRANCH 1 -- <source> is a fixed literal.  sum = 3 == "3" => emit (yes).
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fsum (yes) 3 $x)))

@@ -1,0 +1,4 @@
+(big (deep thing) 7)
+(other x)
+(target (big (deep thing) 7))
+(exec 0 (, (target $t)) (O (- $t)))

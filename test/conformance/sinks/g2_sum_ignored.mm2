@@ -1,0 +1,5 @@
+; SumSink branch 2 (NewVar "ignored guard"): source is a bare fresh var => emit <result>.
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (seen) $ignored $x)))

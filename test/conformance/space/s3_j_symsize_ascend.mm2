@@ -1,0 +1,9 @@
+; s3: symbol branch where descend_to_existing_byte SUCCEEDS (same size byte)
+; but descend_to_check FAILS (different payload), inside a 3-factor join.
+; Upstream ascends size+1 unconditionally; our port ascends 1 on failure.
+(t aa)
+(t ab)
+(u ab)
+(u ac)
+(v ac)
+(exec 0 (, (t $x) (u $x) (v $y)) (, (o $x $y)))

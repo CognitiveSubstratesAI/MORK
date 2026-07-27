@@ -1,0 +1,4 @@
+alpha
+beta
+(mark alpha)
+(exec 0 (, (mark $k)) (O (- $k)))

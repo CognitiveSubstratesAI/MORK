@@ -1,0 +1,3 @@
+$a
+(fact (p a))
+(fact (p (q b) c))

@@ -1,0 +1,5 @@
+; NEGATIVE higher-order: no functor satisfies both factors -> must emit NOTHING.
+(p 5)
+(q 5)
+(rel zz)
+(exec 0 (, ($h 5) (rel $h)) (, (out $h)))

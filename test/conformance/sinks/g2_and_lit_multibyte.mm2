@@ -1,0 +1,5 @@
+; NEGATIVE: AndSink branch 1 compares the 1-byte [total] against the literal payload, so a
+; MULTI-byte literal source can never match, even if its first byte equals the AND result.
+(m k ab)
+(m k cd)
+(exec 0 (, (m $c $i)) (O (and (never) ax $i)))

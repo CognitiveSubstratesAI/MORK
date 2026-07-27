@@ -1,0 +1,2 @@
+(seed s)
+(exec 0 (, (seed $n)) (, (exec (p $q) (, (seed $m)) (, (done $m)))))

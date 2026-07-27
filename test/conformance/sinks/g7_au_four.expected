@@ -1,0 +1,5 @@
+(f $a $b)
+(fact (f a p))
+(fact (f b p))
+(fact (f c q))
+(fact (f d q))

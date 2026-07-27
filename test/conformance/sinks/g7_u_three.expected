@@ -1,0 +1,4 @@
+(f a b c)
+(fact (f $a $b c))
+(fact (f $a b $b))
+(fact (f a $a $b))

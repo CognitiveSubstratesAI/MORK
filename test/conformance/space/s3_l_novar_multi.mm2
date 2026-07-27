@@ -1,0 +1,4 @@
+; s3: multi-source where the WHOLE combined match is ground and both factors
+; are the SAME atom (self-join on one atom).
+(m 1)
+(exec 0 (, (m $x) (m $x)) (, (self $x)))

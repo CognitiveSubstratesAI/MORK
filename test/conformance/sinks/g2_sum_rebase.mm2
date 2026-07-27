@@ -1,0 +1,6 @@
+; SumSink branch 3 RE-BASING: the result holds a SECOND var AFTER the substituted slot,
+; plus a VarRef back to it. substitute_one_de_bruijn(0, sum) must shift VarRef(1) -> VarRef(0).
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (total $n $m $m) $n $x)))

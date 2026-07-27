@@ -1,0 +1,7 @@
+; NEGATIVE: the join is unsatisfiable — must emit NOTHING. A coref DFS that drops
+; the VarRef binding (treats a bound back-ref as 'any') over-generates here.
+(f 1)
+(f 2)
+(g 3)
+(g 4)
+(exec 0 (, (f $x) (g $x)) (, (out $x)))

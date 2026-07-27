@@ -1,0 +1,10 @@
+; DISCRIMINATOR for the BTM ROOT question: a lone (sum ...) sink roots its write zipper at
+; prefix(e)[5..] = "(correct) 6" (11 bytes), yet branch 1 calls wz.move_to_path(fixed) with
+; fixed = the ABSOLUTE 9-byte "(correct)" (branch 3 strips root_prefix_path(), branches 1/2
+; do not).  If the stored path were root++fixed, a later query for (correct) would NOT match.
+; (marker) present => the value really sits at the bare 9-byte (correct).
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (correct) 6 $x)))
+(exec 1 (, (correct)) (O (+ (marker))))

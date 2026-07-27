@@ -1,0 +1,8 @@
+; g3: Rust Display for f64 NEVER uses exponent notation; Julia string() does.
+; prod = 3e20 -> Rust "300000000000000000000", Julia "3.0e20".
+(n 1e20)
+(n 3.0)
+(exec 0 (, (n $x)) (O (fprod (pd $c) $c $x) (fsum (sm $c) $c $x)))
+(m 0.0000001)
+(m 2.0)
+(exec 1 (, (m $y)) (O (fmin (mn $c) $c $y)))

@@ -1,0 +1,3 @@
+(fact a +7)
+(fact b 1)
+(total 8)

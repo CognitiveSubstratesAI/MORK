@@ -1,0 +1,5 @@
+; s3: does the query see the `add` atom (the exec atom itself) that upstream
+; inserts into read_copy before querying (space.rs:1338)? A bare-variable source
+; makes it visible.
+(z 1)
+(exec 0 (, $w) (, (saw $w)))

@@ -1,0 +1,8 @@
+; g4 PureSink de-Bruijn RE-BASING: free vars before AND after the substituted slot
+(v 7)
+(exec 0 (, (v $x))
+  (O (pure (t $a $r $b) $r (i64_to_string (i64_from_string $x))))
+)
+(exec 0 (, (v $x))
+  (O (pure (u $r $c $c) $r (i64_to_string (i64_from_string $x))))
+)

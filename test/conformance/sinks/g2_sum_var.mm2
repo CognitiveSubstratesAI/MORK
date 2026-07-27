@@ -1,0 +1,5 @@
+; SumSink branch 3 (VarRef source): sum spliced into the result at index k.
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

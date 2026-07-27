@@ -1,0 +1,4 @@
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(seen (seen $a))

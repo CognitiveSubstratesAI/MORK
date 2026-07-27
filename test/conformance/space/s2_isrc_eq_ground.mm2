@@ -1,0 +1,4 @@
+; == CmpSource over GROUND atoms (shift is a no-op here) -- baseline.
+(p 1)
+(p 2)
+(exec 0 (I (== (p $x) (p $y))) (, (eq $x $y)))

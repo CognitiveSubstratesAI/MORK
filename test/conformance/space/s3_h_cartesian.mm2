@@ -1,0 +1,4 @@
+; s3: DISCONNECTED 2-source conjunction (no shared variable) => full cartesian.
+(n 1)
+(n 2)
+(exec 0 (, (n $x) (n $y)) (, (pair $x $y)))

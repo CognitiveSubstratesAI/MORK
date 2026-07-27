@@ -1,0 +1,6 @@
+; s3: write from a 2-source join then READ THE ATOM BACK, so a write that lands
+; at a different (deeper) path is observable rather than printing the same.
+(edge a b)
+(edge b c)
+(exec 0 (, (edge $x $y) (edge $y $z)) (, (path2 $x $z)))
+(exec 1 (, (path2 $u $v)) (, (readback $u $v)))

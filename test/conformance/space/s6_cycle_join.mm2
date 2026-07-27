@@ -1,0 +1,3 @@
+(p $x (f $x))
+(q (g $y) $y)
+(exec 0 (, (p $a $b) (q $a $b)) (, (out $a $b)))

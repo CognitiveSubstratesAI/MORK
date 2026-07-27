@@ -1,0 +1,10 @@
+; BTM-ROOT probe for a GROUND result, where the dump alone cannot tell the two apart:
+; the branch-1 write lands at root("(correct) 6") ++ "(correct)" = 20 bytes, whose FIRST expr
+; still serializes as "(correct)".  A subsequent exact-path (- (correct)) removal therefore
+; does NOT delete it upstream.  If a port writes the bare 9-byte (correct), the removal wins
+; and (correct) disappears from the dump.
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (correct) 6 $x)))
+(exec 1 (, (correct)) (O (- (correct))))

@@ -1,0 +1,7 @@
+; META-EXEC (the bc0-3 / zealous shape, bounded): one exec matches a RULE whose head is
+; a COMPOUND ((step $s)) and re-emits it as a new exec, which then runs. Exercises the
+; coref DFS over a compound-headed higher-order factor plus exec self-visibility.
+((step one) (, (a $x)) (, (b $x)))
+(a 1)
+(a 2)
+(exec zealous (, ((step $s) $p $t)) (, (exec $s $p $t)))

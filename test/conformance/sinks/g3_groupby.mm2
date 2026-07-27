@@ -1,0 +1,6 @@
+; g3: upstream's reduction group is the (<result>,<source>) PREFIX, so a bound
+; variable in <result> partitions the reduction.  Expect one (tot <k> <sum>) per $k.
+(edge a 1.0)
+(edge a 2.0)
+(edge b 10.0)
+(exec 0 (, (edge $k $x)) (O (fsum (tot $k $c) $c $x)))

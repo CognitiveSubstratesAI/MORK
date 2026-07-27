@@ -1,0 +1,5 @@
+; Branch 2 with an EMPTY BTM root (companion (+ $z) subsumes it).
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (+ $z) (sum (seen) $ignored $x)))

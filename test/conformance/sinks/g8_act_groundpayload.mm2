@@ -1,0 +1,8 @@
+; ACTSink with a fully GROUND (constant) payload -- no variables in the template at all.
+; All 3 matches sink the SAME path, so the .act holds exactly ONE entry and the read-back
+; yields one (back ...).  This is the one shape where a per-match-finalize port ACCIDENTALLY
+; agrees with upstream (last write == every write), which is exactly why the accumulation
+; bug in g8_act_accum / g8_act_mixed stays invisible to ground-payload fixtures.
+(foo 1) (foo 2) (foo 3)
+(exec 0 (, (foo $a)) (O (ACT g8gnd (fixed sym))))
+(exec 1 (I (ACT g8gnd (fixed $z))) (, (back $z)))

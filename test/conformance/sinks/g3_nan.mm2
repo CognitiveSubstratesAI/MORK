@@ -1,0 +1,6 @@
+; g3: Rust f64::min/max are IEEE minNum/maxNum -- they IGNORE a NaN operand.
+; Julia's min/minimum PROPAGATE NaN.  Expect upstream (mn 1) / (mx 2), not NaN.
+(n NaN)
+(n 1.0)
+(n 2.0)
+(exec 0 (, (n $x)) (O (fmin (mn $c) $c $x) (fmax (mx $c) $c $x) (fsum (sm $c) $c $x)))

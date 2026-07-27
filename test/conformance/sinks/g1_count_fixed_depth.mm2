@@ -1,0 +1,12 @@
+; Does branch 1's doubled write land at the TEMPLATE path or deeper?
+; With a fully-ground template the doubled path "(ok" "3" "(ok)" still PRINTS as
+; (ok), so the dump cannot tell.  Removing (ok) can: (- (ok)) subtracts a value at
+; depth 3, which cannot touch a value sitting at depth 9.
+; upstream expected: (ok) SURVIVES the removal and (still) is emitted
+;                    => the branch-1 write really is root-prefixed (depth 9).
+(f a)
+(f b)
+(f c)
+(exec 0 (, (f $x)) (O (count (ok) 3 $x)))
+(exec 1 (, (f a)) (O (- (ok))))
+(exec 2 (, (ok)) (, (still)))

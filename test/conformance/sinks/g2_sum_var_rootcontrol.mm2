@@ -1,0 +1,6 @@
+; CONTROL: SumSink branch 3 with the same non-empty root. Branch 3 DOES strip
+; root_prefix_path(), so this must come out as (total 6 $) with no doubling.
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (total $n $z) $n $x)))

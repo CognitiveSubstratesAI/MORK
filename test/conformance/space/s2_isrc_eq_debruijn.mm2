@@ -1,0 +1,8 @@
+; == CmpSource de-Bruijn RE-BASING discriminator.
+; upstream CmpSource::policy (sources.rs:145) shifts the enrolled copy by newvars(p):
+;   VarRef(i) -> VarRef(i+n)  (NewVar untouched)
+; so the RHS copy's back-reference points at the RHS's OWN introduced var.
+; our port (Sources.jl:196-198) inserts `path` UNSHIFTED -> the RHS back-reference
+; still points at the LHS var, so $z/$w corefer with $x/$y instead of each other.
+(p $u $u)
+(exec 0 (I (== (p $x $y) (p $z $w))) (, (eqr $x $y $z $w)))

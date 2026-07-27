@@ -1,0 +1,8 @@
+; single source, REPEATED variable -> VarRef resolves against the recorded path offset
+; INSIDE one factor. Ground + compound + data-var cases together.
+(d 1 1)
+(d 1 2)
+(d (n 1) (n 1))
+(d (n 1) (n 2))
+(d $ 7)
+(exec 0 (, (d $x $x)) (, (out $x)))

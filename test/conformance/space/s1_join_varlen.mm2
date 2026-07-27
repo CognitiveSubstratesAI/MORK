@@ -1,0 +1,12 @@
+; symbols of DIFFERENT byte lengths under one NewVar: exercises the SIZES loop
+; (descend_first_k_path / to_next_k_path per size class) — one size class dropped
+; loses exactly the matches of that length.
+(f a)
+(f bb)
+(f ccc)
+(f dddd)
+(g a)
+(g bb)
+(g ccc)
+(g dddd)
+(exec 0 (, (f $x) (g $x)) (, (out $x)))

@@ -1,0 +1,7 @@
+; Read-back discriminator for CountSink branch 2 (NewVar ignored guard).
+; Upstream emits root ++ template = (r (r $)); a port that emits the bare
+; template emits (r $), and a port that substitutes the count emits (r 2).
+(f a)
+(f b)
+(exec 0 (, (f $x)) (O (count (r $p) $q $x)))
+(exec 1 (, (r $z)) (, (readback $z)))

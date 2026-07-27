@@ -1,0 +1,11 @@
+; DECISIVE BTM-ROOT probe, SumSink branch 1.
+; The result (correct $z) is NOT ground, so prefix(e)[5..] = "[2] correct" (9 bytes) is a
+; PROPER prefix of the 10-byte result.  Branch 1 calls wz.move_to_path(fixed) with the
+; ABSOLUTE `fixed` (it never strips root_prefix_path(), unlike branch 3), so the write lands
+; at root ++ fixed = 19 bytes, which re-parses as a DIFFERENT complete expression.
+;   double-prefixed => (correct (correct $))
+;   root-relative   => (correct $)
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (correct $z) 6 $x)))

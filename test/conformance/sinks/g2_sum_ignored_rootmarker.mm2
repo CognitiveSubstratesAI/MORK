@@ -1,0 +1,6 @@
+; Same BTM-root discriminator for branch 2 (NewVar ignored guard).
+(fact a 1)
+(fact b 2)
+(fact c 3)
+(exec 0 (, (fact $k $x)) (O (sum (seen) $ignored $x)))
+(exec 1 (, (seen)) (O (+ (marker))))

@@ -1,0 +1,8 @@
+(p 1)
+(p 2)
+(q a 1)
+(q a 2)
+(q b 1)
+
+(exec 0 (, (p $x)) (O (+ (r $x)) (- (q a $x))))
+(exec 1 (, (q $u $v)) (, (left $u $v)))
