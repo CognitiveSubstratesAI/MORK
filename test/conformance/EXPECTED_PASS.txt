@@ -5,6 +5,7 @@ sinks/g1_count_group_varkey
 sinks/g1_count_twodigit
 sinks/g1_count_varref_k0
 sinks/g1_count_varref_k1
+sinks/g1_hash_ctl_eg_fixpoint
 sinks/g1_hash_fixed_nomatch
 sinks/g1_hash_newvar
 sinks/g2_and_dup
