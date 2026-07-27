@@ -131,6 +131,99 @@ function _f64_rust_string(x::Real)::String
     (neg ? "-" : "") * out
 end
 
+# base64url (RFC 4648 §5): the URL-safe alphabet substitutes `-` for `+` and `_` for `/`, and upstream
+# uses the NO_PAD engine, so trailing `=` is omitted. Julia's Base64 stdlib only offers the standard
+# padded alphabet, so translate on the way out and undo it on the way in.
+function _b64url_encode(bytes)::String
+    s = base64encode(bytes)
+    rstrip(replace(s, '+' => '-', '/' => '_'), '=')
+end
+
+function _b64url_decode(s::AbstractString)::Vector{UInt8}
+    t = replace(String(s), '-' => '+', '_' => '/')
+    r = length(t) % 4                       # restore the padding Julia's decoder requires
+    r != 0 && (t *= "="^(4 - r))
+    base64decode(t)
+end
+
+"""
+    _rust_debug_float(x) → String
+
+Render a float the way Rust's `{:?}` (**Debug**) does — which is NOT the same as `{}` (Display), and
+NOT the same as Julia's `string`. Upstream's `*_to_string` pure ops use Debug specifically:
+`write!(&mut cur, "{:?}", x)` at kernel/src/pure.rs:107.
+
+The two Rust traits genuinely differ, and this port needs BOTH:
+
+| value | `{}` Display (`_f64_rust_string`) | `{:?}` Debug (here) |
+|-------|----------------------------------|---------------------|
+| 61.0  | `61`                             | `61.0`              |
+| 1e20  | `100000000000000000000`          | `1e20`              |
+| 1e-7  | `0.0000001`                      | `1e-7`              |
+| -0.0  | `-0`                             | `-0.0`              |
+
+Display is what the FLOAT REDUCTION SINKS use (`total.to_string()`, sinks.rs:1024/1061 — verified
+against `fsum` output); Debug is what the `to_string` OPS use. Applying one formatter to both was a
+mistake made and caught on 2026-07-26: it left 4 of 6 pinned values wrong for the ops.
+
+Rust's rule (`core::fmt::float_to_general_debug`): use positional notation when `x == 0` or
+`1e-4 <= |x| < 1e16`, ALWAYS with at least one fractional digit; otherwise exponential with the
+mantissa's trailing `.0` dropped. Verified against every value pinned from the upstream binary in the
+`g4_tostring` probe: 61.0 · 1e20 · 1e-7 · -0.0 · inf · NaN.
+
+Formats at the ARGUMENT's own precision — `string(::Float32)` gives Float32 shortest-round-trip digits,
+so `0.1f0` renders `0.1` and not Float64's `0.10000000149011612`.
+"""
+function _rust_debug_float(x::Union{Float32, Float64})::String
+    isnan(x) && return "NaN"
+    isinf(x) && return x > 0 ? "inf" : "-inf"
+    a = abs(Float64(x))
+    if x == 0 || (a >= 1e-4 && a < 1e16)
+        # Positional, and Debug ALWAYS keeps at least one fractional digit.
+        s = _expand_to_decimal(string(x))
+        return occursin('.', s) ? s : s * ".0"
+    end
+    # Exponential. Julia writes Float32 exponents with `f` (`1.0f20`); normalise to `e`, then drop the
+    # mantissa's trailing `.0` as Rust does (`1.0e20` -> `1e20`).
+    s = replace(string(x), 'f' => 'e')
+    i = findfirst(==('e'), s)
+    i === nothing && return s
+    mant, ex = s[1:(i - 1)], s[(i + 1):end]
+    endswith(mant, ".0") && (mant = mant[1:(end - 2)])
+    mant * "e" * ex
+end
+
+# Expand a Julia shortest-round-trip float repr (possibly `1.0e20` / `1.0f-7`) to full positional
+# decimal, dropping any trailing `.0`. Shared by the Display and Debug renderers so both keep the
+# ARGUMENT's own digits.
+function _expand_to_decimal(s0::AbstractString)::String
+    s = replace(String(s0), 'f' => 'e')
+    neg = startswith(s, "-")
+    neg && (s = s[2:end])
+    mant, ex = s, 0
+    i = findfirst(==('e'), s)
+    if i !== nothing
+        mant = s[1:(i - 1)]
+        ex = parse(Int, s[(i + 1):end])
+    end
+    j = findfirst(==('.'), mant)
+    ip, fp = j === nothing ? (mant, "") : (mant[1:(j - 1)], mant[(j + 1):end])
+    digits = ip * fp
+    point = length(ip) + ex
+    out = if point <= 0
+        "0." * "0"^(-point) * digits
+    elseif point >= length(digits)
+        digits * "0"^(point - length(digits))
+    else
+        digits[1:point] * "." * digits[(point + 1):end]
+    end
+    if occursin('.', out)
+        out = rstrip(rstrip(out, '0'), '.')
+        isempty(out) && (out = "0")
+    end
+    (neg ? "-" : "") * out
+end
+
 # =====================================================================
 # pure_apply — main entry point
 # =====================================================================
@@ -424,9 +517,11 @@ const PURE_OPS = Dict{String, Function}(
     "i16_to_string" => (a) -> Vector{UInt8}(string(_read_i16(a[1]))),
     "i32_to_string" => (a) -> Vector{UInt8}(string(_read_i32(a[1]))),
     "i64_to_string" => (a) -> Vector{UInt8}(string(_read_i64(a[1]))),
-    # Rust Display, NOT Julia `string` — see `_f64_rust_string` (no exponent form, no trailing .0).
-    "f32_to_string" => (a) -> Vector{UInt8}(_f64_rust_string(_read_f32(a[1]))),
-    "f64_to_string" => (a) -> Vector{UInt8}(_f64_rust_string(_read_f64(a[1]))),
+    # Rust **Debug** (`{:?}`), not Display and not Julia `string` — upstream's to_string macro writes
+    # `write!(&mut cur, "{:?}", x)` (pure.rs:107). The reduction SINKS use Display instead; the two are
+    # different traits and this port needs both. See `_rust_debug_float`.
+    "f32_to_string" => (a) -> Vector{UInt8}(_rust_debug_float(_read_f32(a[1]))),
+    "f64_to_string" => (a) -> Vector{UInt8}(_rust_debug_float(_read_f64(a[1]))),
 
     # ── i8/i16/i32/i64/i128 arithmetic (missing from original port) ──
     "sub_i8" => (a) -> _read_i8(a[1]) - _read_i8(a[2]),
@@ -764,8 +859,12 @@ const PURE_OPS = Dict{String, Function}(
     "hash_expr" => (a) -> _be_bytes(UInt64(hash(a[1]))),
     "encode_hex" => (a) -> Vector{UInt8}(bytes2hex(a[1])),
     "decode_hex" => (a) -> hex2bytes(String(a[1])),
-    "encode_base64url" => (a) -> Vector{UInt8}(base64encode(a[1])),
-    "decode_base64url" => (a) -> base64decode(String(a[1])),
+    # URL-SAFE, UNPADDED — upstream uses `base64::engine::general_purpose::URL_SAFE_NO_PAD` for BOTH
+    # directions (pure.rs:781 decode, :794 encode). Julia's `base64encode` is the STANDARD alphabet
+    # WITH padding, so we emitted `+/8=` where upstream gives `-_8`, and `YWJjZA==` for `YWJjZA`
+    # (fixed 2026-07-26). The op is literally named base64**url**; URL-safe unpadded is its spec.
+    "encode_base64url" => (a) -> Vector{UInt8}(_b64url_encode(a[1])),
+    "decode_base64url" => (a) -> _b64url_decode(String(a[1])),
 
     # ── control flow ─────────────────────────────────────────────────
     # ifnz is handled specially in _pure_eval_formula (short-circuit), not via pure_apply

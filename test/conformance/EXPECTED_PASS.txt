@@ -49,6 +49,7 @@ sinks/g3_rootdouble_varref_control
 sinks/g3_symbol_source_var
 sinks/g3_varref_k1
 sinks/g3_varref_readback
+sinks/g4_b64
 sinks/g4_bareroot
 sinks/g4_baseline
 sinks/g4_cmp
@@ -57,6 +58,7 @@ sinks/g4_quote
 sinks/g4_rebase
 sinks/g4_selffeed
 sinks/g4_slotk
+sinks/g4_tostring
 sinks/g5_head_bare
 sinks/g5_head_basic
 sinks/g5_head_dup_fill
