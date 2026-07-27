@@ -909,61 +909,41 @@ function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc})::UInt64
     h
 end
 
-function sink_finalize!(s::HashSink, btm::SinkBtm)::Bool
-    isempty(s.unique) && return false
-    changed = false
-
-    rz = read_zipper(s.unique)
-    zipper_reset!(rz)
-
-    # Iterate over all collected paths
-    while zipper_to_next_val!(rz)
-        path = collect(zipper_path(rz))
-        isempty(path) && continue
-
-        # Scan path right-to-left for a symbol-size header byte
-        i = length(path)
-        while i >= 1
-            tag = try
-                byte_item(path[i])
-            catch
-                ;
-                i -= 1;
-                continue
-            end
-            tag isa ExprSymbol || (i -= 1; continue)
-            sz = Int(tag.size)
-            # Check that `sz` bytes follow the header
-            i + sz > length(path) && (i -= 1; continue)
-
-            hash_bytes = path[(i + 1):(i + sz)]
-
-            # Position zipper at the prefix (everything before the size header)
-            prefix = path[1:(i - 1)]
-            rz2 = read_zipper(s.unique)
-            zipper_descend_to!(rz2, prefix)
-            zipper_path_exists(rz2) || (i -= 1; continue)
-
-            # Compute structural hash of the sub-trie at this prefix
-            computed = _zipper_subtrie_hash(rz2)
-            cnt_str = reinterpret(UInt8, [hton(computed)])   # big-endian
-
-            # Verify: do the hash bytes equal the computed hash?
-            if hash_bytes == cnt_str[1:sz]
-                # Write path without the size-header + hash bytes
-                key = isempty(prefix) ? UInt8[] : prefix
-                old = get_val_at(btm, key)
-                set_val_at!(btm, key, UNIT_VAL)
-                old === nothing && (changed = true)
-            end
-            break   # only check rightmost symbol — mirrors upstream
-        end
-    end
-
-    # Reset for reuse
-    s.unique = PathMap{UnitVal}()
-    changed
+# Hash reduction. Upstream hashes the SUBTRIE at each context (`prz.fork_read_zipper().hash()`,
+# sinks.rs:668/698) and emits it as a 16-byte symbol (u128 big-endian). We keep OUR 8-byte hash.
+#
+# DOCUMENTED DEVIATION — hash WIDTH and VALUES differ from upstream, deliberately:
+#   * Matching upstream's bytes means porting `gxhash` bit-exactly — it is built on AES-NI hardware
+#     intrinsics — PLUS PathMap's merkleization traversal (seed, node order, feed order). Large and
+#     fragile, and it buys only byte-equality on hash probes.
+#   * Upstream itself does NOT keep those bytes stable: PathMap/src/lib.rs:14-18 substitutes an
+#     entirely different hand-rolled XOR/rotate hasher under `miri` / `riscv64`. Its hash values are a
+#     per-TARGET artifact, not a portable contract.
+#   * What the hash must actually be is CONSISTENT, which is all its real consumer needs —
+#     ctl_model_checking.mm2:375-376 uses `(hash (h … $h) $h $s)` as the EG least-fixpoint TERMINATION
+#     test, comparing hash(level l+1) against hash(level l) computed by the SAME engine.
+#
+# What WAS missing and is fixed here (2026-07-26): only the fixed-literal (Symbol) branch was
+# implemented — the old finalize scanned right-to-left for a SymbolSize header and skipped everything
+# else — so the NewVar and VarRef branches were silently dead, and with them CTL's EG operator. Now
+# routed through the shared three-branch dispatch (`_redsink_finalize!`), the same one And/Sum/Float
+# use, so all three upstream branches (sinks.rs:659 SIZES / :688 NewVar / :696 VarRef) are covered.
+_hash_one(v::Vector{UInt8}) = begin
+    h = UInt64(0xa9e17c4d3f8b21c5)
+    for b in v; h = hash(b, h); end
+    h
 end
+
+# XOR-combined so the group hash is ORDER-INDEPENDENT: our groups come out of a Dict, whose iteration
+# order is arbitrary, whereas upstream hashes a trie in sorted order. Members are unique (they come
+# from a PathMap), so XOR's cancel-on-duplicate weakness cannot bite.
+_hash_acc(running::UInt64, value::Vector{UInt8}) = running ⊻ _hash_one(value)
+
+_hash_enc(total::UInt64) =
+    vcat(item_byte(ExprSymbol(UInt8(8))), collect(reinterpret(UInt8, [hton(total)])))
+
+sink_finalize!(s::HashSink, btm::SinkBtm)::Bool =
+    _redsink_finalize!(s.unique, btm, UInt64(0xa9e17c4d3f8b21c5), _hash_acc, _hash_enc)
 
 # =====================================================================
 # PureSink — port of PureSink in sinks.rs

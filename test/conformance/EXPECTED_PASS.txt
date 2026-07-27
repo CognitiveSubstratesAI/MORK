@@ -6,6 +6,7 @@ sinks/g1_count_twodigit
 sinks/g1_count_varref_k0
 sinks/g1_count_varref_k1
 sinks/g1_hash_fixed_nomatch
+sinks/g1_hash_newvar
 sinks/g2_and_dup
 sinks/g2_and_group
 sinks/g2_and_ignored
@@ -69,10 +70,10 @@ sinks/g6_add_basic
 sinks/g6_add_deep_prefix
 sinks/g6_add_dup
 sinks/g6_add_ground
+sinks/g6_addrem_subsume
 sinks/g6_add_unbound
 sinks/g6_add_unbound_twice
 sinks/g6_add_varatom
-sinks/g6_addrem_subsume
 sinks/g6_rem_addremove
 sinks/g6_rem_baresym_ground
 sinks/g6_rem_barevar
@@ -86,8 +87,8 @@ sinks/g6_rem_removeadd
 sinks/g6_rem_swap
 sinks/g6_rem_two_steps
 sinks/g6_rem_unbound
-sinks/g6_rem_var_wholeatom
 sinks/g6_rem_varatom
+sinks/g6_rem_var_wholeatom
 sinks/g6_rem_zeromatch
 sinks/g7_au_arity
 sinks/g7_au_four
@@ -151,8 +152,8 @@ space/s2_isrc_mixed_ne_btm
 space/s2_isrc_ne
 space/s2_p1b_hidden_varatom
 space/s2_p1b_varatom
-space/s2_p2_varatom
 space/s2_p2c_hidden_varatom
+space/s2_p2_varatom
 space/s2_p3_chain_varatom
 space/s2_p5_hidden_varatom
 space/s3_a_empty_conj
@@ -228,7 +229,7 @@ space/s7_locrawvar
 space/s7_locvarpair
 space/s7_spawn_locvar
 space/s7_steps
-space/s7_tpl_var_oob
-space/s7_tplfunctor_O2
 space/s7_tplfunctor_comma2
+space/s7_tplfunctor_O2
+space/s7_tpl_var_oob
 space/s7_zeroconj
