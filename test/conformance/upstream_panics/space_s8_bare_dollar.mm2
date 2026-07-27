@@ -1,0 +1,19 @@
+; LOAD FIDELITY — variable identity in load_all_sexpr_impl (space.rs:838-859 / Space.jl:196-223).
+; Upstream Context::get_or_put keys on the token INCLUDING the leading '$'
+;   (bytestring_parser.rs:88-98 -- `start = it.loc` is AT the '$'), so a BARE '$' has the
+;   id "$" and every bare '$' in the SAME top-level expression is COREFERENT.
+; Ours (Frontend.jl:133-142) keys on the token EXCLUDING the '$' (id_start is after it), so a
+;   bare '$' has the id "". That is a uniform bijection $x <-> x, and the empty id still
+;   compares equal to itself, so coreference is PRESERVED. This probe pins that down.
+; UPSTREAM GROUND TRUTH: (bare $a $a)   <- both bare $ are the SAME variable
+;                        (named $a $a)
+;                        (mixed $a $b)
+;                        (refs  $a _1)  <- `_1` is parsed as a SYMBOL; the text parser has no
+;                                          _N backref syntax (a VarRef would render as $a).
+; If ours renders `(bare $ $)` (two independent NewVars) that is a REAL divergence.
+; NB our renderer prints NewVar as `$` and VarRef(k) as `_k+1`, so ours should read
+;   (bare $ _1) (named $ _1) (mixed $ $) (refs $ _1) -- STRUCTURALLY identical.
+(bare $ $)
+(named $x $x)
+(mixed $x $y)
+(refs $x _1)

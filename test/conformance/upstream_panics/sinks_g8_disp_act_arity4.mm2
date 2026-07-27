@@ -1,0 +1,5 @@
+; DISPATCHER: "ACT" keyword with the WRONG arity (4 instead of 3).  Upstream's ACT arm
+; demands Arity(3) (sinks.rs:1287) -> no arm matches -> panic!("unrecognized sink").
+; A CompatSink fallback would instead insert (ACT g8x y 1) into the space as a literal atom.
+(foo 1)
+(exec 0 (, (foo $a)) (O (ACT g8x y $a)))

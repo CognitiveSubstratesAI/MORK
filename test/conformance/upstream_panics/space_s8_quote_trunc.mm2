@@ -1,0 +1,16 @@
+; LOAD FIDELITY — 63-byte symbol truncation of a QUOTED token.
+; UPSTREAM (this repo's HEAD / the release binary):
+;   frontend/src/bytestring_parser.rs:129-140 takes the RAW token (both quotes included),
+;   kernel/src/space.rs:240-247 (ParDataParser::tokenizer, cfg(not(interning))) truncates to
+;   63 bytes with NO fixup -> byte 63 keeps its original value ('1' here), closing quote LOST.
+; OURS Frontend.jl:191-194 forces tmp[63] = '"' ("guaranteed double quote terminator"),
+;   citing upstream commit 2d6730b -- which is on the `server` BRANCH ONLY
+;   (`git merge-base --is-ancestor 2d6730b HEAD` -> NOT in HEAD). So we ported a
+;   branch-only behaviour into a HEAD-targeted port: the STORED ATOM differs by one byte.
+;
+; UPSTREAM q -> "01234567890123456789012345678901234567890123456789012345678901   (62 digits, no closing ")
+; PREDICTED OURS q -> "0123456789012345678901234567890123456789012345678901234567890"  (61 digits + ")
+; `p` is the UNQUOTED negative control: plain min(len,63) on both sides, must be identical.
+(fact q "0123456789012345678901234567890123456789012345678901234567890123456789")
+(fact p 0123456789012345678901234567890123456789012345678901234567890123456789)
+(exec 0 (, (fact $k $v)) (, (out $k $v)))

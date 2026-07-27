@@ -1,0 +1,5 @@
+; DISPATCHER: "hea" -- Arity(3) but SymbolSize(3), so the head arm (which demands
+; SymbolSize(4)) does not fire and neither does ACT (bytes differ) -> panic.
+; Confirms the arms test BOTH the arity byte and the symbol-size byte, not just bytes.
+(foo 1)
+(exec 0 (, (foo $a)) (O (hea 1 $a)))

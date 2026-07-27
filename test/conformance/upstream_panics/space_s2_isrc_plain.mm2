@@ -1,0 +1,5 @@
+; I-pattern with a factor that is NOT BTM/ACT/z3/==/!= .
+; upstream ASource::new (sources.rs:~250) ends in `unreachable!()` -> panic.
+; our asource_new (Sources.jl:525) falls back to CompatSource -> behaves like `,`.
+(foo 1)
+(exec 0 (I (foo $x)) (, (out $x)))

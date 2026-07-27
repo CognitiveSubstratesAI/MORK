@@ -1,0 +1,25 @@
+; DUMP FIDELITY — symbol bytes must go out VERBATIM.
+; UPSTREAM dump_all_sexpr (space.rs:898-919) maps a symbol with
+;   `std::str::from_utf8_unchecked(s)` (space.rs:911-912, cfg(not(interning)) = DEFAULT)
+;   -> the stored bytes are written to the stream UNCHANGED, no escaping, no re-encoding.
+; OURS space_dump_all_sexpr (Space.jl:235-244) -> expr_serialize (Expr.jl:283-343), whose
+;   symbol branch (Expr.jl:304-311) is:
+;       if (isprint(Char(cb)) && cb != UInt8('\\'))  write(io, Char(cb))
+;       else                                          write(io, "\\x$(hex)")
+;   which (1) escapes '\' as \x5c, (2) escapes any byte Julia calls non-printable as \xNN,
+;   and (3) for a PRINTABLE byte >= 0x80 writes `Char(cb)` = the UTF-8 encoding of that
+;   CODEPOINT, i.e. 2 bytes instead of 1 -> mojibake.
+;   (verified: isprint(Char(0xc3))=true, utf8=c383; isprint(Char(0xa9))=true, utf8=c2a9)
+;
+; PREDICTED OURS vs upstream on this file:
+;   a\b      -> ours  a\x5cb           upstream  a\b
+;   café     -> ours  cafÃ©  (c3 83 c2 a9)      upstream  café  (c3 a9)
+;   "x\ny"   -> ours  "x\x5cny"        upstream  "x\ny"
+;   a;b      -> ours  a;b              upstream  a;b        <- NEGATIVE CONTROL, must match
+; The exec copies each fact to (out ...) so the divergence shows on both a LOADED atom and
+; a WRITTEN-THEN-DUMPED atom.
+(fact bs a\b)
+(fact utf café)
+(fact qs "x\ny")
+(fact semi a;b)
+(exec 0 (, (fact $k $v)) (, (out $k $v)))

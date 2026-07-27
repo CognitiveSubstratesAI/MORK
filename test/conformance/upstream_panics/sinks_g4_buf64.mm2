@@ -1,0 +1,5 @@
+; g4 upstream fixed 64-byte scratch buffers: encode_hex of a 40-byte symbol overflows
+(w 0123456789012345678901234567890123456789)
+(exec 0 (, (w $x))
+  (O (pure (hx $r) $r (encode_hex $x)))
+)

@@ -1,0 +1,5 @@
+; DISPATCHER: "z3" keyword.  Release binary has no z3 feature -> panic at ASink::new
+; (sinks.rs:1307).  A port that implements Z3Sink for real accepts the program and
+; spawns a z3 subprocess -- accepting what upstream's default build rejects.
+(foo 1)
+(exec 0 (, (foo $a)) (O (z3 g8inst (assert (> a $a)))))

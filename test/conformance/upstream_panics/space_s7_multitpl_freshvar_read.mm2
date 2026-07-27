@@ -1,0 +1,4 @@
+(f a)
+(exec 0 (, (f $x)) (, (t1 $x $p $p) (t2 $x $q $q) (t3 $x $r $r)))
+(exec 1 (, (t2 a $u $u)) (, (t2self ok)))
+(exec 2 (, (t3 a $u $v)) (, (t3pair $u $v)))

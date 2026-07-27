@@ -1,0 +1,11 @@
+; LOAD FIDELITY — the variable table is CLEARED between top-level expressions.
+; Upstream load_all_sexpr_impl (space.rs:856) `it.variables.clear()` runs every iteration.
+; Ours Space.jl:219 `empty!(ctx.variables)` -- same, unconditional.
+; DISCRIMINATOR: `$y` is the SECOND variable of expr 1. If the table were NOT cleared, `$y`
+;   in expr 2 would resolve to VarRef(1) and upstream would render it `$b`; a cleared table
+;   makes it a fresh NewVar -> `$a`.
+; UPSTREAM GROUND TRUTH: (two $a) (three $a) (one $a $b)   -> table IS cleared.
+; OURS should read: (two $) (three $) (one $ $).
+(one $x $y)
+(two $y)
+(three $z)

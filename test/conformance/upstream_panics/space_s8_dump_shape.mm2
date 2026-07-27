@@ -1,0 +1,18 @@
+; DUMP SHAPE — iteration ORDER, set semantics, and degenerate atoms.
+; Upstream dump_all_sexpr (space.rs:898-919): `read_zipper()` at the root + `to_next_val()`,
+;   i.e. strict lexicographic order on the ENCODED bytes, one atom per line.
+; Ours Space.jl:235-244: `read_zipper(s.btm)` + `zipper_to_next_val!` -- same contract.
+; Covered here: arity-0 `()` (byte 0x00), a top-level bare symbol, a top-level bare `$`
+;   (byte 0xC0), a duplicate (`foo` twice -> ONE atom: the trie is a SET), nesting, and the
+;   0x00 < 0x01 < 0x02 < 0xC0 < 0xC3 byte ordering across tag classes.
+; UPSTREAM GROUND TRUTH (7 atoms, in this order):
+;   ()  (a)  (a 2)  (z 1)  (nest (deep (er x)))  $a  foo
+; OURS should be identical except `$a` renders as `$`.
+foo
+()
+(a)
+(z 1)
+(a 2)
+foo
+$
+(nest (deep (er x)))

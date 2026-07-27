@@ -1,0 +1,4 @@
+; g3: a 4-char sink name starting "fs" that is NOT fsum.  Upstream ASink::new
+; falls through to panic!("unrecognized sink").
+(n 1.0)
+(exec 0 (, (n $x)) (O (fsub (r $c) $c $x)))

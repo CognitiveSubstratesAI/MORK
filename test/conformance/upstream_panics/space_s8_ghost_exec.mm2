@@ -1,0 +1,27 @@
+; Discriminates PRUNING on atom removal (root cause: remove_val_at! prune default).
+;
+; UPSTREAM: metta_calculus removes each (exec ...) atom with `self.btm.remove(path)`
+;   (space.rs:1704) == `remove_val_at(path, prune=TRUE)` (PathMap/src/trie_map.rs:379-381)
+;   -> the whole dangling branch disappears from the trie.
+;   It then re-inserts ONLY the exec currently being interpreted into the read snapshot
+;   (space.rs:1343-1345 `read_copy = self.btm.clone(); read_copy.insert(add.span(), ())`),
+;   so an exec CAN self-match but can NEVER see a PREVIOUSLY-consumed exec.
+;
+; OURS: Space.jl:1896 calls `remove_val_at!(s.btm, path_buf)` and our PathMap signature is
+;   `remove_val_at!(m, path, prune::Bool=false)` (PathMap/src/zipper/WriteZipper.jl:494-496)
+;   -> prune=FALSE: the PATH SURVIVES valueless. The single-source coreferential DFS
+;   (`_coreferential_transition!`, Space.jl:1027-1181) descends by child_mask /
+;   descend-to-existing-byte and calls `f(loc)` with NO value gate, so a ghost path can
+;   fire a match. (The ProductZipper driver DOES value-gate — Space.jl:827 `get_val_at` —
+;   so only the coref lane is exposed; `_USE_COREF_JOIN` defaults to true, Space.jl:1857.)
+;
+; TRACE: exec 0 fires first (trie order: '0' < '1'), is removed, writes (done a).
+;        exec 1 then fires; it sees ITSELF (re-inserted into the read copy) => (saw 1).
+;        exec 0's atom is GONE upstream => (saw 0) must NOT appear.
+;
+; UPSTREAM GROUND TRUTH (s8_ghost_exec.up): exactly (saw 1) (done a) (seed a).
+; OURS, IF THE GHOST IS REAL: an EXTRA (saw 0)  <- over-generation, silent.
+; OURS, IF SOME OTHER GATE CATCHES IT: identical to upstream (region clean on this axis).
+(seed a)
+(exec 0 (, (seed $x)) (, (done $x)))
+(exec 1 (, (exec $p $q $r)) (, (saw $p)))

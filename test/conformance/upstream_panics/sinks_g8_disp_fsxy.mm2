@@ -1,0 +1,6 @@
+; DISPATCHER: "fsxy" -- Arity(4) + SymbolSize(4), first two bytes "fs".
+; Upstream requires all four bytes f,s,u,m (sinks.rs:1272-1274) -> panic.
+; A port that only tests buf[3]=='f' && buf[4]=='s' maps this to FloatReductionSink(:sum)
+; and emits (tot 3.0).
+(foo 1) (foo 2)
+(exec 0 (, (foo $a)) (O (fsxy (tot $t) $t $a)))

@@ -1,0 +1,5 @@
+; DISPATCHER: unrecognized sink keyword.  Upstream ASink::new has NO fallback arm --
+; it ends in panic!("unrecognized sink") (sinks.rs:1309).  A port that falls back to
+; CompatSink silently inserts the whole (frobnicate a b c) expression as an atom.
+(foo 1)
+(exec 0 (, (foo $a)) (O (frobnicate a b c)))

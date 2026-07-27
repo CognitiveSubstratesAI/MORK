@@ -1,0 +1,4 @@
+; SumSink with a NON-NUMERIC value: upstream does from_str_radix(..).unwrap().
+(fact a 1)
+(fact b xyz)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

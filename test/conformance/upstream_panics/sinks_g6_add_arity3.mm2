@@ -1,0 +1,2 @@
+(fact a 1)
+(exec 0 (, (fact $k $x)) (O (+ $k $x)))

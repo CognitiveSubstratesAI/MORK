@@ -1,0 +1,7 @@
+; ACTSink whose PAYLOAD slot is a bare VARIABLE: (ACT g8bare $a).
+; ACTSink::new runs on the raw TEMPLATE (space.rs:1576) and `destruct!(e, ("ACT" {act:&str}
+; se))` rejects it -> panic!("act not the right shape") (sinks.rs:318).  Upstream writes NO
+; file at all.  A port that only parses the <file> slot and takes everything after it as the
+; payload accepts this and writes a one-byte variable path into the .act.
+(foo aa) (foo bb) (foo cc)
+(exec 0 (, (foo $a)) (O (ACT g8bare $a)))

@@ -1,0 +1,5 @@
+; DISPATCHER: "fpqrs" -- Arity(4) + SymbolSize(5), first two bytes "fp".
+; Upstream requires f,p,r,o,d (sinks.rs:1281-1283) -> panic.
+; A port that only tests buf[3]=='f' && buf[4]=='p' maps this to FloatReductionSink(:prod).
+(foo 1) (foo 2)
+(exec 0 (, (foo $a)) (O (fpqrs (pr $t) $t $a)))

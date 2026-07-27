@@ -1,0 +1,7 @@
+; ACTSink with a VARIABLE in the <file> slot.  ASink::new runs on the raw TEMPLATE
+; (space.rs:1576), so `destruct!(e, ("ACT" {act:&str} se))` fails -> panic!("act not the
+; right shape") (sinks.rs:318).  A port that tolerates a non-symbol slot (name="", skip
+; left at the 6-byte keyword length) silently writes a file called ".act" and leaves the
+; variable byte in the sunk path.
+(foo 1) (foo 2)
+(exec 0 (, (foo $a)) (O (ACT $f (cux $a))))

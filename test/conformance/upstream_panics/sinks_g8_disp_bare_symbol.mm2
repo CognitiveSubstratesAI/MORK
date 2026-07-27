@@ -1,0 +1,5 @@
+; DISPATCHER: O-template whose head is a bare SYMBOL, not an arity node.
+; Upstream: no arm matches -> panic!("unrecognized sink").
+; A CompatSink fallback inserts the bare symbol `bar` as an atom instead.
+(foo 1)
+(exec 0 (, (foo $a)) (O bar))

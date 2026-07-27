@@ -1,0 +1,3 @@
+; g3: <value> is a non-numeric symbol.  Upstream str::parse::<f64>().unwrap() PANICS.
+(n abc)
+(exec 0 (, (n $x)) (O (fsum (sm $c) $c $x)))

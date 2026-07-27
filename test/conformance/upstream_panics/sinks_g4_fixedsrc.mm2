@@ -1,0 +1,5 @@
+; g4 SIZES branch: source slot is a fixed literal symbol (upstream todo!())
+(c 1)
+(exec 0 (, (c $x))
+  (O (pure (fx $r) fixedsrc (i64_to_string (i64_from_string 7))))
+)

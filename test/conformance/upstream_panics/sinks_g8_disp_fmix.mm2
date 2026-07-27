@@ -1,0 +1,5 @@
+; DISPATCHER: "fmix" -- Arity(4) + SymbolSize(4), bytes f,m,i,x.
+; Upstream requires f,m,i,n (sinks.rs:1275-1277) -> panic.
+; A port that only tests buf[3..5] == "fmi" maps this to FloatReductionSink(:min).
+(foo 1) (foo 2)
+(exec 0 (, (foo $a)) (O (fmix (lo $t) $t $a)))

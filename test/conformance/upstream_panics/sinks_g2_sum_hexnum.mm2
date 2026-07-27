@@ -1,0 +1,5 @@
+; SumSink NUMBER PARSER: upstream from_str_radix(s, 10) REJECTS "0x10" (panics on unwrap).
+; Julia's tryparse(UInt32, "0x10") auto-detects the 0x prefix and yields 16.
+(fact a 0x10)
+(fact b 1)
+(exec 0 (, (fact $k $x)) (O (sum (total $n) $n $x)))

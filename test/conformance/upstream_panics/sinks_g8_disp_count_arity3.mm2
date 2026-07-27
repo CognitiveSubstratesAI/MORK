@@ -1,0 +1,5 @@
+; DISPATCHER: right keyword "count", WRONG arity (3 not 4).  Upstream's count arm tests
+; Arity(4) AND SymbolSize(5) (sinks.rs:1263) -> no arm matches -> panic.
+; A CompatSink fallback inserts (count r 1) as a literal atom.
+(foo 1)
+(exec 0 (, (foo $a)) (O (count r $a)))

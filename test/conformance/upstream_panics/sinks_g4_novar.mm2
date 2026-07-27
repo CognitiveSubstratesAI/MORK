@@ -1,0 +1,5 @@
+; g4 fully-ground sink expr: Expr::prefix() takes the Err fallback (span minus 1 byte)
+(c 1)
+(exec 0 (, (c $x))
+  (O (pure (nv 0) src (i64_to_string (i64_from_string 7))))
+)

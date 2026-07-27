@@ -1,0 +1,5 @@
+; DISPATCHER: same wasm arm but the pattern matches NOTHING.  Upstream still panics,
+; because ASink::new runs before the query (space.rs:1576).  A port that only builds the
+; sink lazily per-match never errors here -- a silently-accepted program.
+(foo 1)
+(exec 0 (, (nomatch $a)) (O (wasm (nop) (w $a))))

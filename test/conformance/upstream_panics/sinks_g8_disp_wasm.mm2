@@ -1,0 +1,6 @@
+; DISPATCHER: "wasm" keyword.  The release binary is built with default features
+; ["grounding","specialize_io"] (kernel/Cargo.toml:32) -- NO wasm -- so ASink::new
+; reaches the wasm arm and panics at CONSTRUCTION time (sinks.rs:1295), i.e. BEFORE the
+; query runs, even for zero matches.
+(foo 1)
+(exec 0 (, (foo $a)) (O (wasm (nop) (w $a))))
