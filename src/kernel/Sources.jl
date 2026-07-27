@@ -133,9 +133,18 @@ source_factor(s::ACTSource, btm::PathMap{UnitVal}) =
 Open (or reuse from cache) the `.act` file named `s.act` and return a
 PrefixZipper wrapping its read zipper.  Mirrors `ACTSource::source` in sources.rs.
 
-ACT_PATH constant mirrors the upstream `const ACT_PATH` (default ".").
+`ACT_PATH` mirrors upstream's `pub static ACT_PATH` (kernel/src/space.rs:35), whose value is
+**`"/dev/shm/"`** — NOT `"."`. This docstring previously claimed upstream defaulted to `"."`, which
+was false, and the mismatched default silently broke cross-engine `.act` interop: the upstream
+binary writes `/dev/shm/<name>.act` while we looked in the CWD, so importing an upstream-produced
+ACT via `(I (ACT <name> …))` found nothing (upstream itself panics `NotFound` at space.rs:1045 in
+the mirror-image case). Surfaced by the chaining repo's `gen-fromNumber.mm2 → gen-lte.mm2 →
+bfc-xp.mm2` pipeline, which passes state between programs exclusively through `.act` files.
+
+Kept as a `Ref` (upstream's is a compile-time constant) so tests and embedders can redirect it;
+only the DEFAULT is aligned. Tests that need isolation set `ACT_PATH[] = mktempdir()` and restore.
 """
-const ACT_PATH = Ref{String}(".")
+const ACT_PATH = Ref{String}("/dev/shm/")
 
 function source_factor(
     s::ACTSource, btm::PathMap{UnitVal}, mmaps::Dict{String, ArenaCompactTree}

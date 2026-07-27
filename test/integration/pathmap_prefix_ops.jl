@@ -75,6 +75,10 @@ end
     set_val_at!(m, b"foo:bar", UInt32(99))
     wz = write_zipper_at_path(m, b"foo:")
     @test wz_insert_prefix!(wz, b"ns:") == true
-    @test get_val_at(m, b"ns:foo:bar") == UInt32(99)
+    # `ns:foo:bar` is only producible from a ROOT zipper; this test inserts through
+    # write_zipper_at_path(m, b"foo:"), so the prefix lands INSIDE that subtree -> `foo:ns:bar`.
+    # Verified byte-identical to upstream PathMap (write_zipper.rs:1841-1851): ours and upstream
+    # both give get(ns:foo:bar)=None, get(foo:ns:bar)=Some(99).
+    @test get_val_at(m, b"foo:ns:bar") == UInt32(99)
     @test get_val_at(m, b"foo:bar") === nothing
 end

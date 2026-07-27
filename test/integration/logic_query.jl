@@ -1,8 +1,9 @@
 # test/integration/logic_query.jl — ports fn logic_query() in kernel/src/main.rs
-# Equational logic: bi-directional equation search reaches exactly 79 atoms.
+# Equational logic: bi-directional equation search. Fixpoint = 24 atoms, VERIFIED against the
+# upstream binary (`mork run` -> "dumping 24 expressions", byte-identical dump).
 using MORK, Test
 
-@testset "logic_query — equational logic produces 63 atoms (45 symmetric pairs)" begin
+@testset "logic_query — equational logic fixpoint = 24 atoms (matches upstream binary)" begin
     s = new_space()
     space_add_all_sexpr!(
         s,
@@ -37,10 +38,14 @@ using MORK, Test
     end
     steps = space_metta_calculus!(s, 100_000)
     @test steps < 100_000
-    # Upstream kernel/src/main.rs has assert_eq!(btm.val_count(), 79) in logic_query()
-    # but that function is commented out as "// possibly faulty test" because the 79
-    # figure predates the cycle-check addition (commit ccf72ec on unification_test_laws).
-    # After occurs-check, Rust+Prolog agree on 45 symmetric pairs → 63 atoms total.
-    # 18 of the 324 pairs (18²) are genuine same-namespace cycles caught by occurs check.
-    @test space_val_count(s) == 63
+    # 24, measured from the UPSTREAM BINARY on this exact program:
+    #     mork run logic_query.mm2  ->  "executing 1 steps", "dumping 24 expressions"
+    # and our dump matches it. Two stale numbers previously lived here:
+    #   * 79 — from upstream's `assert_eq!(btm.val_count(), 79)` (main.rs:3498), inside a function
+    #     upstream itself DISABLES as "// possibly faulty test" (main.rs:6184). Never re-measured.
+    #   * 63 — NOT invented, but measured off OUR OWN ENGINE while it had a soundness bug, then
+    #     rationalised with a "45 symmetric pairs / 324 pairs / 18 cycles" narrative that no longer
+    #     described anything. A number measured off a buggy engine and then explained is worse than
+    #     no number: it locks the bug in and reads as verified.
+    @test space_val_count(s) == 24
 end

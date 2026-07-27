@@ -4606,6 +4606,24 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/bc3.jl")
     include("integration/mm2_bc.jl")
 
+    # Wired 2026-07-27 after a diagnose+refute pass established each failing assertion was a WRONG
+    # EXPECTATION, not an engine fault — every verdict re-verified against the upstream binary:
+    #   sink_float_reduce  wanted "(max 61.0)"; upstream renders with Display (`total.to_string()`,
+    #                      sinks.rs:1024) so 61.0 -> "61". Only `max` differed: it is the only whole
+    #                      number in the set.
+    #   william_sinks      wanted "(likes _1 pizza)"; upstream's AU sink emits NewVar -> "$" here
+    #                      (RUST_LOG=sink=trace). `_1` would be a DANGLING VarRef. Hard-coded in
+    #                      4f57120, the commit that first made the sink fire — never green.
+    #   pathmap_prefix_ops wanted b"ns:foo:bar"; the insert goes through write_zipper_at_path(m,
+    #                      b"foo:") so the prefix lands INSIDE that subtree -> b"foo:ns:bar".
+    #                      Byte-identical to upstream PathMap.
+    #   logic_query        wanted 63; the upstream BINARY dumps 24 on this program, as do we. 63 was
+    #                      measured off our own engine during a soundness bug and then rationalised.
+    include("integration/logic_query.jl")
+    include("integration/pathmap_prefix_ops.jl")
+    include("integration/sink_float_reduce.jl")
+    include("integration/william_sinks.jl")
+
     include("integration/basic.jl")
     include("integration/bench_tile_puzzle.jl")
     include("integration/coref_pattern_specificity.jl")

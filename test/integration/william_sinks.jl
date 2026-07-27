@@ -46,7 +46,14 @@ using MORK, Test
         res = String(take!(io))
         # AUSink writes the least-general generalisation of the matched (likes …)
         # terms: alice/bob differ → a variable in that slot → (likes _1 pizza).
-        @test occursin("(likes _1 pizza)", res)
+        # Upstream's AU sink emits a NewVar here, which serializes as `$` — verified with
+        # RUST_LOG=sink=trace: "AU anti-unified expression '[3] likes $ pizza'".
+        # `_1` is a VarRef BACK-REFERENCE to the 0th introduced variable; this generalisation
+        # introduces none before that slot (likes/pizza are symbols), so `_1` would be a DANGLING
+        # VarRef. (`_N` IS legitimate elsewhere — e.g. conformance g7_au_repeat emits `(f $a $b $a)`.)
+        # This expectation was hard-coded in 4f57120, the commit that first made the sink fire —
+        # it was never green, so this is not an engine regression.
+        @test occursin("(likes \$ pizza)", res)
     end
 
     # ── HeadSink: top-k by lexicographic order ────────────────────────

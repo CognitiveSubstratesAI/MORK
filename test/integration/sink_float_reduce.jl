@@ -29,7 +29,12 @@ using MORK, Test
     steps = space_metta_calculus!(s, 100_000)
     @test steps < 100_000
     result = space_dump_all_sexpr(s)
-    @test occursin("(max 61.0)", result)
+    # Rust Display, not Debug: upstream renders the accumulator with `total.to_string()`
+    # (sinks.rs:1024), and 61.0.to_string() == "61". Only `max` differed because it is the only
+    # whole number here — min 5.4 / sum 81.8 / prod 18340.992 print their decimals either way.
+    # "(max 61.0)" does NOT contain "(max 61)" (the paren blocks it), so this still catches a
+    # regression to the Debug renderer.
+    @test occursin("(max 61)", result)
     @test occursin("(min 5.4)", result)
     @test occursin("(sum 81.8)", result)
     # prod = 5.8 × 9.6 × 5.4 × 61.0 ≈ 18340.992
