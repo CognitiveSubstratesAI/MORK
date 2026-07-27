@@ -65,6 +65,12 @@ end
     @test length(result_lines) == 2
     # Two distinct expressions → two distinct hash values
     @test length(Set(result_lines)) == 2
+    # UPSTREAM BYTE PARITY (kernel/src/main.rs:1201-1225 asserts exactly these two strings).
+    # Reachable since 2026-07-27: `Expr::hash()` is XXH3-128 (NOT gxhash — `#[cfg(gxhash)]` is a bare
+    # cfg nothing sets, so the xxh3 stub at expr/src/lib.rs:76 is live), now ported in
+    # src/kernel/XXH3.jl. Asserting the VALUES, not just distinctness — "two distinct hashes" passes
+    # for any hash function at all and is exactly how a wrong digest would hide here.
+    @test sort(String.(result_lines)) == ["(result XoicVnQv2bk)", "(result tspt4QCdRB8)"]
 end
 
 # ── sink_pure_dynamic_subformula (ip_sudoku subset) ───────────────────

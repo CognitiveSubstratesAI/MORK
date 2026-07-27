@@ -602,36 +602,42 @@ const PURE_OPS = Dict{String, Function}(
     "i128_to_string" => (a) -> Vector{UInt8}(string(_read_i128(a[1]))),
     "sub_i128" => (a) -> _read_i128(a[1]) - _read_i128(a[2]),
     "div_i128" => (a) -> div(_read_i128(a[1]), _read_i128(a[2])),
-    "i128_as_i8" => (a) -> Int8(_read_i128(a[1])),
-    "i128_as_i16" => (a) -> Int16(_read_i128(a[1])),
-    "i128_as_i32" => (a) -> Int32(_read_i128(a[1])),
-    "i128_as_i64" => (a) -> Int64(_read_i128(a[1])),
+    # Rust `x as iN` on integers TRUNCATES (modular); Julia's `IntN(x)` is a CHECKED
+    # conversion that THROWS InexactError. Every narrowing op here used the checked form, so
+    # e.g. `i128_as_i64` of a 128-bit hash threw instead of taking the low 64 bits — the pure
+    # sink swallowed the error and emitted NOTHING. That is why `hash_expr` produced no output
+    # at all: the failure was one op DOWNSTREAM of it. `%` is Julia's modular conversion and
+    # matches Rust `as` for both narrowing and (sign-extending) widening.
+    "i128_as_i8" => (a) -> _read_i128(a[1]) % Int8,
+    "i128_as_i16" => (a) -> _read_i128(a[1]) % Int16,
+    "i128_as_i32" => (a) -> _read_i128(a[1]) % Int32,
+    "i128_as_i64" => (a) -> _read_i128(a[1]) % Int64,
     "i128_as_f32" => (a) -> Float32(_read_i128(a[1])),
     "i128_as_f64" => (a) -> Float64(_read_i128(a[1])),
 
     # ── type conversions ─────────────────────────────────────────────
-    "i8_as_i16" => (a) -> Int16(_read_i8(a[1])),
-    "i8_as_i32" => (a) -> Int32(_read_i8(a[1])),
-    "i8_as_i64" => (a) -> Int64(_read_i8(a[1])),
-    "i8_as_i128" => (a) -> Int128(_read_i8(a[1])),
+    "i8_as_i16" => (a) -> _read_i8(a[1]) % Int16,
+    "i8_as_i32" => (a) -> _read_i8(a[1]) % Int32,
+    "i8_as_i64" => (a) -> _read_i8(a[1]) % Int64,
+    "i8_as_i128" => (a) -> _read_i8(a[1]) % Int128,
     "i8_as_f32" => (a) -> Float32(_read_i8(a[1])),
     "i8_as_f64" => (a) -> Float64(_read_i8(a[1])),
-    "i16_as_i8" => (a) -> Int8(_read_i16(a[1])),
-    "i16_as_i32" => (a) -> Int32(_read_i16(a[1])),
-    "i16_as_i64" => (a) -> Int64(_read_i16(a[1])),
-    "i16_as_i128" => (a) -> Int128(_read_i16(a[1])),
+    "i16_as_i8" => (a) -> _read_i16(a[1]) % Int8,
+    "i16_as_i32" => (a) -> _read_i16(a[1]) % Int32,
+    "i16_as_i64" => (a) -> _read_i16(a[1]) % Int64,
+    "i16_as_i128" => (a) -> _read_i16(a[1]) % Int128,
     "i16_as_f32" => (a) -> Float32(_read_i16(a[1])),
     "i16_as_f64" => (a) -> Float64(_read_i16(a[1])),
-    "i32_as_i8" => (a) -> Int8(_read_i32(a[1])),
-    "i32_as_i16" => (a) -> Int16(_read_i32(a[1])),
-    "i32_as_i64" => (a) -> Int64(_read_i32(a[1])),
-    "i32_as_i128" => (a) -> Int128(_read_i32(a[1])),
+    "i32_as_i8" => (a) -> _read_i32(a[1]) % Int8,
+    "i32_as_i16" => (a) -> _read_i32(a[1]) % Int16,
+    "i32_as_i64" => (a) -> _read_i32(a[1]) % Int64,
+    "i32_as_i128" => (a) -> _read_i32(a[1]) % Int128,
     "i32_as_f32" => (a) -> Float32(_read_i32(a[1])),
     "i32_as_f64" => (a) -> Float64(_read_i32(a[1])),
-    "i64_as_i8" => (a) -> Int8(_read_i64(a[1])),
-    "i64_as_i16" => (a) -> Int16(_read_i64(a[1])),
-    "i64_as_i32" => (a) -> Int32(_read_i64(a[1])),
-    "i64_as_i128" => (a) -> Int128(_read_i64(a[1])),
+    "i64_as_i8" => (a) -> _read_i64(a[1]) % Int8,
+    "i64_as_i16" => (a) -> _read_i64(a[1]) % Int16,
+    "i64_as_i32" => (a) -> _read_i64(a[1]) % Int32,
+    "i64_as_i128" => (a) -> _read_i64(a[1]) % Int128,
     "i64_as_f32" => (a) -> Float32(_read_i64(a[1])),
     "i64_as_f64" => (a) -> Float64(_read_i64(a[1])),
     "f32_as_i8" => (a) -> Int8(_read_f32(a[1])),
@@ -856,7 +862,17 @@ const PURE_OPS = Dict{String, Function}(
     end,
 
     # ── hash / encode / decode ────────────────────────────────────────
-    "hash_expr" => (a) -> _be_bytes(UInt64(hash(a[1]))),
+    # Upstream (kernel/src/pure.rs:800-810):
+    #     let h = e.hash(); let buf = h.to_le_bytes(); sink.write(SourceItem::Symbol(&buf))?;
+    # i.e. ONE symbol of 16 LITTLE-endian bytes of a u128. `Expr::hash()` (expr/src/lib.rs:310) is
+    # `gxhash::gxhash128(span, 0)` — but `#[cfg(gxhash)]` is a BARE cfg with no build.rs and no
+    # rustflag setting it anywhere in that workspace, so it is OFF and the live function is the stub
+    # at expr/src/lib.rs:76 forwarding to `xxhash_rust::const_xxh3::xxh3_128`. Verified by compiling
+    # a probe against the crate ("cfg(gxhash) = OFF"). So this is XXH3-128, default secret, seed 0 —
+    # NOT gxhash, and no AES-NI is involved. See src/kernel/XXH3.jl (1:1 port of const_xxh3.rs).
+    # This previously used Julia's builtin 64-bit `hash`, big-endian, 8 bytes — wrong algorithm,
+    # wrong width, wrong byte order — so `hash_expr` emitted a symbol upstream never produces.
+    "hash_expr" => (a) -> collect(reinterpret(UInt8, [htol(xxh3_128(a[1]))])),
     "encode_hex" => (a) -> Vector{UInt8}(bytes2hex(a[1])),
     "decode_hex" => (a) -> hex2bytes(String(a[1])),
     # URL-SAFE, UNPADDED — upstream uses `base64::engine::general_purpose::URL_SAFE_NO_PAD` for BOTH

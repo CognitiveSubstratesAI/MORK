@@ -36,6 +36,13 @@ include("frontend/CZ3Parser.jl")
 include("kernel/Prefix.jl")
 include("kernel/Sources.jl")
 
+# Kernel: XXH3-128. Ports xxhash-rust's const_xxh3.rs, which is what upstream
+# `Expr::hash()` (mork/expr/src/lib.rs:310) actually resolves to in this
+# workspace: cfg(gxhash) is OFF, so gxhash128 is the stub at lib.rs:76 that
+# forwards to `xxhash_rust::const_xxh3::xxh3_128`. Must precede Pure.jl (the
+# `hash_expr` pure-op is its consumer).
+include("kernel/XXH3.jl")
+
 # Kernel: pure numeric primitives. Ports mork/kernel/src/pure.rs.
 include("kernel/Pure.jl")
 

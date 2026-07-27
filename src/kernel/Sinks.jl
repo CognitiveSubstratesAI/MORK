@@ -1040,10 +1040,31 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
 
         # ── Evaluate all args eagerly; pass raw payloads to pure_apply ─
         arg_results = Vector{UInt8}[]
+        arg_raw = Vector{UInt8}[]           # UNSTRIPPED spans — see hash_expr below
         for span in arg_spans
             r = _pure_eval_formula(buf, first(span))
             r === nothing && return nothing
+            push!(arg_raw, r)
             push!(arg_results, _pure_strip_header(r))
+        end
+
+        # ── hash_expr takes the FULL EXPR SPAN, header byte included ──
+        # Upstream (kernel/src/pure.rs:800-810) does `let e: Expr = expr.consume()?; e.hash()`,
+        # and `Expr::hash()` (expr/src/lib.rs:310) hashes `self.span()` — the WHOLE serialized
+        # expression. `_pure_strip_header` is right for scalar ops (it peels the ExprSymbol tag to
+        # expose a numeric payload) but WRONG here: it silently dropped the leading tag byte, so we
+        # hashed 7 bytes `73796d626f6c73` where upstream hashes 8 `c773796d626f6c73`. Same digest
+        # algorithm, different input => a wrong hash that still looked "deterministic and distinct",
+        # which is exactly how the old `length(Set(result_lines)) == 2` assertion missed it.
+        if fn_name == "hash_expr"
+            result_payload = try
+                pure_apply(fn_name, arg_raw)
+            catch
+                return nothing
+            end
+            n = length(result_payload)
+            n == 0 && return nothing
+            return vcat(item_byte(ExprSymbol(UInt8(n))), result_payload)
         end
 
         # Ops that return full MORK expressions (not scalar payloads)

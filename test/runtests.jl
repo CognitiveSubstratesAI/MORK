@@ -4619,6 +4619,16 @@ const _MORK_TS = @testset "MORK" begin
     #                      Byte-identical to upstream PathMap.
     #   logic_query        wanted 63; the upstream BINARY dumps 24 on this program, as do we. 63 was
     #                      measured off our own engine during a soundness bug and then rationalised.
+    # sink_pure_advanced wired 2026-07-27: the ONE case that was a genuine ENGINE bug rather than a
+    # wrong expectation. `hash_expr` emitted nothing at all. Two causes, both now fixed:
+    #   (1) `i128_as_i64` (and 9 sibling narrowing ops) used Julia's CHECKED `Int64(x)`, which THROWS
+    #       where Rust `as i64` truncates — so the op downstream of hash_expr errored and the sink
+    #       swallowed it, producing zero output.
+    #   (2) the pure-op arg path stripped the leading tag byte, so we hashed 7 bytes where upstream
+    #       hashes 8. Right algorithm, wrong input.
+    # It now asserts upstream's EXACT literals (XoicVnQv2bk / tspt4QCdRB8), not merely "2 distinct
+    # hashes" — that weaker form passes for any hash function and is how this hid.
+    include("integration/sink_pure_advanced.jl")
     include("integration/logic_query.jl")
     include("integration/pathmap_prefix_ops.jl")
     include("integration/sink_float_reduce.jl")
@@ -4651,6 +4661,9 @@ const _MORK_TS = @testset "MORK" begin
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")
+
+    # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
+    include("unit_xxh3.jl")
 
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
