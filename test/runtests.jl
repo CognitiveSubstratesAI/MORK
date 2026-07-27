@@ -4573,6 +4573,48 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/mm1_forward.jl")
     include("integration/meta_ana.jl")
 
+    # ── Previously-ORPHANED integration files, wired 2026-07-27 ───────────────
+    # `test/integration/` held 49 files; runtests.jl included only 13. `run_all.jl` is a MANUAL
+    # REPL driver, NOT part of any gate — so ~34 files with real assertions had never run in CI.
+    # A measured sweep put these 23 at PASS for ~56s total (slowest: pathmap_hybrid_cata 19.3s,
+    # ip_sudoku 7.5s), so the coverage is nearly free. See the memory note
+    # `reference_mork_integration_tests_mostly_unwired` for the rest.
+    #
+    # NOT wired — characterised, deliberately left out (each needs its own fix):
+    #   bc0.jl               HANGS: 100% CPU, never returns on a 10_000-step budget. It silently
+    #                        swallowed three whole-suite sweeps before being isolated.
+    #   bc1/bc2/bc3, mm2_bc, logic_query, pathmap_prefix_ops,
+    #   sink_float_reduce, sink_pure_advanced, william_sinks
+    #                        throw (0.1-13s). Failure-vs-crash NOT yet classified: `Base.include`
+    #                        wraps everything in LoadError. bc1 additionally behaves differently
+    #                        depending on what ran before it (errored at 11s in-sequence, hung when
+    #                        run first) — state dependence, unresolved.
+    #   sink_float_reduce    consistent with the already-catalogued FloatReduction grouping
+    #                        divergence in the conformance corpus.
+    include("integration/basic.jl")
+    include("integration/bench_tile_puzzle.jl")
+    include("integration/coref_pattern_specificity.jl")
+    include("integration/dyck_zipper.jl")
+    include("integration/formula_execution.jl")
+    include("integration/ip_sudoku.jl")
+    include("integration/meta_ana_exec.jl")
+    include("integration/morkl.jl")
+    include("integration/pathmap_cow.jl")
+    include("integration/pathmap_hybrid_cata.jl")
+    include("integration/pathmap_policy_ops.jl")
+    include("integration/pathmap_write.jl")
+    include("integration/pattern_mining_lensy.jl")
+    include("integration/process_calculus_reverse.jl")
+    include("integration/roman_disjoin_final.jl")
+    include("integration/roman_disjoin_initial.jl")
+    include("integration/sink_add_remove.jl")
+    include("integration/sink_add_remove_var.jl")
+    include("integration/sink_count.jl")
+    include("integration/sink_pure.jl")
+    include("integration/sink_remove_many.jl")
+    include("integration/sink_two_bipolar_equal_crossed.jl")
+    include("integration/stv_roman.jl")
+
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")

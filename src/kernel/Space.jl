@@ -1905,7 +1905,12 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
         if !found
             if retry && retry_cnt > 0
                 retry_cnt -= 1
-                sleep(0.001)   # 1 ms — mirrors std::thread::sleep(1ms)
+                # 1 ms — mirrors `std::thread::sleep(Duration::from_millis(1))` in
+                # `metta_calculus_impl`, kernel/src/space.rs:1088 ON THE `server` BRANCH.
+                # NOT on `main`: main's `metta_calculus` has no retry/sleep at all, and
+                # `grep thread::sleep` over a main checkout returns nothing — so diffing this
+                # against main makes it look fabricated. It is not. See the docstring above.
+                sleep(0.001)
                 continue
             end
             break  # all execs consumed
