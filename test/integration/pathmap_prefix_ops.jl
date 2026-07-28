@@ -49,18 +49,37 @@ using MORK, PathMap, Test
         @test PathMap.val_count(m) == 1
     end
 
-    @testset "remove_prefix — full ascent to root" begin
+    @testset "remove_prefix — CLAMPED at the zipper's own origin" begin
+        # This testset previously asserted a "full ascent to root": that a zipper created AT
+        # `pre:` could strip its own 4-byte origin, returning true. That encoded a PathMap bug,
+        # not upstream's behaviour, and it kept the bug alive.
+        #
+        # Upstream `WriteZipperCore::remove_prefix` (write_zipper.rs:1866) is
+        #     let downstream = self.get_focus().into_option();
+        #     let fully_ascended = self.ascend(n);
+        #     self.graft_internal(downstream);
+        #     fully_ascended
+        # and `ascend` CLAMPS at the zipper root — `at_root()` is
+        # `prefix_buf.len() <= origin_path.len()` (:1002). A zipper built by
+        # `write_zipper_at_path(m, "pre:")` is ALREADY at its origin, so nothing moves, the
+        # subtrie is grafted back where it was, and the call returns FALSE.
+        #
+        # Settled by execution against the upstream Rust binary, not by argument — see
+        # PathMap/test/differential, scenarios `prefix/remove_prefix_full_ascent_at_origin`
+        # (`[pre:alpha,pre:beta] vc=2`) and `..._ret` (`false`).
         m = PathMap.PathMap{UInt64}()
         set_val_at!(m, b"pre:alpha", UInt64(10))
         set_val_at!(m, b"pre:beta", UInt64(20))
 
         wz = write_zipper_at_path(m, b"pre:")
-        result = wz_remove_prefix!(wz, 4)   # strip "pre:" (4 bytes)
-        @test result == true
+        result = wz_remove_prefix!(wz, 4)   # cannot ascend above the origin
+        @test result == false
 
-        @test get_val_at(m, b"alpha") == UInt64(10)
-        @test get_val_at(m, b"beta") == UInt64(20)
-        @test get_val_at(m, b"pre:alpha") === nothing
+        # The map is untouched.
+        @test get_val_at(m, b"pre:alpha") == UInt64(10)
+        @test get_val_at(m, b"pre:beta") == UInt64(20)
+        @test get_val_at(m, b"alpha") === nothing
+        @test PathMap.val_count(m) == 2
     end
 
     println("All prefix ops tests passed.")
