@@ -50,6 +50,50 @@ _read_i64(b) = ntoh(only(reinterpret(Int64, b[1:8])))
 _read_u128(b) = ntoh(only(reinterpret(UInt128, b[1:16])))
 _read_i128(b) = ntoh(only(reinterpret(Int128, b[1:16])))
 _read_f32(b) = ntoh(only(reinterpret(Float32, b[1:4])))
+
+"""
+    _rust_float_as_int(T, x) -> T
+
+Rust's `x as iN` for a FLOAT source. Since Rust 1.45 this cast is **saturating**, not UB and not
+checked: NaN → 0, below-range → `typemin`, above-range → `typemax`, otherwise truncate toward zero.
+
+Julia's `IntN(x)` is a CHECKED conversion that THROWS on a fractional or out-of-range value —
+`Int8(2.5)` is an InexactError. Inside a pure sink that throw is SWALLOWED and the op emits
+nothing, so the divergence is silent: upstream writes a value, we write no atom at all.
+
+⚠️ THIS IS THE SAME DEFECT AS THE INT→INT `as` FAMILY (fixed in `3973455`, see the comment on
+`i128_as_i8` below), which was fixed instance-by-instance while the TEN float→int ops right beside
+it kept the checked form. Found by a per-op differential against the upstream binary; the
+conformance corpus covered 18 of 360 pure ops, and none of these.
+"""
+function _rust_float_as_int(::Type{T}, x::AbstractFloat) where {T <: Integer}
+    isnan(x) && return zero(T)
+    # Compare in the FLOAT domain. `typemin/typemax` for the wide types are not exactly
+    # representable, so `<=`/`>=` against the rounded bound is what keeps the boundary saturating
+    # rather than overflowing in the `trunc` below.
+    x <= float(typemin(T)) && return typemin(T)
+    x >= float(typemax(T)) && return typemax(T)
+    trunc(T, x)
+end
+
+"""
+    _rust_domain(f, x) -> typeof(x)
+
+Rust's float math returns **NaN** outside a function's domain; Julia THROWS DomainError. Inside a
+pure sink that throw is swallowed and the op emits NO atom, where upstream writes a NaN — so the
+divergence is silent and total, not a wrong digit. Same meta-class as `_rust_float_as_int`:
+Julia raises where Rust produces a value.
+
+Found by the per-op differential: `acos_f32/f64`, `asin_f32/f64` and `atanh_f32/f64` produced
+nothing for an out-of-domain input while upstream emitted a NaN bit pattern.
+"""
+@inline function _rust_domain(f::F, x::T) where {F, T <: AbstractFloat}
+    try
+        f(x)
+    catch
+        T(NaN)
+    end
+end
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr all take `y: u32`
                                # (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
@@ -640,17 +684,17 @@ const PURE_OPS = Dict{String, Function}(
     "i64_as_i128" => (a) -> _read_i64(a[1]) % Int128,
     "i64_as_f32" => (a) -> Float32(_read_i64(a[1])),
     "i64_as_f64" => (a) -> Float64(_read_i64(a[1])),
-    "f32_as_i8" => (a) -> Int8(_read_f32(a[1])),
-    "f32_as_i16" => (a) -> Int16(_read_f32(a[1])),
-    "f32_as_i32" => (a) -> Int32(_read_f32(a[1])),
-    "f32_as_i64" => (a) -> Int64(_read_f32(a[1])),
-    "f32_as_i128" => (a) -> Int128(_read_f32(a[1])),
+    "f32_as_i8" => (a) -> _rust_float_as_int(Int8, _read_f32(a[1])),
+    "f32_as_i16" => (a) -> _rust_float_as_int(Int16, _read_f32(a[1])),
+    "f32_as_i32" => (a) -> _rust_float_as_int(Int32, _read_f32(a[1])),
+    "f32_as_i64" => (a) -> _rust_float_as_int(Int64, _read_f32(a[1])),
+    "f32_as_i128" => (a) -> _rust_float_as_int(Int128, _read_f32(a[1])),
     "f32_as_f64" => (a) -> Float64(_read_f32(a[1])),
-    "f64_as_i8" => (a) -> Int8(_read_f64(a[1])),
-    "f64_as_i16" => (a) -> Int16(_read_f64(a[1])),
-    "f64_as_i32" => (a) -> Int32(_read_f64(a[1])),
-    "f64_as_i64" => (a) -> Int64(_read_f64(a[1])),
-    "f64_as_i128" => (a) -> Int128(_read_f64(a[1])),
+    "f64_as_i8" => (a) -> _rust_float_as_int(Int8, _read_f64(a[1])),
+    "f64_as_i16" => (a) -> _rust_float_as_int(Int16, _read_f64(a[1])),
+    "f64_as_i32" => (a) -> _rust_float_as_int(Int32, _read_f64(a[1])),
+    "f64_as_i64" => (a) -> _rust_float_as_int(Int64, _read_f64(a[1])),
+    "f64_as_i128" => (a) -> _rust_float_as_int(Int128, _read_f64(a[1])),
     "f64_as_f32" => (a) -> Float32(_read_f64(a[1])),
 
     # ── f32/f64 arithmetic ────────────────────────────────────────────
@@ -716,10 +760,10 @@ const PURE_OPS = Dict{String, Function}(
     "cos_f64" => (a) -> cos(_read_f64(a[1])),
     "tan_f32" => (a) -> tan(_read_f32(a[1])),
     "tan_f64" => (a) -> tan(_read_f64(a[1])),
-    "asin_f32" => (a) -> asin(_read_f32(a[1])),
-    "asin_f64" => (a) -> asin(_read_f64(a[1])),
-    "acos_f32" => (a) -> acos(_read_f32(a[1])),
-    "acos_f64" => (a) -> acos(_read_f64(a[1])),
+    "asin_f32" => (a) -> _rust_domain(asin, _read_f32(a[1])),
+    "asin_f64" => (a) -> _rust_domain(asin, _read_f64(a[1])),
+    "acos_f32" => (a) -> _rust_domain(acos, _read_f32(a[1])),
+    "acos_f64" => (a) -> _rust_domain(acos, _read_f64(a[1])),
     "atan_f32" => (a) -> atan(_read_f32(a[1])),
     "atan_f64" => (a) -> atan(_read_f64(a[1])),
     "atan2_f32" => (a) -> atan(_read_f32(a[1]), _read_f32(a[2])),
@@ -734,8 +778,8 @@ const PURE_OPS = Dict{String, Function}(
     "asinh_f64" => (a) -> asinh(_read_f64(a[1])),
     "acosh_f32" => (a) -> acosh(_read_f32(a[1])),
     "acosh_f64" => (a) -> acosh(_read_f64(a[1])),
-    "atanh_f32" => (a) -> atanh(_read_f32(a[1])),
-    "atanh_f64" => (a) -> atanh(_read_f64(a[1])),
+    "atanh_f32" => (a) -> _rust_domain(atanh, _read_f32(a[1])),
+    "atanh_f64" => (a) -> _rust_domain(atanh, _read_f64(a[1])),
     "to_radians_f32" => (a) -> deg2rad(_read_f32(a[1])),
     "to_radians_f64" => (a) -> deg2rad(_read_f64(a[1])),
     "to_degrees_f32" => (a) -> rad2deg(_read_f32(a[1])),
