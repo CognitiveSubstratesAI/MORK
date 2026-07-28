@@ -301,13 +301,29 @@ function expr_serialize(bytes::AbstractVector{UInt8})::String
             transient && write(io, ' ')
             n = Int(tag.size)
             i += 1
+            # VERBATIM BYTES — exactly what upstream does. `Space::dump_all_sexpr`
+            # (kernel/src/space.rs:898-912) hands the symbol slice to
+            # `str::from_utf8_unchecked(s)` and writes it: no validation, no escaping, no
+            # re-encoding. A symbol's bytes are its bytes.
+            #
+            # ⚠️ THIS USED TO ESCAPE, AND THE ESCAPING DID NOT ROUND-TRIP. It wrote
+            # `Char(cb)` for "printable" bytes and `\xNN` text otherwise, which broke two ways:
+            #   * `write(io, Char(cb))` UTF-8 ENCODES — byte 0xC8 became Char 'È' became the TWO
+            #     bytes 0xC3 0x88, so the payload GREW; and `isprint(Char(0x8C))` is false, so
+            #     0x8C became the four literal characters `\x8c`.
+            #   * NOTHING DECODES EITHER FORM ON THE WAY BACK IN. The parser reads those bytes
+            #     literally, so `space_add_all_sexpr!(space_dump_all_sexpr(s))` did not preserve
+            #     the space — measured: `(v ü)` re-parsed and re-dumped as `(v Ã¼)`, and
+            #     `(w ?È\x8cá)` as `(w ?Ã\x88\x5cx8cÃ¡)`, corrupting further on every round.
+            # Upstream round-trips by construction because both sides are raw bytes.
+            #
+            # Consequence for text consumers (Core's MM2Router / PatternMiner / MeTTaIL split
+            # this on '\n'): unchanged for ASCII symbols, which is every ordinary MeTTa atom.
+            # Symbols with non-ASCII bytes now render as those bytes instead of a corrupted
+            # expansion — a Julia String may then hold invalid UTF-8, which is legal and is what
+            # byte-exact comparison against upstream requires.
             for j in i:min(i + n - 1, length(bytes))
-                cb = bytes[j]
-                if (isprint(Char(cb)) && cb != UInt8('\\'))
-                    write(io, Char(cb))
-                else
-                    write(io, "\\x$(string(cb, base=16, pad=2))")
-                end
+                write(io, bytes[j])
             end
             i += n
             transient = true

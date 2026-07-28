@@ -75,7 +75,13 @@ function _conf_run_probe(path::AbstractString)::Union{Vector{String}, Nothing}
         s = MORK.new_space()
         MORK.space_add_all_sexpr!(s, read(path, String))
         MORK.space_metta_calculus!(s, 2000)     # cap: several probes are non-halting BY DESIGN
-        _conf_sorted(split(MORK.space_dump_all_sexpr(s), '\n'))
+        # Normalise OUR bytes exactly as `_conf_expected` normalises upstream's. Our dump now
+        # emits symbol bytes VERBATIM (matching upstream, whose escaping never round-tripped —
+        # see expr_serialize), so the escaping has to happen HERE, on both sides, rather than
+        # being baked into the dump. Comparing a verbatim dump against normalised expectations
+        # would fail on escaping style rather than on content.
+        lines = split(MORK.space_dump_all_sexpr(s), '\n')
+        _conf_sorted([_conf_norm_bytes(Vector{UInt8}(codeunits(l))) for l in lines])
     catch
         nothing                                  # a throw is never a pass — reported as divergent
     end

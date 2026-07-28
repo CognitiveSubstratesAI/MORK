@@ -67,8 +67,13 @@ const _CMP_EXPECTED = [
         atoms = [strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))]
 
         for (head, byte) in _CMP_EXPECTED
-            # The dump escapes the raw result byte, e.g. `(lt32 \x01)`.
-            want = "($head \\x" * string(byte; base = 16, pad = 2) * ")"
+            # The dump emits the result byte VERBATIM, exactly as upstream does
+            # (`str::from_utf8_unchecked` then write, space.rs:911). This used to assert the
+            # escaped text `(lt32 \x01)`, which encoded a rendering our own parser could not read
+            # back — `space_add_all_sexpr!(space_dump_all_sexpr(s))` did not round-trip. Build the
+            # expectation from BYTES so it says what the engine actually emits.
+            want = String(vcat(Vector{UInt8}(codeunits("($head ")), UInt8[byte],
+                               Vector{UInt8}(codeunits(")"))))
             @test want in atoms
         end
     end
