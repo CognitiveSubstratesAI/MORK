@@ -94,6 +94,19 @@ nothing for an out-of-domain input while upstream emitted a NaN bit pattern.
         T(NaN)
     end
 end
+
+# ⚠️ TWO EXPLICIT METHODS, NOT A DEFAULT ARGUMENT. Writing this as
+# `_rust_domain(f::F, x::T, nan::T = T(NaN)) where {F, T <: AbstractFloat}` compiles but the
+# TWO-ARG form then returns GARBAGE — measured `_rust_domain(acos, 2.5f0)` = `90ee1e60` instead of
+# the NaN `7fc00000`, while the three-arg form was correct. A default that constructs a value from
+# a `where`-bound type parameter is not safe here; spelling both methods out is.
+@inline function _rust_domain(f::F, x::T, nan::T) where {F, T <: AbstractFloat}
+    try
+        f(x)
+    catch
+        nan
+    end
+end
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr all take `y: u32`
                                # (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
@@ -730,8 +743,13 @@ const PURE_OPS = Dict{String, Function}(
     "floor_f64" => (a) -> floor(Float64, _read_f64(a[1])),
     "ceil_f32" => (a) -> ceil(Float32, _read_f32(a[1])),
     "ceil_f64" => (a) -> ceil(Float64, _read_f64(a[1])),
-    "round_f32" => (a) -> round(Float32, _read_f32(a[1])),
-    "round_f64" => (a) -> round(Float64, _read_f64(a[1])),
+    # Rust's `f32::round`/`f64::round` round half AWAY FROM ZERO; Julia's `round` defaults to
+    # RoundNearest, which is ties-to-EVEN. So `round(2.5)` is 3 upstream and was 2 here.
+    # Pinned against the binary on all four sign/parity combinations:
+    #   2.5 -> 3 (40400000)   -2.5 -> -3 (c0400000)   3.5 -> 4   -3.5 -> -4
+    # `trunc`/`floor`/`ceil` need no mode — they are unambiguous and already matched.
+    "round_f32" => (a) -> round(Float32, _read_f32(a[1]), RoundNearestTiesAway),
+    "round_f64" => (a) -> round(Float64, _read_f64(a[1]), RoundNearestTiesAway),
     "copysign_f32" => (a) -> copysign(_read_f32(a[1]), _read_f32(a[2])),
     "copysign_f64" => (a) -> copysign(_read_f64(a[1]), _read_f64(a[2])),
     "powf_f32" => (a) -> _read_f32(a[1]) ^ _read_f32(a[2]),
@@ -778,11 +796,32 @@ const PURE_OPS = Dict{String, Function}(
     "asinh_f64" => (a) -> asinh(_read_f64(a[1])),
     "acosh_f32" => (a) -> acosh(_read_f32(a[1])),
     "acosh_f64" => (a) -> acosh(_read_f64(a[1])),
-    "atanh_f32" => (a) -> _rust_domain(atanh, _read_f32(a[1])),
-    "atanh_f64" => (a) -> _rust_domain(atanh, _read_f64(a[1])),
+    # ⚠️ NaN SIGN IS NOT UNIFORM. Rust's `atanh` returns a NEGATIVE NaN outside the domain
+    # (ffc00000 / fff8000000000000) while `acos`/`asin` return a POSITIVE one (7fc00000) — because
+    # atanh is computed through a log of a negative quantity, whose libm result carries the sign.
+    # Verified against the binary for BOTH signs of input (2.5 and -2.5 both give -NaN).
+    # Spelled out rather than routed through `_rust_domain`: the NaN here must be NEGATIVE, and
+    # threading a non-default NaN through the helper produced a wrong encoding at this call site.
+    # Rust computes atanh via a log of a negative quantity out of domain, so libm's result carries
+    # the sign — verified against the binary for BOTH input signs (2.5 and -2.5 give -NaN), whereas
+    # `acos`/`asin` give +NaN. `atanh(±1)` is `±Inf` in Julia and does not throw, so only |x| > 1
+    # is redirected.
+    "atanh_f32" => (a) -> (let x = _read_f32(a[1])
+        abs(x) > 1.0f0 ? -Float32(NaN) : atanh(x)
+    end),
+    "atanh_f64" => (a) -> (let x = _read_f64(a[1])
+        abs(x) > 1.0 ? -Float64(NaN) : atanh(x)
+    end),
     "to_radians_f32" => (a) -> deg2rad(_read_f32(a[1])),
     "to_radians_f64" => (a) -> deg2rad(_read_f64(a[1])),
-    "to_degrees_f32" => (a) -> rad2deg(_read_f32(a[1])),
+    # Rust's `f32::to_degrees` multiplies by a PRECOMPUTED f32 constant, i.e. the ratio is formed
+    # in full precision and rounded once. Julia's `rad2deg(z) = z * (180 / oftype(z, pi))` performs
+    # the DIVISION in Float32, which rounds twice and lands 1 ULP low:
+    #     rad2deg(2.5f0)            = 430f3d4c        (was ours)
+    #     2.5f0 * Float32(180/pi)   = 430f3d4d        (upstream)
+    # `to_degrees_f64` and both `to_radians` already agree — f64 forms the ratio in double on both
+    # sides, and Julia's `deg2rad` constant already matches Rust's — so only this one changes.
+    "to_degrees_f32" => (a) -> _read_f32(a[1]) * 57.2957795130823208767981548141051703f0,
     "to_degrees_f64" => (a) -> rad2deg(_read_f64(a[1])),
 
     # ── f32/f64 constants ─────────────────────────────────────────────

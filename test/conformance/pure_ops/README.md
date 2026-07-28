@@ -43,15 +43,37 @@ ops produce high bytes, so stdout cannot be ground truth for them.
 
 ## Status 2026-07-28
 
-    ops compared 341 · AGREE 241 · we produce nothing 0 · differing 100 · upstream errors 5
+    ops compared 341 · AGREE 338 · we produce nothing 0 · differing 3 · upstream errors 5
 
-**The 100 are NOT 100 op defects.** Verified on `acosh_f32`: Julia computes bits `3f c8 8c e1`,
-byte-identical to upstream — the VALUE is right and `space_dump_all_sexpr` corrupts the
-RENDERING, mangling non-ASCII three different ways in one symbol
-(`c8` → UTF-8 `c3 88`; `8c` → the literal text `\x8c`; `e1` → `c3 a1`) where upstream writes raw
-bytes. The 241 that agree are simply the ops whose results are pure ASCII.
-**Fix the dump encoding before reading anything more into that number.**
+Closed here: the 16 silently-absent ops (float->int `as` saturation, domain-error NaN), the
+`space_dump_all_sexpr` byte-encoding defect (~92 apparent divergences, ONE cause), plus:
 
-`upstream nothing = 5`: we emit where upstream ERRORS — the `*_ternarylogic` family. Upstream's
-`quaternary` macro arm checks `if items != 3` and then consumes FOUR arguments, where `ternary`
-checks 3 and consumes 3. That looks like an upstream copy-paste bug; not yet characterised.
+| op | was | cause |
+|---|---|---|
+| `round_f32` / `round_f64` | 2.0 for input 2.5 | Rust rounds ties AWAY FROM ZERO; Julia's `round` defaults to ties-to-EVEN. Pinned on all four sign/parity combinations (2.5→3, −2.5→−3, 3.5→4, −3.5→−4) |
+| `atanh_f32` / `atanh_f64` | +NaN | Rust yields a NEGATIVE NaN out of domain (it goes through a log of a negative quantity, so libm's sign carries) while `acos`/`asin` yield a POSITIVE one. Verified for both input signs |
+| `to_degrees_f32` | 1 ULP low | Rust multiplies by a precomputed f32 constant; Julia's `rad2deg` performs the DIVISION in Float32 and rounds twice. `to_degrees_f64` and both `to_radians` already agreed |
+
+### The 3 remaining are libm, not logic
+
+`cbrt_f64`, `sin_f64`, `sinh_f32` — each differs in the LAST BIT only (…ed/…ee, …b0/…b1, F/G).
+Julia links openlibm; Rust uses the system libm. Matching bit-for-bit would mean reimplementing one
+of them inside the port. **Recorded as an accepted deviation, not a TODO** — and note the contrast
+with `to_degrees_f32`, which LOOKED like the same 1-ULP class but was arithmetic and exactly
+fixable. Do not assume a last-bit difference is libm without checking whether the op is actually a
+libm call.
+
+### `upstream nothing = 5` — the `*_ternarylogic` family
+
+We emit, upstream ERRORS. Upstream's `quaternary` macro arm checks `if items != 3` and then
+consumes FOUR arguments, where `ternary` checks 3 and consumes 3 (kernel/src/pure.rs macro, ~line
+25). So a 4-arg call is rejected and a 3-arg call reads a fourth operand that was never supplied —
+the op is unreachable either way upstream. Ours accepts the 4-arg form and computes it.
+Uncharacterised beyond that; on shapes where upstream cannot run, "match upstream" has no meaning.
+
+### ⚠️ A Julia trap this exercise surfaced
+
+`_rust_domain` was briefly written as `f(x, nan::T = T(NaN)) where {F, T<:AbstractFloat}`. It
+compiles, but the TWO-ARG form then returns GARBAGE — measured `_rust_domain(acos, 2.5f0)` =
+`90ee1e60` instead of `7fc00000`, while the three-arg form was correct. A default argument that
+constructs a value from a `where`-bound type parameter is not safe here. Two explicit methods.
