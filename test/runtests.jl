@@ -4662,6 +4662,14 @@ const _MORK_TS = @testset "MORK" begin
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")
 
+    # ── PORT INVENTORY ratchet — the instrument the above CANNOT be ────────────
+    # `upstream_conformance.jl` compares BEHAVIOUR, so both sides must be able to express the
+    # program; a MISSING upstream op therefore has no probe and cannot fail. That is how all 42
+    # typed comparison ops in `kernel/src/pure.rs` stayed absent through 30+ days, 2436 tests and a
+    # 277-probe byte-exact differential. This set-compares upstream symbol NAMES against ours.
+    # Absence is proof of a gap; presence is not proof of equivalence — see the file's header.
+    include("test_port_inventory.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 

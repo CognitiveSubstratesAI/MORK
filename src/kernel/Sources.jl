@@ -307,6 +307,96 @@ True iff `name` has a registered grounded function.
 is_grounded(name::String) = haskey(GROUNDED_REGISTRY, name)
 
 """
+    grounded_num(s) -> Union{Int, Float64, Nothing}
+
+Parse a grounded numeric ARGUMENT preserving its type: an integer literal stays `Int`, a float literal
+stays `Float64`, anything else is `nothing`. Julia's own promotion then decides results — `Int⊕Int`
+stays exact, any `Float64` operand promotes, and `/` on two `Int`s yields `Float64`.
+
+## Not a port — an ADDITION, which is why it had no oracle
+
+Read against upstream `kernel/src/sources.rs` (260 lines) 2026-07-29:
+`pub enum ASource` (:197) is `PosSource(BTMSource) | ACTSource | CmpSource | CompatSource |
+Z3Source`, and `ASource::new` (:220) dispatches purely on BYTE PATTERNS — `BTM`, `ACT`, `z3`,
+`==`/`!=` — with `else { unreachable!() }`. There is **no grounded variant, no name lookup, and no
+numeric parsing anywhere in the file**. `GroundedSource` + `GROUNDED_REGISTRY` + this parse are ours,
+inserted ahead of that byte dispatch.
+
+⇒ The byte-exact differential and the 277-probe conformance ratchet **cannot** cover any of it: there
+is nothing upstream to compare against. That is exactly how the defect below sat behind a permanently
+green gate.
+
+## ⚠️ THIS HAD DRIFTED INTO THREE COPIES (consolidated 2026-07-29)
+
+Every consumer marshals grounded arguments as TEXT, so each needed "string → number" and each wrote
+its own: Core `_gnum`, Core `_g2atom`, MorkSupercompiler `_kb_num`. All three parsed everything as
+`Float64`, then demoted integral results with `isinteger(r) ? string(Int(r)) : string(r)`. Measured:
+
+  1. Int64 arithmetic done in a 53-bit mantissa ⇒ WRONG past 2^53:
+         (* 123456789 987654321) -> 121932631112635264   exact 121932631112635269   (off by 5)
+         (+ 9007199254740993 1)  -> 9007199254740992     exact 9007199254740994     (off by 2)
+     comparison too, since two distinct Int64s above 2^53 coerce to ONE Float64:
+         (< 9007199254740993 9007199254740994) -> False
+  2. Integral FLOAT results demoted to Int — `(+ 1.5 2.5)` -> `4`, not `4.0`. Not cosmetic:
+     `from_sexpr("4")` is `Int64`, `from_sexpr("4.0")` is `Float64`, so the lanes were putting
+     DIFFERENT ATOMS in the space for one expression.
+
+Fixing them one at a time is how it survived: repairing Core's arithmetic silently BROKE the
+bisimulation that `MorkSupercompiler/src/supercompiler/KBSaturation.jl` asserts in its own comments
+("Semantics MIRROR Core's GROUNDED_REGISTRY … so the saturation lane BISIMULATES the MM2 calculus
+lane") — because that mirror was maintained by a COMMENT. **A comment is not an invariant.**
+
+MORK is the only possible shared home: it owns `GROUNDED_REGISTRY`, and both Core and
+MorkSupercompiler depend on MORK — the reverse is impossible, since Core depends on MorkSupercompiler.
+
+## Numeric MODEL — one deliberate choice, revisited HERE
+
+`Int64 + Float64`, matching hyperon-experimental's `Number::Integer(i64) | Number::Float(f64)` with
+explicit `Number::promote` (`stdlib/arithmetics.rs:37-42`) — the engine our conformance is gated
+against. CeTTa's tower is richer (GMP `mpz_t`/`mpq_t`, overflow→BigInt, rationals, three selectable
+division semantics). `docs/specs/metta grammar/metta_language_spec.md` records the older
+"Float64-only" position as a known, spec-permitted divergence ("Engines MAY extend numeric towers but
+MUST document"); this supersedes it toward the oracle. Widening further is a single decision to make
+at this definition, never per-consumer.
+
+## 🔴 DELIBERATELY UNLIKE `PURE_OPS` — do not "align" the two
+
+`PURE_OPS` (`kernel/Pure.jl`, ported from upstream `kernel/src/pure.rs`) also converts text to
+numbers, and its model is the OPPOSITE of this one. Read upstream 2026-07-29:
+
+    op!(num from_string i64_from_string<i64>);   op!(num from_string f64_from_string<f64>);
+    // …plus i8/i16/i32/i128/f32 variants (pure.rs:506-746)
+    // body, pure.rs:91-92:
+    let SourceItem::Symbol(symbol) = expr.read()
+        else { return Err(EvalError::from("only parses symbols")) };
+    let result: \$t = …parse()
+        .map_err(|_| EvalError::from(concat!("string not a valid type in ", stringify!(\$name))))?;
+
+So `pure.rs`: the target width is **DECLARED BY THE OP NAME** (no inference), there is **no implicit
+promotion** (you call `i64_as_f64` explicitly), and a parse failure is an **`EvalError` VALUE**.
+
+Here: the width is **INFERRED** (Int first, Float64 second), promotion is **implicit** (Julia's), and
+failure is **`nothing`**.
+
+Both are correct for their layer, and the split is the point:
+  * `PURE_OPS` serves the MM2 KERNEL tier, where the program author writes `sum_i64` and the type is
+    part of the instruction. Explicit typing is the whole contract.
+  * this serves the MeTTa SURFACE, where the language has a single `Number` type and `(+ 1 2.5)` must
+    just work — so inference + promotion is what the surface semantics require.
+Aligning them would break one tier or the other. If you find yourself reaching for `grounded_num`
+inside a `PURE_OPS` op, or for `*_from_string` inside a surface op, the tiers have been confused.
+
+⚠️ One INHERITED gap, tracked not fixed: `nothing`-on-failure is weaker than upstream's `EvalError`.
+It is the same shape as the wider finding that 459 of our 532 `PURE_OPS` THROW where upstream returns
+`Err(EvalError)` — our port flattened that `Result` contract. Fixing it is a `PURE_OPS`-wide change,
+not something to special-case here.
+"""
+grounded_num(s::AbstractString) = begin
+    n = tryparse(Int, s)
+    n !== nothing ? n : tryparse(Float64, s)
+end
+
+"""
     GroundedSource
 
 I-pattern source that calls a registered Julia function.
@@ -562,7 +652,7 @@ export ResourceRequestKind, RREQ_BTM, RREQ_ACT, RREQ_Z3
 export ResourceRequest
 export AbstractSource, CompatSource, BTMSource, ACTSource, CmpSource
 export GroundedSource, StaticZipper, Z3Source, z3_available, z3_instance!, z3_reset!
-export GROUNDED_REGISTRY, register_grounded!, is_grounded
+export GROUNDED_REGISTRY, register_grounded!, is_grounded, grounded_num
 export ASource, asource_new, asource_compat
 export source_requests, source_factor
 export ACT_PATH
