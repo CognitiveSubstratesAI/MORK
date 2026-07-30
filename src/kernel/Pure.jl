@@ -1164,17 +1164,207 @@ for (suffix, rd) in (("u8", _read_u8), ("u16", _read_u16), ("u32", _read_u32),
 end
 
 # =====================================================================
+# The TEN HAND-WRITTEN ops — native `(ExprSource, ExprSink)`, as upstream writes them
+# =====================================================================
+#
+# `pure.rs` is 360 `op!` invocations plus TEN functions written out by hand
+# (`:748-908`), every one `pub extern "C" fn NAME(expr: *mut ExprSource, sink: *mut ExprSink)`.
+# They are hand-written for a reason: each CONSUMES or PRODUCES an EXPRESSION rather than a scalar
+# symbol, which the macro cannot express.
+#
+# 🔴 WHY THEY CANNOT GO THROUGH `op_skeleton`. That skeleton demands every argument be a
+# `SourceSymbol` and always writes its result AS a symbol — right for the 360 numeric ops, wrong
+# here. Measured in test/test_eval.jl before this block existed: `collapse_symbol` and `hash_expr`
+# threw on an Arity-tagged argument, and `tuple`'s expression result came back flattened into a
+# symbol payload. Forcing 370 ops through one skeleton was the mistake; mirroring upstream's own
+# 360/10 split is the fix.
+#
+# These are registered DIRECTLY (not wrapped) by `pure_register!` below. The `PURE_OPS` entries of
+# the same names remain for now because `_pure_eval_formula` (Sinks.jl) is still the live evaluator;
+# they retire with that migration.
+
+"upstream `reverse_symbol` (pure.rs:812-823) — one SYMBOL in, its bytes reversed out."
+function _nat_reverse_symbol(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "reverse_symbol")
+    items == 1 || throw(EvalError("only takes one argument"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("only reverses symbols"))
+    sink_write!(snk, SourceSymbol(reverse((sym::SourceSymbol).bytes)))
+    nothing
+end
+
+"upstream `collapse_symbol` (pure.rs:825-843) — an EXPRESSION of symbols concatenated into one."
+function _nat_collapse_symbol(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "collapse_symbol")
+    items == 1 || throw(EvalError("only takes one argument (an expression of symbols)"))
+    head = source_read!(src)
+    (head isa SourceTag && (head::SourceTag).tag isa ExprArity) ||
+        throw(EvalError("argument should be an expression"))
+    a = Int(((head::SourceTag).tag::ExprArity).arity)
+    out = UInt8[]
+    for _ in 1:a
+        it = source_read!(src)
+        it isa SourceSymbol || throw(EvalError("can only concat symbols in collapse"))
+        b = (it::SourceSymbol).bytes
+        # upstream `if i + symbol.len() >= 64 { Err }` — 63 bytes is the maximum TOTAL, not 64.
+        length(out) + length(b) >= 64 &&
+            throw(EvalError("new symbol can not be larger than 63 bytes"))
+        append!(out, b)
+    end
+    sink_write!(snk, SourceSymbol(out))
+    nothing
+end
+
+"upstream `explode_symbol` (pure.rs:845-856) — one SYMBOL out to an expression of 1-byte symbols."
+function _nat_explode_symbol(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "explode_symbol")
+    items == 1 || throw(EvalError("only takes one argument (a symbol)"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("arguments needs to be a symbol"))
+    b = (sym::SourceSymbol).bytes
+    sink_write!(snk, SourceTag(ExprArity(UInt8(length(b)))))
+    for x in b
+        sink_write!(snk, SourceSymbol(UInt8[x]))
+    end
+    nothing
+end
+
+"upstream `hash_expr` (pure.rs:800-810) — consumes an EXPR; 16 LITTLE-endian bytes of xxh3_128."
+function _nat_hash_expr(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "hash_expr")
+    items == 1 || throw(EvalError("only takes one argument"))
+    span = source_consume_expr!(src)          # the WHOLE span, tag byte included — not a payload
+    sink_write!(snk, SourceSymbol(collect(reinterpret(UInt8, [htol(xxh3_128(span))]))))
+    nothing
+end
+
+"upstream `encode_hex` (pure.rs:748-759). ⚠️ upstream ABORTS above 32 bytes; we do not — see below."
+function _nat_encode_hex(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "encode_hex")
+    items == 1 || throw(EvalError("only takes one argument"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("only parses symbols"))
+    # ⚠️ DELIBERATE DEVIATION. Upstream writes into a `[0u8; 64]` at `buf[..2*len]`, so a 32-byte
+    # input emits a Rule-of-64-violating 64-byte symbol and a 33-byte input PANICS — a non-unwinding
+    # ABORT that kills the process and writes no output at all. We never abort mid-saturation, so the
+    # oversized case raises here and the atom is skipped (sink_write! enforces the 63-byte limit).
+    sink_write!(snk, SourceSymbol(Vector{UInt8}(bytes2hex((sym::SourceSymbol).bytes))))
+    nothing
+end
+
+"upstream `decode_hex` (pure.rs:761-772)."
+function _nat_decode_hex(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "decode_hex")
+    items == 1 || throw(EvalError("only takes one argument"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("only parses symbols"))
+    out = try
+        hex2bytes(String(copy((sym::SourceSymbol).bytes)))
+    catch
+        throw(EvalError("string not a valid type in decode_hex"))
+    end
+    sink_write!(snk, SourceSymbol(out))
+    nothing
+end
+
+"upstream `encode_base64url` (pure.rs:787-798) — URL_SAFE_NO_PAD."
+function _nat_encode_base64url(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "encode_base64url")
+    items == 1 || throw(EvalError("only takes one argument"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("only parses symbols"))
+    sink_write!(snk, SourceSymbol(Vector{UInt8}(_b64url_encode((sym::SourceSymbol).bytes))))
+    nothing
+end
+
+"upstream `decode_base64url` (pure.rs:774-785) — URL_SAFE_NO_PAD."
+function _nat_decode_base64url(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "decode_base64url")
+    items == 1 || throw(EvalError("only takes one argument"))
+    sym = source_read!(src)
+    sym isa SourceSymbol || throw(EvalError("only parses symbols"))
+    out = try
+        _b64url_decode(String(copy((sym::SourceSymbol).bytes)))
+    catch
+        throw(EvalError("string not a valid type in decode_base64url"))
+    end
+    sink_write!(snk, SourceSymbol(out))
+    nothing
+end
+
+"""
+upstream `tuple` (pure.rs:898-908) — `Arity(items)` then each element's WHOLE span spliced verbatim,
+so nesting survives. NO arity check: upstream declares none.
+"""
+function _nat_tuple(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "tuple")
+    # `Tag::Arity` carries 6 bits; upstream's `items as _` silently truncates past 63, we refuse.
+    items <= 63 || throw(EvalError("tuple: arity $items exceeds the 6-bit Arity tag"))
+    sink_write!(snk, SourceTag(ExprArity(UInt8(items))))
+    for _ in 1:items
+        sink_extend!(snk, source_consume_expr!(src))
+    end
+    nothing
+end
+
+"""
+upstream `ifnz` (pure.rs:874-896) — `(ifnz <symbol> then <expr> [else <expr>])`.
+
+By the time this runs the stack machine has ALREADY EVALUATED both branches into this frame's sink,
+which is what makes `ifnz` eager; it only SELECTS. The condition is false only when every byte of the
+condition symbol is zero.
+"""
+function _nat_ifnz(src::ExprSource, snk::ExprSink)
+    items = source_consume_head_check!(src, "ifnz")
+    (items == 3 || items == 5) || throw(EvalError(
+        "shaped either (ifnz <symbol> then <nonzero expr>) or (ifnz <symbol> then <nonzero expr> else <zero expr>)"))
+    cond = source_read!(src)
+    cond isa SourceSymbol || throw(EvalError("condition needs to be a symbol"))
+    is_nz = !all(==(0x00), (cond::SourceSymbol).bytes)
+
+    kw = source_read!(src)
+    (kw isa SourceSymbol && String(copy((kw::SourceSymbol).bytes)) == "then") ||
+        throw(EvalError("expected then symbol"))
+    then_span = source_consume_expr!(src)
+
+    if is_nz
+        sink_extend!(snk, then_span)
+        return nothing
+    end
+    items == 5 || throw(EvalError("ifnz no else branch"))
+    kw2 = source_read!(src)
+    (kw2 isa SourceSymbol && String(copy((kw2::SourceSymbol).bytes)) == "else") ||
+        throw(EvalError("expected else symbol"))
+    sink_extend!(snk, source_consume_expr!(src))
+    nothing
+end
+
+"The ten, by upstream name. Registered DIRECTLY — never through `op_skeleton`."
+const PURE_NATIVE_OPS = Dict{String, Function}(
+    "encode_hex" => _nat_encode_hex,
+    "decode_hex" => _nat_decode_hex,
+    "encode_base64url" => _nat_encode_base64url,
+    "decode_base64url" => _nat_decode_base64url,
+    "hash_expr" => _nat_hash_expr,
+    "reverse_symbol" => _nat_reverse_symbol,
+    "collapse_symbol" => _nat_collapse_symbol,
+    "explode_symbol" => _nat_explode_symbol,
+    "ifnz" => _nat_ifnz,
+    "tuple" => _nat_tuple,
+)
+
+# =====================================================================
 # `pub fn register(scope: &mut EvalScope)` — pure.rs:910-1300
 # =====================================================================
 #
 # THE LAST THING IN THIS FILE, exactly as it is the last thing in pure.rs.
 #
-# 🔴 IT USED TO LIVE IN EvalScope.jl, AND THAT WAS WRONG (user-identified, 2026-07-30). The
+# 🔴 IT USED TO LIVE IN Eval.jl (then named EvalScope.jl), AND THAT WAS WRONG (user-identified, 2026-07-30). The
 # justification on record was "it mutates an `EvalScope`, which upstream keeps in another crate" —
 # but upstream's `register` mutates that other crate's type from INSIDE pure.rs. What decides a
 # function's home is the file that DEFINES it, not the type it touches. Having it elsewhere also
 # forced the include order backwards: `pure.rs:6` is `use eval::{EvalScope, FuncType}`, so pure.rs
-# DEPENDS ON eval and eval is built first — MORK.jl now includes EvalScope.jl before Pure.jl, which
+# DEPENDS ON eval and eval is built first — MORK.jl now includes EvalFfi.jl + Eval.jl before Pure.jl, which
 # is both upstream's dependency direction and what lets this function sit here.
 #
 # Source order, upstream's own name list, and `FuncPure` for every one: all **370** registrations are
@@ -1190,8 +1380,15 @@ end
 function pure_register!()
     for name in PURE_REGISTER
         arity = get(PURE_OP_ARITY, name, nothing)
+        native = get(PURE_NATIVE_OPS, name, nothing)
         body = get(PURE_OPS, name, nothing)
-        if body !== nothing
+        if native !== nothing
+            # The TEN hand-written ops. Registered AS-IS: they already have upstream's
+            # `(ExprSource, ExprSink)` signature and do their own arity checks, exactly as the
+            # `extern "C" fn`s in pure.rs do. Wrapping them in `op_skeleton` would force their
+            # EXPRESSION arguments and results through a symbol-only path and corrupt them.
+            add_func!(PURE_SCOPE, name, native, FuncPure, arity)
+        elseif body !== nothing
             add_func!(PURE_SCOPE, name, op_skeleton(name, body, arity), FuncPure, arity)
         elseif name in PURE_SPECIAL_FORMS
             # Implemented in the EVALUATOR, not the table — `_pure_eval_formula` intercepts it before

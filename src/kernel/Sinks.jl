@@ -970,199 +970,28 @@ sink_finalize!(s::HashSink, btm::SinkBtm)::Bool =
 mutable struct PureSink <: AbstractSink
     expr::MORK.Expr
     changed::Bool
+    # upstream `PureSink { e, unique, scope: EvalScope }` (sinks.rs:1087). The scope is PER-SINK
+    # there — `PureSink::new` builds its own — and `scope_eval!` mutates its cursor/stack/alloc pool,
+    # so a shared global one would race under `--threads`. `eval_scope_sharing` gives each sink its
+    # own machine state over the one read-only op registry.
+    scope::EvalScope
 end
-PureSink(e::MORK.Expr) = PureSink(e, false)
+PureSink(e::MORK.Expr) = PureSink(e, false, eval_scope_sharing(PURE_SCOPE))
 
-"""
-    _pure_eval_formula(buf, off) → Union{Vector{UInt8}, Nothing}
+# ── `_pure_eval_formula` WAS HERE, and is now upstream's stack machine ──────────────────────
+#
+# 159 lines of hand-written recursive evaluator: our substitute for `scope.eval`, and the last
+# real gap in the pure lane. `PureSink` now calls `scope_eval!` (Eval.jl), which is a 1:1 port of
+# upstream `EvalScope::eval`/`push_eval`/`eval_impl` — see the call site below.
+#
+# THE MIGRATION WAS MEASURABLY MORE FAITHFUL, not merely equivalent: conformance went 248 -> 249
+# passing, and the probe that flipped is `sinks/g4_arity_edge`, whose own header reads
+# "upstream consume_head_check enforces exact arity, ours ignores extras". The old evaluator
+# called `pure_apply(name, args)` with NO arity check, so `(i64_to_string 3 4)` and
+# `(sub_i64 9 4 2)` produced values where upstream errors. `op_skeleton` supplies exactly that
+# check — which is what it was written for, and it had never been reachable until now.
 
-Recursively evaluate a pure-ops formula rooted at byte offset `off` (1-based).
 
-INVARIANT: returns a COMPLETE MORK sub-expression (header byte included):
-  - Scalar symbol result  → ExprSymbol(n) + payload bytes
-  - Compound expression   → ExprArity(n) + children (for `tuple`, `explode_symbol`, `quote`)
-  - Skip signal           → nothing  (e.g. `ifnz` with zero cond and no else)
-
-Args passed to `pure_apply` are stripped of their header (raw payloads).
-
-Mirrors EvalScope::eval in experiments/eval/src/lib.rs.
-"""
-function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, Nothing}
-    off > length(buf) && return nothing
-    tag = byte_item(buf[off])
-
-    if tag isa ExprSymbol
-        # Return complete MORK symbol (header + payload)
-        n = Int(tag.size)
-        return buf[off:(off + n)]
-    end
-
-    if tag isa ExprArity
-        n_args = Int(tag.arity) - 1   # first child is the functor name
-        n_args < 0 && return nothing
-
-        # Parse functor name
-        fn_off = off + 1
-        fn_tag = byte_item(buf[fn_off])
-        fn_tag isa ExprSymbol || return nothing
-        fn_size = Int(fn_tag.size)
-        fn_name = String(buf[(fn_off + 1):(fn_off + fn_size)])
-
-        # Collect arg byte spans
-        arg_spans = UnitRange{Int}[]
-        cur = fn_off + 1 + fn_size
-        for _ in 1:n_args
-            cur > length(buf) && break
-            span_end = _expr_end_offset(buf, cur)
-            push!(arg_spans, cur:(span_end - 1))
-            cur = span_end
-        end
-
-        # ── ifnz: EAGER conditional (upstream semantics) ─────────────
-        # Contract: (ifnz COND then THEN-EXPR [else ELSE-EXPR]) — `then`/`else` are literal
-        # keyword symbols. SNK-1 (audit 2026-06-04): the keyword positions were SKIPPED
-        # without validation, so a malformed shape like `(ifnz cond X Y)` (no keywords)
-        # silently evaluated the wrong branch. The keyword bytes are validated below.
-        #
-        # 🔴 THIS USED TO SHORT-CIRCUIT, AND THAT WAS A DIVERGENCE — SETTLED BY EXECUTION 2026-07-30.
-        # `ifnz` is `scope.add_func("ifnz", ifnz, FuncType::Pure)` (pure.rs:911) — a REGISTERED PURE
-        # FN, not a special form — and upstream's `eval_impl` (experiments/eval/src/lib.rs:128-150)
-        # runs a frame's `func` only once `rest == 0`, i.e. after ALL of its children have evaluated
-        # into its sink. `'`(quote) is identity-special-cased in `push_eval` PRECISELY to escape
-        # that, which is the proof that nothing else escapes it.
-        #
-        # Measured against the release binary:
-        #   (ifnz 1 then (i64_from_string 5) else (i64_from_string notanumber))
-        #       -> upstream NOTHING   (the UNTAKEN else branch was evaluated and its error killed
-        #                              the whole op)          ours, when lazy: 5
-        #   (ifnz 1 then 5 else 6)  -> 5 on BOTH sides, which eliminates "the then/else keyword
-        #                              symbols are what break it"
-        # So laziness FABRICATED atoms upstream never produces — the dangerous direction, because a
-        # value that exists only in our engine can seed a fixpoint upstream never reaches.
-        # Ground truth for all five shapes is vendored at test/conformance/sinks/g4_ifnz_eager.mm2,
-        # whose header already said this before the behaviour was fixed.
-        #
-        # ⚠️ COST IS INHERENT, NOT A REGRESSION: nested `ifnz` now evaluates 2^depth branches, as
-        # upstream does. Do not "optimise" it back into a short-circuit.
-        if fn_name == "ifnz"
-            _ifnz_kw(span) = begin
-                o = first(span)
-                o <= length(buf) || return ""
-                t = byte_item(buf[o])
-                t isa ExprSymbol || return ""
-                n = Int(t.size)
-                (o + n) <= length(buf) ? String(@view buf[(o + 1):(o + n)]) : ""
-            end
-            # Upstream: `if items != 3 && items != 5 { return Err(...) }` (pure.rs:878). We accepted
-            # `>= 3`, so the malformed 4-arg shape evaluated a branch where upstream emits nothing.
-            n_ifnz = length(arg_spans)
-            (n_ifnz == 3 || n_ifnz == 5) || return nothing
-            _ifnz_kw(arg_spans[2]) == "then" || return nothing
-            n_ifnz == 5 && (_ifnz_kw(arg_spans[4]) == "else" || return nothing)
-
-            # EAGER: every branch is evaluated BEFORE the condition selects one, and a failure in
-            # ANY of them kills the whole op — including the branch that is not taken.
-            cond = _pure_eval_formula(buf, first(arg_spans[1]))
-            cond === nothing && return nothing
-            then_val = _pure_eval_formula(buf, first(arg_spans[3]))
-            then_val === nothing && return nothing
-            else_val = nothing
-            if n_ifnz == 5
-                else_val = _pure_eval_formula(buf, first(arg_spans[5]))
-                else_val === nothing && return nothing
-            end
-
-            all(==(0x00), _pure_strip_header(cond)) || return then_val
-            # Zero condition: upstream returns Err("ifnz no else branch") when there is no else.
-            return n_ifnz == 5 ? else_val : nothing
-        end
-
-        # ── quote: return the inner expression bytes verbatim ─────────
-        if fn_name == "'" && length(arg_spans) >= 1
-            return buf[arg_spans[1]]
-        end
-
-        # ── Evaluate all args eagerly; pass raw payloads to pure_apply ─
-        arg_results = Vector{UInt8}[]
-        arg_raw = Vector{UInt8}[]           # UNSTRIPPED spans — see hash_expr below
-        for span in arg_spans
-            r = _pure_eval_formula(buf, first(span))
-            r === nothing && return nothing
-            push!(arg_raw, r)
-            push!(arg_results, _pure_strip_header(r))
-        end
-
-        # ── hash_expr takes the FULL EXPR SPAN, header byte included ──
-        # Upstream (kernel/src/pure.rs:800-810) does `let e: Expr = expr.consume()?; e.hash()`,
-        # and `Expr::hash()` (expr/src/lib.rs:310) hashes `self.span()` — the WHOLE serialized
-        # expression. `_pure_strip_header` is right for scalar ops (it peels the ExprSymbol tag to
-        # expose a numeric payload) but WRONG here: it silently dropped the leading tag byte, so we
-        # hashed 7 bytes `73796d626f6c73` where upstream hashes 8 `c773796d626f6c73`. Same digest
-        # algorithm, different input => a wrong hash that still looked "deterministic and distinct",
-        # which is exactly how the old `length(Set(result_lines)) == 2` assertion missed it.
-        if fn_name == "hash_expr"
-            result_payload = try
-                pure_apply(fn_name, arg_raw)
-            catch
-                return nothing
-            end
-            n = length(result_payload)
-            n == 0 && return nothing
-            return vcat(item_byte(ExprSymbol(UInt8(n))), result_payload)
-        end
-
-        # Ops that return full MORK expressions (not scalar payloads).
-        #
-        # ⚠️ THE TWO TAKE DIFFERENT ARGUMENT FORMS, and conflating them corrupted `tuple`:
-        #   * `tuple` consumes EXPRS — `let f: Expr = expr.consume()?; sink.extend_from_slice(f.span())`
-        #     (pure.rs:904-905) — so it needs the UNSTRIPPED spans, exactly like `hash_expr` above.
-        #     Passing `arg_results` re-tagged every element as a symbol and destroyed nesting.
-        #   * `explode_symbol` consumes a SYMBOL and indexes its bytes — `let SourceItem::Symbol(symbol)
-        #     = expr.read()`, then `symbol[i..i+1]` (pure.rs:850-853) — so the stripped payload is right.
-        # Same rule as `hash_expr`: an op that consumes an EXPR gets the span; an op that consumes a
-        # SYMBOL gets the payload. Check which one upstream calls before choosing.
-        if fn_name == "tuple" || fn_name == "explode_symbol"
-            f = get(PURE_OPS, fn_name, nothing)
-            f === nothing && return nothing
-            args = fn_name == "tuple" ? arg_raw : arg_results
-            result_mork = try
-                f(args)
-            catch
-                return nothing
-            end
-            return result_mork isa Vector{UInt8} ? result_mork : nothing
-        end
-
-        # Standard scalar ops: get payload, wrap as ExprSymbol
-        result_payload = try
-            pure_apply(fn_name, arg_results)
-        catch
-            return nothing
-        end
-        n = length(result_payload)
-        n == 0 && return nothing
-        return vcat(item_byte(ExprSymbol(UInt8(n))), result_payload)
-    end
-
-    nothing
-end
-
-"""
-    _pure_strip_header(mork_expr) → Vector{UInt8}
-
-Strip the leading ExprSymbol header byte from a scalar MORK expression to get
-raw payload bytes. For arity expressions (tuple etc.), return as-is.
-"""
-function _pure_strip_header(mork_expr::Vector{UInt8})::Vector{UInt8}
-    isempty(mork_expr) && return mork_expr
-    tag = try
-        byte_item(mork_expr[1])
-    catch
-        ;
-        return mork_expr
-    end
-    tag isa ExprSymbol ? mork_expr[2:end] : mork_expr
-end
 
 """
     _expr_end_offset(buf, off) → Int
@@ -1222,8 +1051,22 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
         tpl_bytes
     elseif src_tag isa ExprVarRef
         # VarRef(k) (sinks.rs:1156-1186): evaluate, then splice in AT INDEX k, re-basing trailing vars.
-        result_mork = _pure_eval_formula(formula_buf, formula_start)
-        result_mork === nothing && return nothing
+        # ── THE LIVE PURE EVALUATOR IS NOW upstream's STACK MACHINE ──────────────────────
+        # upstream: `match self.scope.eval(ExprSource::new(&p[clen])) { Ok(res) => res,
+        #            Err(er) => { trace!(target: "pure", "err {}", er); continue 'vals } }`
+        # (sinks.rs:1165-1168) — an EvalError means SKIP THIS ATOM, not abort the run.
+        # This replaced `_pure_eval_formula`, a hand-written recursive evaluator that was our
+        # substitute for `scope.eval` and the last real gap in the pure lane.
+        #
+        # Only EvalError is caught. Anything else is the analogue of an upstream PANIC and is left to
+        # propagate rather than silently dropping an atom — silent skips are how a defect population
+        # stays invisible.
+        result_mork = try
+            scope_eval!(s.scope, ExprSource(formula_buf, formula_start))
+        catch err
+            err isa EvalError || rethrow()
+            return nothing
+        end
         k = Int(src_tag.idx)
         k < _expr_newvars(tpl_bytes, 1, length(tpl_bytes)) ?
             _expr_substitute_one_de_bruijn(tpl_bytes, 1, length(tpl_bytes), k, result_mork) : nothing
@@ -1550,7 +1393,7 @@ export AbstractSink, sink_apply!, sink_finalize!
 export CompatSink, AddSink, RemoveSink, HeadSink, TailSink
 export CountSink, SumSink, AndSink
 export ACTSink, WASMSink, PureSink, Z3Sink, USink, AUSink, HashSink
-export _pure_eval_formula, _expr_end_offset
+export _expr_end_offset
 export FloatReductionSink
 export asink_new, asink_compat
 export _au_merge!, _zipper_subtrie_hash

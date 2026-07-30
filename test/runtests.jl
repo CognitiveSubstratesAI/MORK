@@ -4688,6 +4688,18 @@ const _MORK_TS = @testset "MORK" begin
     # Absence is proof of a gap; presence is not proof of equivalence — see the file's header.
     include("test_port_inventory.jl")
 
+    # ── Eval + EvalFfi — the FIRST execution of those ports (2026-07-30) ──────
+    # `src/kernel/Eval.jl` + `EvalFfi.jl` port upstream's `eval` and `eval-ffi` crates, and until
+    # this file NOT ONE LINE of it had ever run: `PURE_SCOPE`'s functions are only ever REGISTERED,
+    # because `_pure_eval_formula` is still the live evaluator. Its own docstring (:286) cited
+    # a test file as asserting the registry invariant — and no such file existed. Same
+    # defect class as an unwired harness sitting beside a correct measurement: knowledge that nothing
+    # executes changes nothing. This runs it, and PINS the one limitation the coming
+    # `scope.eval` migration must not silently inherit — `op_skeleton` demands Symbol arguments and
+    # writes Symbol results, so it cannot drive the ten EXPRESSION-shaped ops that upstream
+    # hand-writes against ExprSource/ExprSink (pure.rs: 360 macro-generated + 10 hand-written).
+    include("test_eval.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 

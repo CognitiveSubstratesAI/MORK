@@ -50,6 +50,7 @@ sinks/g3_rootdouble_varref_control
 sinks/g3_symbol_source_var
 sinks/g3_varref_k1
 sinks/g3_varref_readback
+sinks/g4_arity_edge
 sinks/g4_b64
 sinks/g4_bareroot
 sinks/g4_baseline

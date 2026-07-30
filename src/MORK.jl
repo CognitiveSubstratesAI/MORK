@@ -43,16 +43,16 @@ include("kernel/Sources.jl")
 # `hash_expr` pure-op is its consumer).
 include("kernel/XXH3.jl")
 
-# Kernel: the evaluator SCOPE the 370 pure ops register into. Ports
-# mork/experiments/eval/src/lib.rs + the eval-ffi signatures it needs (EvalError, ExprSource,
-# ExprSink, SourceItem). This whole crate was ABSENT until 2026-07-30 — see the file header.
+# Kernel: the evaluator. Eval.jl <- mork/experiments/eval/src/lib.rs (registry + STACK MACHINE),
+# plus the `eval-ffi` crate's TYPES, which live in the same file because that crate exists only for
+# the C ABI (`no_std`, `repr(C)`, `extern "C"` FuncPtr) and we port none of it — the substrate stays
+# Julia-native. Named for the CRATE, not a type: it was `EvalScope.jl` until 2026-07-30.
 #
-# ⚠️ ORDER REVERSED 2026-07-30, and the direction now MATCHES UPSTREAM'S. `pure.rs:6` is
-# `use eval::{EvalScope, FuncType}` — pure.rs DEPENDS ON the eval crate, so eval is built first.
-# EvalScope.jl used to be included AFTER Pure.jl because it hosted the registration loop; that loop
-# is upstream's `pub fn register`, which lives in pure.rs, so it moved to the end of Pure.jl where
-# upstream puts it and the include order followed the real dependency.
-include("kernel/EvalScope.jl")
+# ⚠️ BOTH PRECEDE Pure.jl, which is upstream's own dependency direction. They used to come AFTER it,
+# because this file hosted the registration loop — but that loop is upstream's `pub fn register`,
+# which lives in pure.rs. It moved to the end of Pure.jl and the include order followed the real
+# dependency.
+include("kernel/Eval.jl")
 
 # Kernel: the arity constants upstream's `op!` arms hard-code, extracted from pure.rs and vendored.
 include("kernel/PureOpArity.jl")

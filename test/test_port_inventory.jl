@@ -95,7 +95,12 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # measured 109/33. That 2/2 gap predates this session's work (verified: the Pure.jl diff could
     # not have moved it) and was never explained. It is now folded into the tightened pin rather
     # than investigated — if you widen the scan and this fails, that is the alarm working.
-    PIN_FNS = 106
+    # 106 -> 105 on 2026-07-30 (round 5), attributable: the `eval` crate's STACK MACHINE was ported
+    # (`eval`/`push_eval`/`eval_impl` -> `scope_eval!`/`_push_eval!`/`_eval_impl!` in Eval.jl), so
+    # `experiments/eval/lib.rs` lost its remaining missing function. TYS is unchanged at 32 — the one
+    # gap there is `alloc.rs`'s `StdoutTracker`, a Rust global-allocator instrumentation shim with no
+    # Julia counterpart and deliberately not ported.
+    PIN_FNS = 105
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
