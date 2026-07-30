@@ -1,0 +1,21 @@
+; g4 QUOTE IS POSITIONAL UPSTREAM — a quoted arg is only correct if nothing is read after it.
+;
+; CAUSE (established by execution 2026-07-30): upstream `push_eval`'s quote branch
+; (experiments/eval/src/lib.rs:99-107) splices the quoted sub-expression into the PARENT sink but
+; never advances `self.expr.position` past it. The cursor is therefore rewound by exactly ONE item,
+; so every later argument reads one position behind and the final argument is dropped.
+;   quoted SYMBOL     -> the re-read succeeds and DUPLICATES it
+;   quoted EXPRESSION -> the re-read CALLS its head, which is not a registered fn => Err, no atom
+;
+; (tuple (' qq) ww zz) => (qq qq ww) is the datum that fixes the magnitude of the rewind at one item.
+(n 1)
+(exec 0 (, (n $k)) (O (pure (only_q $r) $r (tuple (' (b c))))))
+(exec 0 (, (n $k)) (O (pure (q_last $r) $r (tuple aa (' (b c))))))
+(exec 0 (, (n $k)) (O (pure (q_first $r) $r (tuple (' (b c)) dd))))
+(exec 0 (, (n $k)) (O (pure (q_mid $r) $r (tuple aa (' (b c)) dd))))
+(exec 0 (, (n $k)) (O (pure (shift1 $r) $r (tuple (' qq) ww))))
+(exec 0 (, (n $k)) (O (pure (shift2 $r) $r (tuple (' qq) ww zz))))
+(exec 0 (, (n $k)) (O (pure (shift3 $r) $r (tuple aa (' qq) ww))))
+(exec 0 (, (n $k)) (O (pure (ctl_noquote $r) $r (tuple aa qq ww))))
+(exec 0 (, (n $k)) (O (pure (ctl_qlast $r) $r (tuple aa ww (' qq)))))
+(exec 0 (, (n $k)) (O (pure (col_q $r) $r (collapse_symbol (' (a b c))))))
