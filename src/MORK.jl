@@ -46,6 +46,15 @@ include("kernel/XXH3.jl")
 # Kernel: pure numeric primitives. Ports mork/kernel/src/pure.rs.
 include("kernel/Pure.jl")
 
+# Kernel: the arity constants upstream's `op!` arms hard-code, extracted from pure.rs and vendored.
+include("kernel/PureOpArity.jl")
+
+# Kernel: the evaluator SCOPE the 370 pure ops register into. Ports
+# mork/experiments/eval/src/lib.rs + the eval-ffi signatures it needs (EvalError, ExprSource,
+# ExprSink, SourceItem). Must follow Pure.jl and PureOpArity.jl: it registers PURE_OPS with their
+# FuncType and arity. This whole crate was ABSENT until 2026-07-30 — see the file header.
+include("kernel/EvalScope.jl")
+
 # Kernel: write sinks. Ports mork/kernel/src/sinks.rs.
 include("kernel/Sinks.jl")
 
