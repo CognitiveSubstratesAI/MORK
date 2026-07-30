@@ -2328,8 +2328,41 @@ export space_backup_paths, space_restore_paths!
 # Mirrors sexpr_to_path / Space::sexpr_to_expr in space_temporary.rs
 # =====================================================================
 
+"""
+    space_sexpr_to_expr(s, sexpr) → Expr
+
+upstream `Space::parse_sexpr` (kernel/src/space.rs:451-456):
+
+    let mut it = Context::new(r);
+    let mut parser = ParDataParser::new(&self.sm);
+    let mut ez = ExprZipper::new(Expr{ ptr: buf });
+    parser.sexpr(&mut it, &mut ez).map(|_| (Expr{ ptr: buf }, ez.loc))
+
+🔴 THIS USED TO IGNORE `s` ENTIRELY and call `sexpr_to_expr(sexpr)`, which parses with
+`DefaultParser`. The two tokenizers are NOT the same:
+
+  * `ParDataParser` (ours: `SpaceParser`) truncates a symbol to 63 bytes and counts the truncation —
+    `if l > 63 { self.truncated += 1; l = 63 }` (space.rs:239-243, the
+    `#[cfg(not(feature="interning"))]` branch, which IS the default build).
+  * `DefaultParser` falls through to `fe_tokenizer(::MorkParser, bytes) = bytes` — identity, NO cap.
+
+So a symbol over 63 bytes was passed through whole, producing an expression that violates the Rule
+of 64 and trips `item_byte`'s assertion, where upstream silently truncates and keeps going. We lost
+an atom upstream would have kept.
+
+⚠️ CORRECTS THE RECORDED CLAIM. CODEMAP said this "ignores the Space", implying a symbol-mapping
+bug. It is NOT that: in the default build `ParDataParser::tokenizer` never touches `self.sm` at all
+(the `write_permit` is used only under `#[cfg(feature="interning")]`, and `interning` is not in
+`kernel/Cargo.toml`'s `default = ["grounding", "specialize_io"]`). The defect was the WRONG PARSER,
+and its only observable consequence is the missing 63-byte cap.
+"""
 function space_sexpr_to_expr(s::Space, sexpr::AbstractString)::MORK.Expr
-    sexpr_to_expr(sexpr)
+    bv = sexpr isa Vector{UInt8} ? sexpr : Vector{UInt8}(sexpr)
+    ctx = SexprContext(bv)
+    buf = Vector{UInt8}(undef, max(length(bv) * 2, 64))
+    z = ExprZipper(MORK.Expr(buf), 1)
+    sexpr_parse!(SpaceParser(), ctx, z)      # ≡ ParDataParser::new(&self.sm) in the default build
+    MORK.Expr(z.root.buf[1:(z.loc - 1)])
 end
 
 # =====================================================================

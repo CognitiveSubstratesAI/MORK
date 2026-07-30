@@ -200,3 +200,22 @@ end
                           _es_sym("else"), _es_sym("B"))) == _es_sym("A")
     end
 end
+
+# ── space_sexpr_to_expr uses the SPACE's parser, not the identity one ────────────────────────────
+# upstream `Space::parse_sexpr` builds `ParDataParser::new(&self.sm)`, whose tokenizer truncates a
+# symbol to 63 bytes (space.rs:239-243, the default `#[cfg(not(feature="interning"))]` branch).
+# Ours called `sexpr_to_expr`, which uses `DefaultParser` -> `fe_tokenizer(::MorkParser, b) = b`,
+# identity with NO cap — so a >63-byte symbol produced a Rule-of-64-violating expression and threw,
+# where upstream truncates and keeps the atom.
+@testset "space_sexpr_to_expr parses with the Space's tokenizer" begin
+    s = MORK.new_space()
+    # ordinary symbols are unaffected
+    @test MORK.space_sexpr_to_expr(s, "(foo bar)") isa MORK.Expr
+    # a 70-byte symbol must TRUNCATE to 63 rather than throw
+    long = "a"^70
+    e = MORK.space_sexpr_to_expr(s, "($long)")
+    bytes = MORK.expr_span(e)
+    tag = MORK.byte_item(bytes[2])          # [1] is Arity(1), [2] is the symbol tag
+    @test tag isa MORK.ExprSymbol
+    @test Int(tag.size) == 63
+end
