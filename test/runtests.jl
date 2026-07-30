@@ -4657,6 +4657,7 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/sink_remove_many.jl")
     include("integration/sink_two_bipolar_equal_crossed.jl")
     include("integration/stv_roman.jl")
+    include("integration/space_timing_instrumentation.jl")
 
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)

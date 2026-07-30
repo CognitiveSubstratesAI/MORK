@@ -1861,14 +1861,45 @@ end
 """
     space_metta_calculus!(s, steps=∞) → Int
 
-Repeatedly find `(exec ...)` atoms, remove and execute them.
-Mirrors `metta_calculus_impl` in space.rs (server branch):
-  - On `UserPermissionErr` re-inserts the atom and retries (up to
-    `_METTA_CALCULUS_MAX_RETRIES` times with a 1ms sleep).
-  - On any other error logs and halts.
-Returns steps executed.
+Repeatedly find `(exec ...)` atoms, remove and execute them. Returns steps executed.
+
+PROVENANCE — this function draws from BOTH upstream branches, deliberately (audited 2026-07-30):
+
+  - **`main` @ `5464713` (`kernel/src/space.rs:1695` `metta_calculus`) is the anchor**, because the
+    RELEASE BINARY our 277-probe differential grades us against is built from main. Its error path is
+    `if let Err(e) = self.interpret(xe) { debug!(…) }` — log and CONTINUE — and `done` increments once
+    per iteration regardless of the result. We match both; see the `else` branch below for why halting
+    was wrong.
+  - **`server` @ `2d6730b` (`metta_calculus_impl`) supplies ONLY the permission retry**: on
+    `UserPermissionErr` re-insert the atom and retry up to `_METTA_CALCULUS_MAX_RETRIES` with a 1 ms
+    sleep. `main` has NO retry or sleep here at all, so a naive diff against main makes this look
+    fabricated. It is not — see the inline note at the `sleep` call.
+
+⚠️ An earlier version of this docstring said "on any other error logs and HALTS". That was stale: the
+code logs and CONTINUES, which is main's behaviour and the whole point of the fix recorded in the
+`else` branch. Corrected 2026-07-30.
+
+⚠️ NOT PORTED — main's `timing` instrumentation (`space.rs:1710`). When `self.timing` is set, upstream
+inserts a `("timing" <exec> <done> <nanos>)` atom **into the space** for every step. We declare the
+`timing::Bool` field (line 145) to match upstream's struct, but nothing reads it, so setting it does
+nothing. It is default-false on both sides and our probes never enable it, so there is no differential
+exposure — but the field is a trap as it stands: it looks like a switch and is not one. Either wire it
+or drop the field; do not leave it half-present.
 """
 const _METTA_CALCULUS_MAX_RETRIES = 2000
+
+# Encode one string as a MORK Symbol item: [SymbolSize(n)] followed by n payload bytes. Used only by
+# the `timing` instrumentation below. `SymbolSize` is a 6-bit tag field, so a payload must be 1..63
+# bytes — "timing" is 6, and the decimal renderings of a step count and a nanosecond duration are far
+# short of 63, so this cannot overflow in practice. Asserted rather than assumed, because a silent
+# truncation here would corrupt the trie rather than fail.
+function _timing_sym(str::AbstractString)::Vector{UInt8}
+    b = codeunits(str)
+    1 <= length(b) <= 63 || error("_timing_sym: payload must be 1..63 bytes, got $(length(b))")
+    out = UInt8[item_byte(ExprSymbol(UInt8(length(b))))]
+    append!(out, b)
+    out
+end
 
 # Multi-source join driver for the FALLTHROUGH path (shapes the trie-join fast paths P1-P5
 # don't classify — i.e. higher-order / multi-source conjunctions). true (DEFAULT) = coreferential
@@ -1922,7 +1953,33 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
         remove_val_at!(s.btm, path_buf)
 
         rt = MORK.Expr(copy(path_buf))      # independent copy for space_interpret!
+        t0 = time_ns()                      # mirrors `let start = Instant::now()` (space.rs:1703)
         err = space_interpret!(s, rt)
+
+        # ── main's `timing` instrumentation (space.rs:1710-1718) ───────────────────────────────────
+        # Was UNPORTED until 2026-07-30: we declared the `timing::Bool` field to match upstream's
+        # struct (space.rs:44) but nothing read it, so setting it silently did nothing — a switch that
+        # was not one. Wired rather than dropped, because dropping the field would diverge from
+        # upstream's struct while leaving the same trap for the next reader.
+        #
+        # Upstream builds `construct!("timing" xe done_str start_str)`, i.e.
+        #     [Arity(4)] [Sym "timing"] <exec bytes, spliced as ONE element> [Sym done] [Sym nanos]
+        # and inserts it into the trie. Three details that are easy to get wrong:
+        #   * `done` is the PRE-increment count — upstream's `done += 1` runs in the while-BODY, after
+        #     this block, so the first step records 0.
+        #   * `xe` is spliced RAW, not wrapped in its own arity byte.
+        #   * this WRITES TO THE SPACE, so it changes what a dump returns. It cannot collide with the
+        #     exec scan: `_EXEC_PREFIX` is [Arity(4)][SymbolSize(4)]exec and this is
+        #     [Arity(4)][SymbolSize(6)]timing — they diverge at byte 2, so no re-execution loop.
+        # Default-false on both sides and no probe enables it, so there is no differential exposure.
+        if s.timing
+            tbuf = UInt8[item_byte(ExprArity(UInt8(4)))]
+            append!(tbuf, _timing_sym("timing"))
+            append!(tbuf, path_buf)                       # the exec expression, spliced raw
+            append!(tbuf, _timing_sym(string(done)))      # PRE-increment, as upstream
+            append!(tbuf, _timing_sym(string(time_ns() - t0)))
+            set_val_at!(s.btm, tbuf, UNIT_VAL)
+        end
 
         if err === nothing
             retry = false
