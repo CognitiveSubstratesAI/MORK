@@ -1,6 +1,18 @@
 # EvalScope — 1:1 port of upstream `experiments/eval/src/lib.rs` (151 lines) + the parts of
 # `experiments/eval-ffi` its signatures require.
 #
+# WHY A SEPARATE FILE FROM Pure.jl: `EvalScope` is NOT part of `pure.rs`. It lives in a different
+# CRATE, and pure.rs merely imports it — `use eval::{EvalScope, FuncType};` (pure.rs:6). Our layout
+# mirrors upstream's file boundaries: Pure.jl<-kernel/src/pure.rs, Sinks.jl<-sinks.rs,
+# Space.jl<-space.rs, EvalScope.jl<-experiments/eval/src/lib.rs.
+#
+# ⚠️ KNOWN INCONSISTENCY IN THAT MAPPING, recorded rather than hidden: this file ALSO defines
+# `EvalError`/`ExprSource`/`ExprSink`, which upstream puts in the `eval-ffi` crate (pure.rs:8), and
+# `SourceItem`, which belongs to `mork_expr` (pure.rs:7 — our Expr.jl). Strict crate-per-file would
+# split them into an EvalFfi.jl and move SourceItem into Expr.jl. They are co-located here because
+# they are small, exist ONLY to give EvalScope its signatures, and had no home at all before this
+# commit. Split them if eval-ffi grows a second consumer.
+#
 # 🔴 WHY THIS FILE EXISTS (2026-07-30). It was ENTIRELY ABSENT. `pure.rs` ends in
 #     pub fn register(scope: &mut EvalScope) {
 #         scope.add_func("ifnz", ifnz, FuncType::Pure);
@@ -144,16 +156,16 @@ sink_finish(k::ExprSink)::Vector{UInt8} = k.buf
 
 upstream `pub struct Func { func: FuncPtr, ty: FuncType }` (lib.rs:27-30).
 
-`arity` is OURS, and it is not an embellishment: it is the arity constant each `op!` arm hard-codes in
-the check it generates (`if items != 1`, `!= 2`, `!= 3`, `!= 4`; the `nary` arm generates NO check and
-folds whatever it gets). Recording it per op is how the skeleton gets restored without hand-writing
-370 checks. `nothing` means UNDECLARED — not "any arity" — so coverage is measurable rather than
-assumed.
+`arity` is the SET of counts each `op!` arm's generated check accepts — `[1]`, `[2]`, `[3]`, and
+`[3, 5]` for `ifnz`, whose upstream check is `if items != 3 && items != 5` (pure.rs:877). A set, not a
+scalar, because upstream's is. `nothing` means the arm emits no check (`nary` folds any count; `tuple`
+takes N) — it does NOT mean "unknown". Recording it per op is how the skeleton is restored without
+hand-writing 371 checks; the table is vendored in `PureOpArity.jl`.
 """
 struct Func
     func::Function
     ty::FuncType
-    arity::Union{Int, Nothing}
+    arity::Union{Vector{Int}, Nothing}
 end
 
 # ── EvalScope — upstream `pub struct EvalScope` (lib.rs:32-40) ────────────────────────────────────
@@ -189,7 +201,7 @@ end
 
 "upstream `EvalScope::add_func` (lib.rs:64-66). `arity === nothing` = undeclared, see `Func`."
 function add_func!(s::EvalScope, name::AbstractString, func::Function, ty::FuncType,
-                   arity::Union{Int, Nothing} = nothing)
+                   arity::Union{Vector{Int}, Nothing} = nothing)
     s.fns[String(name)] = Func(func, ty, arity)
     nothing
 end
@@ -228,11 +240,12 @@ and the error contract live in the SKELETON, not the body.
 `body` keeps our existing convention (`Vector{Vector{UInt8}}` of raw arg payloads → value), so all 532
 op closures are reused unchanged; this only restores the frame around them.
 """
-function op_skeleton(name::String, body::Function, arity::Union{Int, Nothing})
+function op_skeleton(name::String, body::Function, arity::Union{Vector{Int}, Nothing})
     (src::ExprSource, snk::ExprSink) -> begin
         items = source_consume_head_check!(src, name)
-        if arity !== nothing && items != arity
-            throw(EvalError("$name takes $arity argument$(arity == 1 ? "" : "s"), got $items"))
+        if arity !== nothing && !(items in arity)
+            throw(EvalError("$name takes $(join(arity, " or ")) argument" *
+                            (arity == [1] ? "" : "s") * ", got $items"))
         end
         args = Vector{Vector{UInt8}}(undef, items)
         for i in 1:items
@@ -266,22 +279,59 @@ around them, so there is one registry of callables, not two.
 """
 const PURE_SCOPE = EvalScope()
 
+"""
+    PURE_SCOPE_UNREGISTERED
+
+Names in upstream's `register()` that we could NOT register, because no body exists in `PURE_OPS` and
+no special form claims them. Empty is the invariant; `test_evalscope.jl` asserts it.
+
+🔴 This list can only exist because registration is now driven by the VENDORED `PURE_REGISTER` rather
+than by iterating our own `PURE_OPS`. Iterating our own table meant the registry could never disagree
+with itself, so it could never report a missing op — the same self-confirming shape that let a false
+"42 ops absent" claim survive three days.
+"""
+const PURE_SCOPE_UNREGISTERED = String[]
+
+"""
+    PURE_SCOPE_EXTRA
+
+Ops WE carry that upstream's `register()` does not. Registered (they have live consumers) but kept
+distinguishable, because an op with no upstream counterpart also has no upstream oracle — see
+`[[feedback_additions_above_upstream_need_own_oracle]]`.
+"""
+const PURE_SCOPE_EXTRA = String[]
+
 function _register_pure_ops!()
-    for (name, body) in PURE_OPS
-        # The arity class comes from the VENDORED table extracted from upstream's macro invocations
-        # (PureOpArity.jl). `nothing` there means the arm emits no check (`nary`, `tuple`) — it is a
-        # fact about upstream, not a gap. A name absent from the table is one of OUR additions above
-        # upstream, which has no upstream arity to honour, so it also goes unchecked.
+    # ── 1:1 with upstream `pub fn register(scope: &mut EvalScope)` (pure.rs:910-1300) ──
+    # Source order, upstream's own name list, and `FuncPure` for every one: all 371 registrations are
+    # `FuncType::Pure` — NONE are Macro. `ifnz` included, even though it controls its own argument
+    # evaluation; upstream classifies it Pure and so do we.
+    for name in PURE_REGISTER
         arity = get(PURE_OP_ARITY, name, nothing)
-        add_func!(PURE_SCOPE, name, op_skeleton(name, body, arity), FuncPure, arity)
+        body = get(PURE_OPS, name, nothing)
+        if body !== nothing
+            add_func!(PURE_SCOPE, name, op_skeleton(name, body, arity), FuncPure, arity)
+        elseif name in PURE_SPECIAL_FORMS
+            # Implemented in the EVALUATOR, not the table — `_pure_eval_formula` intercepts it before
+            # dispatch. Registered so the name resolves and the classification is truthful; the body is
+            # a sentinel that names the real site rather than silently doing the wrong thing.
+            add_func!(PURE_SCOPE, name,
+                      (::ExprSource, ::ExprSink) -> throw(EvalError(
+                          "$name is a special form; _pure_eval_formula handles it before dispatch")),
+                      FuncPure, arity)
+        else
+            push!(PURE_SCOPE_UNREGISTERED, name)
+        end
     end
-    # `ifnz` is registered upstream (pure.rs:911) but is a SPECIAL FORM: it must not have its
-    # arguments pre-evaluated. Registered here as a Macro so the classification is truthful, with the
-    # sentinel body that says where the real implementation lives.
-    add_func!(PURE_SCOPE, "ifnz",
-              (::ExprSource, ::ExprSink) -> throw(EvalError(
-                  "ifnz is a special form; _pure_eval_formula intercepts it before dispatch")),
-              FuncMacro, nothing)
+    # ── ops we carry beyond upstream's list ──
+    upstream = Set(PURE_REGISTER)
+    for (name, body) in PURE_OPS
+        name in upstream && continue
+        push!(PURE_SCOPE_EXTRA, name)
+        add_func!(PURE_SCOPE, name, op_skeleton(name, body, get(PURE_OP_ARITY, name, nothing)),
+                  FuncPure, get(PURE_OP_ARITY, name, nothing))
+    end
+    sort!(PURE_SCOPE_UNREGISTERED); sort!(PURE_SCOPE_EXTRA)
     nothing
 end
 _register_pure_ops!()
@@ -300,6 +350,7 @@ pure_scope_arity_coverage() =
 
 export EvalError, EvalScope, Func, FuncType, FuncMacro, FuncPure, SourceItem, SourceTag, SourceSymbol,
        ExprSource, ExprSink, StackFrame, PURE_SCOPE,
+       PURE_SCOPE_UNREGISTERED, PURE_SCOPE_EXTRA,
        add_func!, get_alloc!, return_alloc!, op_skeleton, pure_scope_arity_coverage,
        source_read!, source_consume_head!, source_consume_head_check!,
        sink_write!, sink_extend!, sink_finish
