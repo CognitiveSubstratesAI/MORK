@@ -5,6 +5,17 @@
 #     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl.
 # Regenerate: MORK_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract
 # Format:  <crate/file>\tFN|TY\t<name>
+experiments/eval/alloc.rs	TY	StdoutTracker
+experiments/eval/lib.rs	FN	add_func
+experiments/eval/lib.rs	FN	eval
+experiments/eval/lib.rs	FN	new
+experiments/eval/lib.rs	FN	return_alloc
+experiments/eval/lib.rs	TY	EvalScope
+experiments/eval/lib.rs	TY	Func
+experiments/eval/lib.rs	TY	FuncType
+experiments/eval/lib.rs	TY	StackFrame
+experiments/eval/main.rs	FN	*
+experiments/eval/main.rs	FN	+
 expr/_main.rs	FN	new
 expr/_main.rs	FN	used
 expr/_main.rs	FN	with_buffer

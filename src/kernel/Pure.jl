@@ -282,6 +282,106 @@ function _expand_to_decimal(s0::AbstractString)::String
 end
 
 # =====================================================================
+# Rust-semantics helpers — the behaviour that lives in the `op!` MACRO ARMS
+# =====================================================================
+#
+# 🔴 These exist because we ported the macro's EXPANSION and not the macro. Everything below is a
+# semantic that `op!` supplies once, in the arm, and that a hand-written per-op transcription has to
+# re-remember 5-14 times. Each one had already drifted. See the generated block at the end of
+# PURE_OPS for the ops themselves.
+
+"""
+    _nary_fold(f, rd, seed, a) → accumulator
+
+`op!(num nary NAME(\$initial, t: T, x: T) => \$e)` (pure.rs:11-24) expands to
+
+    let items = expr.consume_head_check(...)?;
+    let mut t: T = \$initial;
+    for _ in 0..items { let x = expr.consume::<T>()?; t = \$e; }
+    sink.write(SourceItem::Symbol((t).to_be_bytes()[..].into()))?;
+
+so it folds over **every** consumed item from a CONSTANT seed and has **no arity check at all**:
+zero args emits the seed, N args folds all N. We had transcribed these as BINARY ops reading `a[1]`
+and `a[2]`, which silently ignored args 3+ and threw on 0 or 1 arg.
+"""
+function _nary_fold(f::F, rd::R, seed::T, a::Vector{Vector{UInt8}})::T where {F, R, T}
+    t = seed
+    for buf in a
+        t = f(t, rd(buf))
+    end
+    t
+end
+
+# Rust's `f32::max`/`f64::max` IGNORE NaN and return the other operand (LLVM `maxnum`); Julia's `max`
+# PROPAGATES it. Likewise min.
+# ⚠️ This rule was already found and applied INLINE in the FloatReduction sink on 2026-07-26
+# (Sinks.jl, `op === :min ? ... isnan ...`) and never swept to the pure ops sitting beside it. It now
+# lives in ONE place that both call, so the next float reduction cannot miss it.
+_rust_fmax(x::T, y::T) where {T <: AbstractFloat} = isnan(x) ? y : isnan(y) ? x : max(x, y)
+_rust_fmin(x::T, y::T) where {T <: AbstractFloat} = isnan(x) ? y : isnan(y) ? x : min(x, y)
+
+# `f32::signum`/`f64::signum` are a SIGN-BIT test, not a three-way compare:
+#     if self.is_nan() { Self::NAN } else { 1.0.copysign(self) }
+# so -0.0 => -1.0 and +0.0 => +1.0, and NaN returns a POSITIVE quiet NaN (`Self::NAN`), not `self`.
+# Julia's `sign` returns zero for zero, which is right for the INTEGER signum ops and wrong here.
+_rust_signum(x::T) where {T <: AbstractFloat} = isnan(x) ? T(NaN) : copysign(one(T), x)
+
+# Rust `as u32` on a signed integer sign-extends to at least 32 bits then keeps the low 32. Julia's
+# `%(x, UInt32)` is exactly that modular reinterpretation: `Int8(-1) % UInt32 === 0xffffffff`, which
+# is the exponent `pow_i8(x, -1)` actually raises `x` to upstream.
+_as_u32(x::Integer) = x % UInt32
+
+"""
+    _rust_pow(x, exp::UInt32)
+
+`i*::pow` — exponentiation by squaring with WRAPPING multiplies (release builds have
+overflow-checks off, and Julia's integer `*` wraps identically).
+
+Upstream is `op!(num binary pow_i8(x: i8, exp: i8) => x.pow(exp as u32))`: the cast to `u32` happens
+BEFORE the call, so a negative exponent becomes a huge unsigned one and this still terminates. We had
+used Julia's `^`, which throws `DomainError` on a negative exponent — emitting nothing where upstream
+emits a wrapped value.
+"""
+function _rust_pow(x::T, exp::UInt32)::T where {T <: Integer}
+    exp == 0 && return one(T)
+    base, acc, e = x, one(T), exp
+    while true
+        if isodd(e)
+            acc *= base
+            e == 1 && return acc          # e > 0 always holds, so the low bit is reached at e == 1
+        end
+        e >>= 1
+        base *= base
+    end
+end
+
+# `u*_shl`/`u*_shr` are `x.checked_shl(y).ok_or(EvalError::from("shl overflow"))?` (pure.rs:387-390,
+# :410-411, :432-433, :453-454, :474-475). `checked_shl` returns None once `y >= BITS`, so upstream
+# returns Err and its caller SKIPS the atom (sinks.rs:1167 `Err(er) => { trace!; continue }`).
+# Julia's `<<` is TOTAL — `UInt8(1) << 8` is 0 — so without this guard we FABRICATE an atom upstream
+# never emits. That is the dangerous direction: a value existing only in our engine can seed a
+# fixpoint upstream never reaches.
+# NOTE the shift operand is `u32` at EVERY width (`u8_shl(x: u8, y: u32)`), never the operand width.
+_checked_shl(x::T, y::UInt32) where {T <: Unsigned} =
+    y >= 8 * sizeof(T) ? error("shl overflow") : x << y
+_checked_shr(x::T, y::UInt32) where {T <: Unsigned} =
+    y >= 8 * sizeof(T) ? error("shr overflow") : x >> y
+
+"""
+    _rust_clamp(x, lo, hi)
+
+`Ord::clamp` and `f64::clamp` both contain `assert!(min <= max)`, so an inverted range PANICS — and a
+panic inside `extern "C"` ABORTS THE WHOLE PROCESS, so upstream produces no output file at all.
+
+⚠️ **DELIBERATE DEVIATION, recorded so a future "match upstream" sweep cannot reintroduce an abort.**
+We must never abort mid-saturation, so we raise and the atom is skipped. Skipping is strictly closer
+to upstream than Julia's total `clamp`, which INVENTS a value (it returns `hi` when `lo > hi`) that
+upstream never produces. A NaN bound also fails `lo <= hi`, matching the assert.
+"""
+_rust_clamp(x::T, lo::T, hi::T) where {T <: Real} =
+    lo <= hi ? clamp(x, lo, hi) : error("clamp: min > max")
+
+# =====================================================================
 # pure_apply — main entry point
 # =====================================================================
 
@@ -296,6 +396,30 @@ function pure_apply(name::String, arg_bufs::Vector{Vector{UInt8}})::Vector{UInt8
     f === nothing && error("Unknown pure op: $name")
     _be_bytes(f(arg_bufs))
 end
+
+"""
+    PURE_SPECIAL_FORMS
+
+Op names upstream registers in `EvalScope` that CANNOT live in `PURE_OPS`, because they control the
+evaluation of their own arguments and a table-dispatched op receives them already evaluated.
+
+`_pure_eval_formula` (Sinks.jl) intercepts each of these BEFORE dispatch:
+  * `ifnz` — `scope.add_func("ifnz", ifnz, FuncType::Pure)` (pure.rs:911). Eagerly evaluating both
+    branches would defeat the entire point of a conditional.
+  * `'` (quote) — pre-registered in `EvalScope::new` (`experiments/eval/src/lib.rs:56`) and then
+    special-cased by identity in `push_eval` (`if func == quote`), i.e. upstream also refuses to
+    dispatch it normally.
+
+🔴 WHY THIS SET IS EXPLICIT RATHER THAN IMPLICIT IN AN `if`-CHAIN. Removing a dead, divergent
+`PURE_OPS["ifnz"]` entry on 2026-07-30 made the port-inventory ratchet report `ifnz` ABSENT — correctly,
+since it asks the live registries and `ifnz` is in none of them. "Implemented as a special form" was
+knowledge that existed only inside a conditional in another file, so no instrument could see it. Now an
+absence claim about a control-flow op has somewhere truthful to look.
+
+⚠️ Membership here is NOT a licence to skip the op. It asserts the op is implemented in the EVALUATOR.
+If you add a name, point at the interception site in the same commit.
+"""
+const PURE_SPECIAL_FORMS = Set{String}(["ifnz", "'"])
 
 # =====================================================================
 # PURE_OPS dispatch table
@@ -321,8 +445,7 @@ const PURE_OPS = Dict{String, Function}(
     "u8_nor" => (a) -> ~(_read_u8(a[1]) | _read_u8(a[2])),
     "u8_xor" => (a) -> xor(_read_u8(a[1]), _read_u8(a[2])),
     "u8_xnor" => (a) -> ~xor(_read_u8(a[1]), _read_u8(a[2])),
-    "u8_shl" => (a) -> _read_u8(a[1]) << _read_u32s(a[2]),
-    "u8_shr" => (a) -> _read_u8(a[1]) >> _read_u32s(a[2]),
+    # u8_shl / u8_shr are GENERATED at the end of this file (upstream uses checked_shl/checked_shr).
     "u8_and" => (a) -> reduce(&, [_read_u8(x) for x in a]; init=(~UInt8(0))),
     "u8_or" => (a) -> reduce(|, [_read_u8(x) for x in a]; init=UInt8(0)),
     "u8_parity" => (a) -> reduce(xor, [_read_u8(x) for x in a]; init=UInt8(0)),
@@ -342,8 +465,7 @@ const PURE_OPS = Dict{String, Function}(
     "u16_nor" => (a) -> ~(_read_u16(a[1]) | _read_u16(a[2])),
     "u16_xor" => (a) -> xor(_read_u16(a[1]), _read_u16(a[2])),
     "u16_xnor" => (a) -> ~xor(_read_u16(a[1]), _read_u16(a[2])),
-    "u16_shl" => (a) -> _read_u16(a[1]) << _read_u32s(a[2]),
-    "u16_shr" => (a) -> _read_u16(a[1]) >> _read_u32s(a[2]),
+    # u16_shl / u16_shr are GENERATED at the end of this file (upstream uses checked_shl/checked_shr).
     "u16_and" => (a) -> reduce(&, [_read_u16(x) for x in a]; init=(~UInt16(0))),
     "u16_or" => (a) -> reduce(|, [_read_u16(x) for x in a]; init=UInt16(0)),
     "u16_parity" => (a) -> reduce(xor, [_read_u16(x) for x in a]; init=UInt16(0)),
@@ -363,8 +485,7 @@ const PURE_OPS = Dict{String, Function}(
     "u32_nor" => (a) -> ~(_read_u32(a[1]) | _read_u32(a[2])),
     "u32_xor" => (a) -> xor(_read_u32(a[1]), _read_u32(a[2])),
     "u32_xnor" => (a) -> ~xor(_read_u32(a[1]), _read_u32(a[2])),
-    "u32_shl" => (a) -> _read_u32(a[1]) << _read_u32s(a[2]),
-    "u32_shr" => (a) -> _read_u32(a[1]) >> _read_u32s(a[2]),
+    # u32_shl / u32_shr are GENERATED at the end of this file (upstream uses checked_shl/checked_shr).
     "u32_and" => (a) -> reduce(&, [_read_u32(x) for x in a]; init=(~UInt32(0))),
     "u32_or" => (a) -> reduce(|, [_read_u32(x) for x in a]; init=UInt32(0)),
     "u32_parity" => (a) -> reduce(xor, [_read_u32(x) for x in a]; init=UInt32(0)),
@@ -384,8 +505,7 @@ const PURE_OPS = Dict{String, Function}(
     "u64_nor" => (a) -> ~(_read_u64(a[1]) | _read_u64(a[2])),
     "u64_xor" => (a) -> xor(_read_u64(a[1]), _read_u64(a[2])),
     "u64_xnor" => (a) -> ~xor(_read_u64(a[1]), _read_u64(a[2])),
-    "u64_shl" => (a) -> _read_u64(a[1]) << _read_u32s(a[2]),
-    "u64_shr" => (a) -> _read_u64(a[1]) >> _read_u32s(a[2]),
+    # u64_shl / u64_shr are GENERATED at the end of this file (upstream uses checked_shl/checked_shr).
     "u64_and" => (a) -> reduce(&, [_read_u64(x) for x in a]; init=(~UInt64(0))),
     "u64_or" => (a) -> reduce(|, [_read_u64(x) for x in a]; init=UInt64(0)),
     "u64_parity" => (a) -> reduce(xor, [_read_u64(x) for x in a]; init=UInt64(0)),
@@ -593,10 +713,8 @@ const PURE_OPS = Dict{String, Function}(
     "mod_i16" => (a) -> rem(_read_i16(a[1]), _read_i16(a[2])),
     "mod_i32" => (a) -> rem(_read_i32(a[1]), _read_i32(a[2])),
     "mod_i64" => (a) -> rem(_read_i64(a[1]), _read_i64(a[2])),
-    "pow_i8" => (a) -> _read_i8(a[1]) ^ Int(_read_i8(a[2])),
-    "pow_i16" => (a) -> _read_i16(a[1]) ^ Int(_read_i16(a[2])),
-    "pow_i32" => (a) -> _read_i32(a[1]) ^ Int(_read_i32(a[2])),
-    "pow_i64" => (a) -> _read_i64(a[1]) ^ Int(_read_i64(a[2])),
+    # pow_i8..pow_i128 are GENERATED at the end of this file (the exponent is cast `as u32` FIRST,
+    # so a negative one wraps rather than throwing).
     "neg_i8" => (a) -> -_read_i8(a[1]),
     "neg_i16" => (a) -> -_read_i16(a[1]),
     "neg_i32" => (a) -> -_read_i32(a[1]),
@@ -609,29 +727,8 @@ const PURE_OPS = Dict{String, Function}(
     "signum_i16" => (a) -> Int16(sign(_read_i16(a[1]))),
     "signum_i32" => (a) -> Int32(sign(_read_i32(a[1]))),
     "signum_i64" => (a) -> Int64(sign(_read_i64(a[1]))),
-    "min_i8" => (a) -> min(_read_i8(a[1]), _read_i8(a[2])),
-    "min_i16" => (a) -> min(_read_i16(a[1]), _read_i16(a[2])),
-    "min_i32" => (a) -> min(_read_i32(a[1]), _read_i32(a[2])),
-    "min_i64" => (a) -> min(_read_i64(a[1]), _read_i64(a[2])),
-    "max_i8" => (a) -> max(_read_i8(a[1]), _read_i8(a[2])),
-    "max_i16" => (a) -> max(_read_i16(a[1]), _read_i16(a[2])),
-    "max_i32" => (a) -> max(_read_i32(a[1]), _read_i32(a[2])),
-    "max_i64" => (a) -> max(_read_i64(a[1]), _read_i64(a[2])),
-    "clamp_i8" => (a) -> clamp(_read_i8(a[1]), _read_i8(a[2]), _read_i8(a[3])),
-    "clamp_i16" => (a) -> clamp(_read_i16(a[1]), _read_i16(a[2]), _read_i16(a[3])),
-    "clamp_i32" => (a) -> clamp(_read_i32(a[1]), _read_i32(a[2]), _read_i32(a[3])),
-    "clamp_i64" => (a) -> clamp(_read_i64(a[1]), _read_i64(a[2]), _read_i64(a[3])),
-    "sum_i8" => (a) -> reduce((x, y) -> x + _read_i8(y), a[2:end]; init=_read_i8(a[1])),
-    "sum_i16" => (a) -> reduce((x, y) -> x + _read_i16(y), a[2:end]; init=_read_i16(a[1])),
-    "sum_i32" => (a) -> reduce((x, y) -> x + _read_i32(y), a[2:end]; init=_read_i32(a[1])),
-    "sum_i64" => (a) -> reduce((x, y) -> x + _read_i64(y), a[2:end]; init=_read_i64(a[1])),
-    "product_i8" => (a) -> reduce((x, y) -> x * _read_i8(y), a[2:end]; init=_read_i8(a[1])),
-    "product_i16" =>
-        (a) -> reduce((x, y) -> x * _read_i16(y), a[2:end]; init=_read_i16(a[1])),
-    "product_i32" =>
-        (a) -> reduce((x, y) -> x * _read_i32(y), a[2:end]; init=_read_i32(a[1])),
-    "product_i64" =>
-        (a) -> reduce((x, y) -> x * _read_i64(y), a[2:end]; init=_read_i64(a[1])),
+    # min_/max_/clamp_/sum_/product_ i8..i64 are GENERATED at the end of this file, from the macro
+    # arms rather than from their expansion — see "NARY / shift / pow / signum / clamp families".
     "i8_one" => (_) -> Int8(1),
     "i16_one" => (_) -> Int16(1),
     "i32_one" => (_) -> Int32(1),
@@ -641,19 +738,12 @@ const PURE_OPS = Dict{String, Function}(
     "abs_i128" => (a) -> abs(_read_i128(a[1])),
     "neg_i128" => (a) -> -_read_i128(a[1]),
     "signum_i128" => (a) -> Int128(sign(_read_i128(a[1]))),
-    "min_i128" => (a) -> min(_read_i128(a[1]), _read_i128(a[2])),
-    "max_i128" => (a) -> max(_read_i128(a[1]), _read_i128(a[2])),
-    "clamp_i128" => (a) -> clamp(_read_i128(a[1]), _read_i128(a[2]), _read_i128(a[3])),
-    "sum_i128" =>
-        (a) -> reduce((x, y) -> x + _read_i128(y), a[2:end]; init=_read_i128(a[1])),
-    "product_i128" =>
-        (a) -> reduce((x, y) -> x * _read_i128(y), a[2:end]; init=_read_i128(a[1])),
+    # min_i128/max_i128/clamp_i128/sum_i128/product_i128 are GENERATED at the end of this file.
     # D-P1 fix (audit 2026-06-04): these read via _read_i64 / returned Int64/Int8 — only
     # the low 8 of the 16 i128 bytes, silently wrong for |x| ≥ 2^63. Now _read_i128 (full
     # 16 BE bytes) and return Int128 so _be_bytes(::Int128) emits 16 bytes. (abs/neg/min/
-    # max/clamp/sum/product above were already _read_i128 — this completes the family.)
+    # max/clamp/sum/product were already _read_i128 — this completes the family.)
     "mod_i128" => (a) -> rem(_read_i128(a[1]), _read_i128(a[2])),
-    "pow_i128" => (a) -> _read_i128(a[1])^Int(_read_i128(a[2])),
     "i128_one" => (_) -> Int128(1),
     "i128_from_string" => (a) -> parse(Int128, String(a[1])),
     "i128_to_string" => (a) -> Vector{UInt8}(string(_read_i128(a[1]))),
@@ -719,20 +809,7 @@ const PURE_OPS = Dict{String, Function}(
     "neg_f64" => (a) -> -_read_f64(a[1]),
     "abs_f32" => (a) -> abs(_read_f32(a[1])),
     "abs_f64" => (a) -> abs(_read_f64(a[1])),
-    "signum_f32" => (a) -> Float32(sign(_read_f32(a[1]))),
-    "signum_f64" => (a) -> Float64(sign(_read_f64(a[1]))),
-    "min_f32" => (a) -> min(_read_f32(a[1]), _read_f32(a[2])),
-    "min_f64" => (a) -> min(_read_f64(a[1]), _read_f64(a[2])),
-    "max_f32" => (a) -> max(_read_f32(a[1]), _read_f32(a[2])),
-    "max_f64" => (a) -> max(_read_f64(a[1]), _read_f64(a[2])),
-    "clamp_f32" => (a) -> clamp(_read_f32(a[1]), _read_f32(a[2]), _read_f32(a[3])),
-    "clamp_f64" => (a) -> clamp(_read_f64(a[1]), _read_f64(a[2]), _read_f64(a[3])),
-    "sum_f32" => (a) -> reduce((x, y) -> x + _read_f32(y), a[2:end]; init=_read_f32(a[1])),
-    "sum_f64" => (a) -> reduce((x, y) -> x + _read_f64(y), a[2:end]; init=_read_f64(a[1])),
-    "product_f32" =>
-        (a) -> reduce((x, y) -> x * _read_f32(y), a[2:end]; init=_read_f32(a[1])),
-    "product_f64" =>
-        (a) -> reduce((x, y) -> x * _read_f64(y), a[2:end]; init=_read_f64(a[1])),
+    # signum_f32/f64, min_/max_/clamp_/sum_/product_ f32/f64 are GENERATED at the end of this file.
     "recip_f32" => (a) -> 1.0f0 / _read_f32(a[1]),
     "recip_f64" => (a) -> 1.0 / _read_f64(a[1]),
     "fract_f32" => (a) -> _read_f32(a[1]) - trunc(_read_f32(a[1])),
@@ -851,8 +928,7 @@ const PURE_OPS = Dict{String, Function}(
     "u128_nor" => (a) -> ~(_read_u128(a[1]) | _read_u128(a[2])),
     "u128_xnor" => (a) -> ~xor(_read_u128(a[1]), _read_u128(a[2])),
     "u128_andn" => (a) -> _read_u128(a[1]) & ~_read_u128(a[2]),
-    "u128_shl" => (a) -> _read_u128(a[1]) << _read_u32s(a[2]),
-    "u128_shr" => (a) -> _read_u128(a[1]) >> _read_u32s(a[2]),
+    # u128_shl / u128_shr are GENERATED at the end of this file (upstream uses checked_shl/checked_shr).
     "u128_swap_bytes" => (a) -> bswap(_read_u128(a[1])),
     "u128_reverse_bits" => (a) -> bitreverse(_read_u128(a[1])),
     "u128_leading_zeros" => (a) -> UInt32(leading_zeros(_read_u128(a[1]))),
@@ -931,15 +1007,33 @@ const PURE_OPS = Dict{String, Function}(
         end
         result
     end,
-    # tuple: takes N arg payloads, returns MORK arity-N expression.
-    # (tuple "0" "1") → [arity(2), sym(1)'0', sym(1)'1']
-    # Mirrors tuple in pure.rs. Called by _pure_eval_formula's MORK_EXPR path.
+    # tuple: N complete sub-expressions → one MORK arity-N expression, each element SPLICED VERBATIM.
+    #
+    # Upstream (pure.rs:898-908):
+    #     sink.write(SourceItem::Tag(Tag::Arity(items as _)))?;
+    #     for i in 0..items {
+    #         let f: mork_expr::Expr = expr.consume()?;
+    #         sink.extend_from_slice(unsafe { f.span().as_ref().unwrap() })?;
+    #     }
+    # `f.span()` is the element's WHOLE serialized expression, tag byte included, so a nested
+    # expression stays nested.
+    #
+    # 🔴 THIS PREVIOUSLY RE-TAGGED EVERY ELEMENT AS A SYMBOL — `ExprSymbol(length(payload))` over the
+    # STRIPPED payload — which flattened `(tuple (a b) c)` into a symbol whose bytes happened to be
+    # `[arity 2][a][b]`. Structure destroyed, and the tag byte lied about what followed. It also threw
+    # InexactError for any element over 255 bytes.
+    # It is the SAME defect as `hash_expr`, fixed in the same file for the same reason: an op that
+    # consumes an EXPR must be handed the unstripped span (see the `arg_raw` comment in
+    # Sinks.jl `_pure_eval_formula`). That rule was derived for `hash_expr` and not swept to here.
+    #
+    # ⚠️ `Tag::Arity` carries only 6 bits (0x00-0x3F). Upstream's `items as _` silently truncates past
+    # 63; we raise instead, so the atom is skipped rather than emitted with a lying tag.
     "tuple" => function (a)
         n = length(a)
+        n <= 63 || error("tuple: arity $n exceeds the 6-bit Arity tag")
         result = UInt8[item_byte(ExprArity(UInt8(n)))]
-        for payload in a
-            push!(result, item_byte(ExprSymbol(UInt8(length(payload)))))
-            append!(result, payload)
+        for span in a
+            append!(result, span)          # VERBATIM — no re-tagging
         end
         result
     end,
@@ -966,10 +1060,14 @@ const PURE_OPS = Dict{String, Function}(
     "decode_base64url" => (a) -> _b64url_decode(String(a[1])),
 
     # ── control flow ─────────────────────────────────────────────────
-    # ifnz is handled specially in _pure_eval_formula (short-circuit), not via pure_apply
-    "ifnz" => (a) -> _read_u64(a[1]) != 0 ? a[2] : a[3],
-    "then" => (a) -> a[end],
-    "else" => (a) -> a[1],
+    # 🔴 `"ifnz"` USED TO BE A TABLE ENTRY HERE AND IT WAS BOTH DEAD AND WRONG. Dead because
+    # `_pure_eval_formula` (Sinks.jl) intercepts `ifnz` before dispatch — it MUST, since the whole
+    # point is to NOT evaluate the untaken branch. Wrong because it read the condition as a `u64`
+    # (`_read_u64(a[1]) != 0`), which BoundsErrors on a narrower condition, where the live
+    # implementation tests `!all(==(0x00), payload)` at any width. A dead duplicate of a
+    # control-flow op is the worst kind of dead code: it looks like the specification.
+    # `"then"` / `"else"` were also removed — upstream registers NEITHER (only `ifnz` and `tuple`,
+    # pure.rs:911-912); they are keyword SYMBOLS in ifnz's shape, validated by `_ifnz_kw`, never ops.
 
     # ── expr accessors ────────────────────────────────────────────────
     "nth_expr" => (a) -> begin
@@ -1002,6 +1100,77 @@ for (suffix, rd) in (("i8", _read_i8), ("i16", _read_i16), ("i32", _read_i32),
         PURE_OPS["$(name)_$(suffix)"] = let rd = rd, cmp = cmp
             (a) -> Int8(cmp(rd(a[1]), rd(a[2])))
         end
+    end
+end
+
+# =====================================================================
+# NARY / shift / pow / signum / clamp families — GENERATED FROM THE MACRO ARMS
+# =====================================================================
+#
+# 🔴 WHY GENERATED RATHER THAN WRITTEN OUT (2026-07-30). All 52 of these ops were hand-transcribed
+# from the EXPANSION of upstream's `op!` macro, and every single family drifted from the arm that
+# produced it — because the arm holds the semantics ONCE while a transcription has to re-remember it
+# 5-14 times:
+#
+#   * `min_/max_/sum_/product_` × 7 types (28) were written BINARY, reading `a[1]` and `a[2]`. The
+#     `nary` arm folds over ALL items from a constant seed with NO arity check, so args 3+ were
+#     SILENTLY IGNORED and 0 args threw: `(max_i32 1 4 9)` gave 4 where upstream gives 9, and
+#     `(max_i32)` gave nothing where upstream gives `i32::MIN`.
+#   * `min_/max_ f32/f64` additionally propagated NaN where Rust's `f64::max` ignores it.
+#   * `u*_shl/shr` (10) dropped `checked_shl`, FABRICATING a 0 where upstream emits nothing.
+#   * `pow_i*` (5) used Julia `^`, which throws on the negative exponent upstream casts to `u32`.
+#   * `signum_f32/f64` (2) used Julia `sign`, which returns 0 for ±0.0 where Rust tests the sign bit.
+#   * `clamp_*` (7) used Julia's total `clamp`, inventing a value for an inverted range.
+#
+# ⚠️ NONE of this was visible to the per-op differential, which probes every op at ONE input point
+# and feeds nary ops exactly TWO arguments (`gen_pure_probes.py`: `FEED` is a single literal per type,
+# `feed_types = [types[-1]] * 2`). All 52 were reported AGREEING. The inventory diff also reported
+# them present. Two green gates, one uninspected input domain.
+#
+# These loops ARE the arms, so a type can no longer be fixed in one place and missed in six.
+
+# `nary` families + `clamp`. Seeds are upstream's `$initial` (pure.rs:496-499 i8, :552-555 i32,
+# :672-675 f64, :735-738 f32): 0/1 for sum/product, and the fold IDENTITY for min/max — typemin and
+# typemax for integers, ∓Inf for floats.
+for (suffix, rd, T) in (("i8", _read_i8, Int8), ("i16", _read_i16, Int16),
+                        ("i32", _read_i32, Int32), ("i64", _read_i64, Int64),
+                        ("i128", _read_i128, Int128),
+                        ("f32", _read_f32, Float32), ("f64", _read_f64, Float64))
+    isflt = T <: AbstractFloat
+    seed_max = isflt ? T(-Inf) : typemin(T)
+    seed_min = isflt ? T(Inf)  : typemax(T)
+    fmax = isflt ? _rust_fmax : max      # Rust's float max/min IGNORE NaN; the integer ones are plain
+    fmin = isflt ? _rust_fmin : min
+    PURE_OPS["sum_$(suffix)"]     = let rd = rd, z = zero(T); (a) -> _nary_fold(+, rd, z, a) end
+    PURE_OPS["product_$(suffix)"] = let rd = rd, o = one(T);  (a) -> _nary_fold(*, rd, o, a) end
+    PURE_OPS["max_$(suffix)"] = let rd = rd, s = seed_max, f = fmax; (a) -> _nary_fold(f, rd, s, a) end
+    PURE_OPS["min_$(suffix)"] = let rd = rd, s = seed_min, f = fmin; (a) -> _nary_fold(f, rd, s, a) end
+    PURE_OPS["clamp_$(suffix)"] = let rd = rd
+        (a) -> _rust_clamp(rd(a[1]), rd(a[2]), rd(a[3]))
+    end
+end
+
+# `pow_i*` — integers only; upstream defines no float `pow` in this family (`powf_f64` is separate).
+for (suffix, rd) in (("i8", _read_i8), ("i16", _read_i16), ("i32", _read_i32),
+                     ("i64", _read_i64), ("i128", _read_i128))
+    PURE_OPS["pow_$(suffix)"] = let rd = rd
+        (a) -> _rust_pow(rd(a[1]), _as_u32(rd(a[2])))
+    end
+end
+
+# `signum_f32/f64` — sign-bit test. The integer `signum_i*` stay as written: Rust's integer signum
+# DOES return 0 for 0, so Julia's `sign` is correct there. Only the float pair diverged.
+PURE_OPS["signum_f32"] = (a) -> _rust_signum(_read_f32(a[1]))
+PURE_OPS["signum_f64"] = (a) -> _rust_signum(_read_f64(a[1]))
+
+# `u*_shl/shr` — the shift operand is `u32` at every width, and the shift is CHECKED.
+for (suffix, rd) in (("u8", _read_u8), ("u16", _read_u16), ("u32", _read_u32),
+                     ("u64", _read_u64), ("u128", _read_u128))
+    PURE_OPS["$(suffix)_shl"] = let rd = rd
+        (a) -> _checked_shl(rd(a[1]), _read_u32s(a[2]))
+    end
+    PURE_OPS["$(suffix)_shr"] = let rd = rd
+        (a) -> _checked_shr(rd(a[1]), _read_u32s(a[2]))
     end
 end
 

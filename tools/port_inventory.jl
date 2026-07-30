@@ -61,7 +61,14 @@ using Printf
 const UPSTREAM = get(ENV, "MORK_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/MORK"))
 const HERE     = normpath(joinpath(@__DIR__, ".."))
 const BASELINE = joinpath(HERE, "test", "conformance", "PORT_INVENTORY.txt")
-const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg"]
+# 🔴 `experiments/eval` ADDED 2026-07-30 — it was missing, and it is where the EVALUATOR lives.
+# `EvalScope`, `FuncType{Macro,Pure}`, `Func`, `StackFrame`, `add_func`, `push_eval`, `eval_impl` and
+# the `alloc_pool` are all defined there (`experiments/eval/src/lib.rs`, 151 lines). `pure.rs` REGISTERS
+# INTO that scope — `scope.add_func("lt_i64", …, FuncType::Pure)` — so the tool was reporting
+# "kernel/pure.rs: 0 missing" while never once looking at the structure those 370 registrations target.
+# Found by the user, not by the tool. Same blind-spot class as the interpolated-key bug: the
+# instrument's SCOPE was wrong, so its green meant less than it appeared to.
+const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experiments/eval"]
 
 # ── extraction ────────────────────────────────────────────────────────────────────────────────────
 
@@ -108,6 +115,11 @@ function runtime_op_keys()
         d = Base.invokelatest(getglobal, mork, reg)
         for k in Base.invokelatest(keys, d); push!(keys_, String(k)); end
     end
+    # SPECIAL FORMS are implemented in the evaluator, not the table — `ifnz` and `'` control their own
+    # argument evaluation, so they can never be table-dispatched (see `PURE_SPECIAL_FORMS`). Without
+    # this union, removing a dead `PURE_OPS["ifnz"]` entry makes a correctly-implemented conditional
+    # read as an unported op.
+    for k in Base.invokelatest(getglobal, mork, :PURE_SPECIAL_FORMS); push!(keys_, String(k)); end
     keys_
 end
 

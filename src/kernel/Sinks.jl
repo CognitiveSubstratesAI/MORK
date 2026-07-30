@@ -1082,14 +1082,23 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
             return vcat(item_byte(ExprSymbol(UInt8(n))), result_payload)
         end
 
-        # Ops that return full MORK expressions (not scalar payloads)
+        # Ops that return full MORK expressions (not scalar payloads).
+        #
+        # ⚠️ THE TWO TAKE DIFFERENT ARGUMENT FORMS, and conflating them corrupted `tuple`:
+        #   * `tuple` consumes EXPRS — `let f: Expr = expr.consume()?; sink.extend_from_slice(f.span())`
+        #     (pure.rs:904-905) — so it needs the UNSTRIPPED spans, exactly like `hash_expr` above.
+        #     Passing `arg_results` re-tagged every element as a symbol and destroyed nesting.
+        #   * `explode_symbol` consumes a SYMBOL and indexes its bytes — `let SourceItem::Symbol(symbol)
+        #     = expr.read()`, then `symbol[i..i+1]` (pure.rs:850-853) — so the stripped payload is right.
+        # Same rule as `hash_expr`: an op that consumes an EXPR gets the span; an op that consumes a
+        # SYMBOL gets the payload. Check which one upstream calls before choosing.
         if fn_name == "tuple" || fn_name == "explode_symbol"
             f = get(PURE_OPS, fn_name, nothing)
             f === nothing && return nothing
+            args = fn_name == "tuple" ? arg_raw : arg_results
             result_mork = try
-                f(arg_results)
+                f(args)
             catch
-                ;
                 return nothing
             end
             return result_mork isa Vector{UInt8} ? result_mork : nothing
@@ -1352,8 +1361,13 @@ function _freduce_acc(op::Symbol)
         v === nothing && return nothing
         op === :sum  ? running + v :
         op === :prod ? running * v :
-        op === :min  ? (isnan(v) ? running : isnan(running) ? v : min(running, v)) :
-                       (isnan(v) ? running : isnan(running) ? v : max(running, v))
+        # Rust float min/max IGNORE NaN. This was open-coded here on 2026-07-26 and the rule was not
+        # swept to the PURE ops, which propagated NaN until 2026-07-30. Now both call one helper
+        # (Pure.jl `_rust_fmin`/`_rust_fmax`), so the next float reduction inherits it.
+        # ⚠️ The SEEDS still differ deliberately and must not be unified: this sink seeds at the finite
+        # extrema (f64::MAX/MIN, sinks.rs:955-970) while the pure `min_/max_f64` seed at ±Inf
+        # (pure.rs:674-675). Same NaN rule, different identity element.
+        op === :min  ? _rust_fmin(running, v) : _rust_fmax(running, v)
     end
 end
 

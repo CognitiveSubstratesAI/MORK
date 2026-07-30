@@ -66,7 +66,16 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # anything was ported today, but because the tool was WRONG: it read source text instead of the
     # live registries and invented a 42-op gap (see the header). 148 -> 106 is that fiction being
     # removed from the measurement, so the pin must come down with it or it re-admits the fiction.
-    PIN_FNS = 106
+    #
+    # 106 -> 111 and TYS 32 -> 35 on the same day, and this rise is HONEST: `experiments/eval` was
+    # added to CRATES because the tool had never scanned the crate that DEFINES the evaluator it was
+    # measuring registrations into (`EvalScope`, `FuncType{Macro,Pure}`, `Func`, `StackFrame`,
+    # `add_func`, `push_eval`, `eval_impl`, `alloc_pool`). Nothing regressed; we started looking
+    # somewhere we never had. The user spotted the omission, not the tool.
+    # ⚠️ STILL UNSCANNED: `experiments/eval-ffi` (a KERNEL dependency), `experiments/eval-examples`,
+    # `experiments/unification_test_laws` (883 lines of unification LAWS — a ready-made oracle we have
+    # never run), and ALL of PathMap. Do not read this percentage as whole-port coverage.
+    PIN_FNS = 111
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
@@ -76,7 +85,7 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # traits, Traversal/TraverseSide iterator types, serde derive types) plus the deliberate `linalg`
     # skip. Only ~5 names are worth a look: WriteResourceRequest, ASpaceTranscriber, ATranscriber,
     # DebugTranscriber, Tables. So this pin is a REGRESSION guard, not a target to drive to zero.
-    PIN_TYS = 32
+    PIN_TYS = 35
 
     @test c.fns_missing <= PIN_FNS
     @test c.tys_missing <= PIN_TYS
