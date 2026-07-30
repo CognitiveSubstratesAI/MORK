@@ -331,6 +331,80 @@ function space_load_json!(s::Space, src)::Int
     st.count
 end
 
+"""
+    space_load_jsonl!(s, src) → (lines, count)
+
+upstream `Space::load_jsonl` (kernel/src/space.rs:619-641) — load JSON **Lines**: one JSON document
+per input line, each filed under `(JSONL <line-index> …)`.
+
+Upstream builds the shared prefix ONCE — `Arity(3)`, then the `JSONL` symbol — descends to it, and
+then per line descends 8 more bytes of big-endian line index, transcribes that line, and ascends
+those 8 bytes again:
+
+    let spo_symbol = pdp.tokenizer("JSONL".as_bytes());
+    let mut path = vec![item_byte(Tag::Arity(3)), item_byte(Tag::SymbolSize(spo_symbol.len() as u8))];
+    path.extend_from_slice(spo_symbol);
+    wz.descend_to(&path[..]);
+    for line in ….lines() {
+        wz.descend_to(lines.to_be_bytes());
+        … transcribe …
+        wz.ascend(8);
+    }
+
+The `Arity(3)` is upstream's, not a typo: the prefix contributes the head symbol and the line index,
+and the transcribed document supplies the third slot.
+
+⚠️ The tokenizer call is what applies the 63-byte symbol cap, so `JSONL` goes through `SpaceParser`
+(≡ `ParDataParser`) rather than being spliced raw — the same distinction that made
+`space_sexpr_to_expr` wrong.
+"""
+function space_load_jsonl!(s::Space, src)::Tuple{Int, Int}
+    bv = src isa Vector{UInt8} ? src : Vector{UInt8}(src)
+    wz = write_zipper(s.btm)
+    tok = fe_tokenizer(SpaceParser(), Vector{UInt8}("JSONL"))
+    prefix = vcat(UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(length(tok))))], tok)
+    wz_descend_to!(wz, prefix)
+    lines = 0
+    count = 0
+    for line in split(String(copy(bv)), '\n')
+        isempty(line) && continue                      # `str::lines()` yields no trailing empty line
+        wz_descend_to!(wz, collect(reinterpret(UInt8, [hton(UInt64(lines))])))
+        st = SpaceTranscriber(wz)
+        json_parse!(JSONParser(Vector{UInt8}(line)), st)
+        count += st.count
+        lines += 1
+        wz_ascend!(wz, 8)
+    end
+    (lines, count)
+end
+
+"""
+    space_load_json_!(s, src, pattern, template) → count
+
+upstream `Space::load_json_` (kernel/src/space.rs:643-651) — load one JSON document beneath the
+template's CONSTANT PREFIX rather than at the trie root:
+
+    let constant_template_prefix = template.prefix().unwrap_or_else(|_| template.span());
+    let mut wz = self.btm.write_zipper_at_path(constant_template_prefix);
+
+⚠️ `pattern` IS UNUSED UPSTREAM. It appears in the signature and never in the body — the document is
+transcribed wholesale under the template prefix, with no matching against `pattern` at all. Kept in
+our signature to mirror the upstream API rather than silently dropping a parameter, and flagged here
+so nobody "implements" a filter upstream does not have.
+"""
+function space_load_json_!(s::Space, src, pattern::MORK.Expr, template::MORK.Expr)::Int
+    bv = src isa Vector{UInt8} ? src : Vector{UInt8}(src)
+    prefix = try
+        _derive_prefix(template)
+    catch
+        expr_span(template)                            # upstream `unwrap_or_else(|_| template.span())`
+    end
+    wz = write_zipper_at_path(s.btm, prefix)
+    st = SpaceTranscriber(wz)
+    json_parse!(JSONParser(bv), st)
+    st.count
+end
+
 # =====================================================================
 # space_query_multi — pattern matching (no_search / ProductZipper + unify)
 # =====================================================================
@@ -2320,7 +2394,7 @@ export SpaceParser
 export Space, new_space, space_val_count, space_statistics
 export space_add_all_sexpr!, space_remove_all_sexpr!
 export space_add_sexpr!, space_remove_sexpr!
-export space_dump_all_sexpr, space_dump_sexpr, space_load_json!
+export space_dump_all_sexpr, space_dump_sexpr, space_load_json!, space_load_jsonl!, space_load_json_!
 export space_backup_tree, space_restore_tree!
 export space_backup_paths, space_restore_paths!
 # =====================================================================

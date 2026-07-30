@@ -4001,6 +4001,39 @@ const _MORK_TS = @testset "MORK" begin
             @test n >= 1
         end
 
+        # ── load_jsonl / load_json_ — the two sibling loaders (ported 2026-07-30) ────────────────
+        # upstream `Space::load_jsonl` (space.rs:619-641) files each line under `(JSONL <idx> …)`,
+        # descending 8 bytes of big-endian line index per line and ascending them again.
+        @testset "space_load_jsonl! — one document per line" begin
+            s = new_space()
+            lines, count = space_load_jsonl!(s, "{\"a\": 1}\n{\"b\": 2}\n")
+            @test lines == 2
+            @test count >= 2
+            # every line landed beneath the shared JSONL prefix
+            @test occursin("JSONL", space_dump_all_sexpr(s))
+            # a trailing newline must not produce a third, empty line (Rust's `.lines()` yields none)
+            l2, _ = space_load_jsonl!(new_space(), "{\"a\": 1}\n")
+            @test l2 == 1
+            # and an empty input yields nothing at all
+            @test space_load_jsonl!(new_space(), "") == (0, 0)
+        end
+
+        # upstream `Space::load_json_` (space.rs:643-651) writes beneath the TEMPLATE's constant
+        # prefix instead of the trie root. ⚠️ `pattern` is UNUSED upstream — it is in the signature
+        # and never in the body; we mirror the API rather than invent a filter it does not have.
+        @testset "space_load_json_! — writes under the template prefix" begin
+            s = new_space()
+            pat = sexpr_to_expr("(\$x)")
+            tpl = sexpr_to_expr("(under \$x)")
+            n = space_load_json_!(s, """{"key": "val"}""", pat, tpl)
+            @test n >= 1
+            @test occursin("under", space_dump_all_sexpr(s))
+            # the plain loader writes at the ROOT, so the same document lands elsewhere
+            s2 = new_space()
+            space_load_json!(s2, """{"key": "val"}""")
+            @test !occursin("under", space_dump_all_sexpr(s2))
+        end
+
         @testset "space_bitmask constants" begin
             # ExprArity(0) = 0x00: bucket=1, bit=0
             @test (SPACE_ARITIES[1] & UInt64(1)) != 0
