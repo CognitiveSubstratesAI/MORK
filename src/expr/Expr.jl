@@ -114,6 +114,116 @@ function byte_item(b::UInt8)::ExprTag
     end
 end
 
+# ── `GxHasher::with_seed` / `finish_u128` DELIBERATELY NOT PORTED HERE ────────────────────────────
+#
+# They exist in upstream `expr/src/lib.rs:43-50`, inside `#[cfg(not(gxhash))] mod gxhash` — the STUB
+# module, which is what compiles (the bare `cfg(gxhash)` is never set; `expr/Cargo.toml`'s
+# `default = ["gxhash", …]` names the optional DEPENDENCY, a different switch).
+#
+# 🔴 IN THIS CRATE THEY ARE TEST-ONLY. The stub's live entry point is one line —
+# `pub fn gxhash128(data, _seed) -> u128 { xxhash_rust::const_xxh3::xxh3_128(data) }` (lib.rs:59) —
+# and it never touches `GxHasher`. Every use of `GxHasher::with_seed` in this crate is inside
+# `#[cfg(test)]` (lib.rs:2317, 2731-2758). `Expr::hash()` therefore resolves to XXH3, which we port
+# 1:1 in `kernel/XXH3.jl`. Porting the hasher here would have added API with no consumer — the same
+# mistake as the 160 ours-only pure ops removed in 9b75c5e. (User-identified.)
+#
+# ⚠️ WHERE IT IS ACTUALLY NEEDED: **PathMap** — and the CALL GRAPH, not the dependency list, is what
+# says so. Both crates depend on `xxhash-rust`, which invites the conclusion that the hash belongs in
+# the shared/lower package. That conclusion is WRONG, measured by call site:
+#
+#     gxhash128 (-> xxh3)        MORK expr ONLY   (lib.rs:312, `Expr::hash`).  ZERO calls in PathMap.
+#     GxHasher::with_seed        PathMap ONLY     (merkleization.rs:56,79 · morphisms.rs:242,255 ·
+#                                                  experimental/serialization.rs:139,146)
+#
+# PathMap depends on `xxhash-rust` only to DEFINE its own stub's `gxhash128`, and then never calls
+# it. So `kernel/XXH3.jl` is in the right package — MORK is its sole consumer — and moving it to
+# PathMap would serve nothing there. What PathMap needs is `GxHasher`, a DIFFERENT algorithm: a
+# byte-at-a-time add/xor/rotate state mixer (`state_lo += i; state_hi ^= rotl(i,11);
+# state_lo = rotl(state_lo,3)`), ~20 self-contained lines, nothing like xxh3.
+#
+# ⇒ If merkleization / `dag_serialization` / an upstream-compatible `Catamorphism::hash` is ever
+# wanted, port `GxHasher` INTO PathMap. Do not relocate XXH3, and do not substitute xxh3 for it.
+# (Reading a dependency list instead of a call graph is the same error as counting a commented-out
+# `nth_expr` as upstream API.)
+
+"""
+    expr_compute_length(s) → Int
+
+upstream `compute_length` (expr/src/lib.rs:1516-1563) — the SERIALIZED BYTE LENGTH an expression
+literal will occupy, counted without building it:
+
+    `[n]` → 1 byte (an Arity tag)   ·   `\$` → 1 (NewVar)   ·   `_n` → 1 (VarRef)
+    a word → 1 + its length (a SymbolSize tag plus the bytes)
+
+Upstream is a `const fn` used only as `const N: usize = compute_length(\$s)` (lib.rs:1510) to size
+the fixed array `parse<const N>` writes into. Julia sizes buffers dynamically, so nothing here needs
+it — it is ported because it is a well-defined pure function, and it is genuinely useful for
+predicting a buffer size before parsing.
+"""
+function expr_compute_length(s::AbstractString)::Int
+    b = Vector{UInt8}(String(s))
+    len = length(b)
+    i = 1
+    n = 0
+    while i <= len
+        while i <= len && b[i] == UInt8(' ')
+            i += 1
+        end
+        i > len && break
+        c = b[i]
+        if c == UInt8('[')
+            i += 1
+            while i <= len && b[i] != UInt8(']')
+                i += 1
+            end
+            i += 1                       # skip ']'
+            n += 1                       # item_byte(Arity(k))
+        elseif c == UInt8('$')
+            i += 1
+            n += 1                       # item_byte(NewVar)
+        elseif c == UInt8('_')
+            i += 1
+            while i <= len && UInt8('0') <= b[i] <= UInt8('9')
+                i += 1
+            end
+            n += 1                       # item_byte(VarRef(k-1))
+        else
+            word = 0
+            while i <= len && b[i] != UInt8(' ')
+                word += 1
+                i += 1
+            end
+            n += 1 + word                # item_byte(SymbolSize) + the bytes
+        end
+    end
+    n
+end
+
+"""
+    maybe_byte_item(b) → Union{ExprTag, UInt8}
+
+upstream `maybe_byte_item` (expr/src/lib.rs:135-141) — the NON-THROWING sibling of `byte_item`.
+Upstream returns `Result<Tag, u8>`: `Ok(tag)`, or `Err(b)` giving the offending byte back. Julia has
+no `Result`, so the tag is returned on success and the raw `UInt8` on failure — the two are
+distinguishable by type, which is what callers need.
+
+`byte_item` raises on a reserved byte; this is for callers that must inspect possibly-invalid bytes
+without an exception, e.g. a decoder walking untrusted input.
+"""
+function maybe_byte_item(b::UInt8)::Union{ExprTag, UInt8}
+    if b == 0b11000000
+        return ExprNewVar()
+    elseif (b & 0b11000000) == 0b11000000
+        return ExprSymbol(b & 0x3f)
+    elseif (b & 0b11000000) == 0b10000000
+        return ExprVarRef(b & 0x3f)
+    elseif (b & 0b11000000) == 0b00000000
+        return ExprArity(b & 0x3f)
+    else
+        return b
+    end
+end
+
 # =====================================================================
 # Expr — a flat byte-buffer expression
 # =====================================================================
@@ -211,6 +321,35 @@ end
 
 """Return the span of the sub-expression at the current position."""
 ez_span(z::ExprZipper) = expr_span(z.root, z.loc)
+
+"""
+    ez_tag_str(z) → String
+
+upstream `ExprZipper::tag_str` (lib.rs:1293-1300) — render the tag at the current position:
+`\$` for a NewVar, `_N` for `VarRef(N-1)` (**one-based on display**), `(N)` for `SymbolSize(N)`,
+`[N]` for `Arity(N)`.
+"""
+function ez_tag_str(z::ExprZipper)::String
+    t = byte_item(z.root.buf[z.loc])
+    t isa ExprNewVar && return "\$"
+    t isa ExprVarRef && return "_$(Int(t.idx) + 1)"
+    t isa ExprSymbol && return "($(Int(t.size)))"
+    "[$(Int((t::ExprArity).arity))]"
+end
+
+"""
+    ez_item_str(z) → String
+
+upstream `ExprZipper::item_str` (lib.rs:1302-1319) — like `tag_str`, except a SYMBOL renders as its
+own bytes rather than as its size: upstream's `item()` returns `Err(bytes)` for a symbol, and the
+`Err` arm prints the UTF-8 text (falling back to a byte-array debug form when it is not valid UTF-8).
+"""
+function ez_item_str(z::ExprZipper)::String
+    t = byte_item(z.root.buf[z.loc])
+    t isa ExprSymbol || return ez_tag_str(z)
+    b = collect(ez_symbol(z))
+    isvalid(String(copy(b))) ? String(copy(b)) : string(b)
+end
 
 """Symbol bytes at current position (only valid if tag is ExprSymbol)."""
 function ez_symbol(z::ExprZipper)
@@ -588,3 +727,5 @@ export EF_REF_SYMBOL_EARLY_MISMATCH, EF_REF_SYMBOL_MISMATCH, EF_REF_TYPE_MISMATC
 export EF_REF_EXPR_EARLY_MISMATCH, EF_REF_EXPR_MISMATCH, EF_EXPR_EARLY_MISMATCH
 export EF_SYMBOL_EARLY_MISMATCH, EF_SYMBOL_MISMATCH, EF_TYPE_MISMATCH
 export ExtractFailure, expr_parse_str
+
+export maybe_byte_item, ez_tag_str, ez_item_str, expr_compute_length

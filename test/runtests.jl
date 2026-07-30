@@ -4733,6 +4733,12 @@ const _MORK_TS = @testset "MORK" begin
     # hand-writes against ExprSource/ExprSink (pure.rs: 360 macro-generated + 10 hand-written).
     include("test_eval.jl")
 
+    # ── expr/lib.rs structural queries (2026-07-30) ──────────────────────────
+    # variables / is_ground / max_arity / has_unbound / forward_references /
+    # difference_under / subexpr. `is_ground` is the one the inventory once MASKED by matching it
+    # against the unrelated `is_grounded`.
+    include("test_expr_queries.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 

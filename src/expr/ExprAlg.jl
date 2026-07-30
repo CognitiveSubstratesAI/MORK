@@ -665,9 +665,168 @@ function _ee_show_impl(io::IO, x::MORK.Expr, off::Int, var_cnt::Int, n::Int)::In
 end
 
 # =====================================================================
+# Structural queries — upstream `expr/src/lib.rs` (ported 2026-07-30)
+# =====================================================================
+#
+# Six `impl Expr` methods that were genuinely absent. Sized with three filters FIRST, because three
+# headline absence counts dissolved under reading today:
+#   * cfg-gates — none here (unlike space.rs, where 3 of 16 were `#[cfg(feature="neo4j")]`)
+#   * renames   — `subsexpr`->`ee_subsexpr`, `var_opt`->`ee_var_opt`, `_unify`->`expr_unify` were
+#                 ALREADY PORTED and must not be re-ported
+#   * definition-site check — a plain grep counts a name appearing in a COMMENT as "present"
+#
+# ⚠️ `is_ground` is on record as a gap the inventory once MASKED, by matching it against the
+# unrelated `is_grounded`. It is real, and it is three lines.
+
+"""
+    expr_variables(x, [j0]) → Int
+
+upstream `Expr::variables` (lib.rs:344-346) — count of variable ITEMS: every `NewVar` **and** every
+`VarRef`. Not the same as `_expr_newvars`, which counts only the binders.
+"""
+expr_variables(x::MORK.Expr, j0::Int = 0)::Int =
+    expr_traverseh(nothing, x, j0,
+                   (h, o) -> (h, 1), (h, o, r) -> (h, 1), (h, o, sl) -> (h, 0),
+                   (h, o, a) -> (h, 0), (h, o, acc, sub) -> (h, acc + sub),
+                   (h, o, acc) -> (h, acc))[2]
+
+"""
+    expr_is_ground(x) → Bool
+
+upstream `Expr::is_ground` (lib.rs:913-915) — `self.variables() == 0`, i.e. no vars and no refs.
+"""
+expr_is_ground(x::MORK.Expr)::Bool = expr_variables(x) == 0
+
+"""
+    expr_max_arity(x) → Union{Nothing, UInt8}
+
+upstream `Expr::max_arity` (lib.rs:348-350). The accumulator is the arity of the node being folded
+and leaves contribute `None`, so a leaf-only expression yields `nothing` rather than 0 — that
+distinction is upstream's `Option<u8>` and is preserved here.
+"""
+function expr_max_arity(x::MORK.Expr)::Union{Nothing, UInt8}
+    expr_traverseh(nothing, x, 0,
+                   (h, o) -> (h, nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
+                   (h, o, a) -> (h, a),
+                   (h, o, acc, sub) -> (h, max(acc, sub === nothing ? UInt8(0) : sub)),
+                   (h, o, acc) -> (h, acc))[2]
+end
+
+"""
+    expr_has_unbound(x) → Bool
+
+upstream `Expr::has_unbound` (lib.rs:352-360) — true when some `VarRef(r)` names an index at or
+beyond the number of `NewVar` binders seen SO FAR, i.e. a reference with nothing to bind to.
+
+The carried state is that binder count: `|c, _| { *c += 1; false }` on a binder,
+`|c, _, r| r >= *c` on a reference.
+"""
+function expr_has_unbound(x::MORK.Expr)::Bool
+    expr_traverseh(UInt8(0), x, 0,
+                   (c, o) -> (c + UInt8(1), false),
+                   (c, o, r) -> (c, r >= c),
+                   (c, o, sl) -> (c, false), (c, o, a) -> (c, false),
+                   (c, o, acc, sub) -> (c, acc || sub), (c, o, acc) -> (c, acc))[2]
+end
+
+"""
+    expr_forward_references(x, at) → Int
+
+upstream `Expr::forward_references` (lib.rs:339-342) — how many distinct variables are referenced
+before being bound, given `at` already-bound variables on entry.
+
+The carried state is a 64-bit occupancy mask seeded to the low `at` bits. A binder claims the lowest
+free bit (`1 << trailing_ones(c)`); a reference counts 1 only the FIRST time its bit is unset, then
+sets it — so repeated forward references to the same variable count once.
+"""
+function expr_forward_references(x::MORK.Expr, at::Integer = 0)::Int
+    seed = at > 0 ? (typemax(UInt64) >> (64 - at)) : UInt64(0)
+    expr_traverseh(seed, x, 0,
+                   (c, o) -> (c | (UInt64(1) << trailing_ones(c)), 0),
+                   (c, o, r) -> ((UInt64(1) << r) & c == 0 ? (c | (UInt64(1) << r), 1) : (c, 0)),
+                   (c, o, sl) -> (c, 0), (c, o, a) -> (c, 0),
+                   (c, o, acc, sub) -> (c, acc + sub), (c, o, acc) -> (c, acc))[2]
+end
+
+"""
+    expr_difference_under(x, other) → Union{Nothing, Int}
+
+upstream `Expr::difference_under` (lib.rs:378-391) — the 0-based offset of the first item at which
+the two expressions differ, or `nothing` when `x` is exhausted with no difference.
+
+⚠️ UPSTREAM'S `under: F` CLOSURE IS UNUSED. It appears in the signature and never in the body, which
+compares `ez.item() != oz.item()` outright. It is omitted here rather than reproduced as a parameter
+that does nothing — the same shape as `load_json_`'s unused `pattern`, which we DID keep because it
+is positional in a public loader API. Do not "implement" a comparison hook upstream does not have.
+"""
+function expr_difference_under(x::MORK.Expr, other::MORK.Expr)::Union{Nothing, Int}
+    i = 1
+    j = 1
+    while true
+        i > length(x.buf) && return nothing
+        j > length(other.buf) && return i - 1
+        tx = byte_item(x.buf[i])
+        ty = byte_item(other.buf[j])
+        # An item is its tag byte plus, for a symbol, its payload — compare both.
+        if x.buf[i] != other.buf[j]
+            return i - 1
+        end
+        if tx isa ExprSymbol
+            n = Int(tx.size)
+            (i + n > length(x.buf) || j + n > length(other.buf)) && return i - 1
+            view(x.buf, (i + 1):(i + n)) == view(other.buf, (j + 1):(j + n)) || return i - 1
+            i += n + 1
+            j += n + 1
+        else
+            i += 1
+            j += 1
+        end
+    end
+end
+
+"""
+    expr_prefix_non_proper(x) → SubArray{UInt8}
+
+upstream `Expr::prefix_non_proper` (lib.rs:393-401) — the constant prefix before the first VARIABLE
+item, and when there is no variable at all, the WHOLE expression rather than an error:
+
+    Break(offset)    => slice_from_raw_parts(self.ptr, offset)      // proper prefix
+    Continue(offset) => slice_from_raw_parts(self.ptr, offset - 1)  // full expr
+
+That second arm is the whole point of the `_non_proper` name: `prefix()` has no answer for a ground
+expression, this one returns the expression itself.
+"""
+function expr_prefix_non_proper(x::MORK.Expr)
+    i = 1
+    n = length(x.buf)
+    while i <= n
+        t = byte_item(x.buf[i])
+        if t isa ExprNewVar || t isa ExprVarRef
+            return view(x.buf, 1:(i - 1))          # proper prefix: everything before the variable
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)
+        else
+            i += 1                                  # Arity
+        end
+    end
+    view(x.buf, 1:n)                                # no variable anywhere => the full expression
+end
+
+"""
+    ez_subexpr(z) → Expr
+
+upstream `ExprZipper::subexpr` (lib.rs:1251) — `Expr { ptr: self.root.ptr.byte_add(self.loc) }`,
+the sub-expression rooted at the zipper's current location. Upstream offsets a pointer; we take the
+tail of the buffer, which is the same expression.
+"""
+ez_subexpr(z::ExprZipper)::MORK.Expr = MORK.Expr(z.root.buf[z.loc:end])
+
+# =====================================================================
 # Exports
 # =====================================================================
 
+export expr_variables, expr_is_ground, expr_max_arity, expr_has_unbound
+export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_non_proper
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
