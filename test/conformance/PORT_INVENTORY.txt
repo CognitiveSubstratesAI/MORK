@@ -16,10 +16,6 @@ experiments/eval/lib.rs	TY	FuncType
 experiments/eval/lib.rs	TY	StackFrame
 experiments/eval/main.rs	FN	*
 experiments/eval/main.rs	FN	+
-expr/_main.rs	FN	new
-expr/_main.rs	FN	used
-expr/_main.rs	FN	with_buffer
-expr/_main.rs	TY	AExpr
 expr/lib.rs	FN	_unify
 expr/lib.rs	FN	anti_unify
 expr/lib.rs	FN	apply
@@ -70,7 +66,6 @@ expr/lib.rs	FN	shift
 expr/lib.rs	FN	show
 expr/lib.rs	FN	size
 expr/lib.rs	FN	span
-expr/lib.rs	FN	str_item
 expr/lib.rs	FN	string
 expr/lib.rs	FN	subexpr
 expr/lib.rs	FN	subsexpr
@@ -122,7 +117,6 @@ expr/lib_nightly.rs	FN	unifiable_reuse_state
 expr/lib_nightly.rs	FN	unifies_reuse_state
 expr/lib_nightly.rs	TY	OwnedSourceItem
 expr/lib_nightly.rs	TY	SourceItem
-expr/macros.rs	FN	apply_e_clears_and_cycles_check
 expr/macros.rs	TY	DeserializableExpr
 expr/macros.rs	TY	SerializableExpr
 frontend/bytestring_parser.rs	FN	new
@@ -365,7 +359,6 @@ kernel/pure.rs	FN	neg_i64
 kernel/pure.rs	FN	neg_i8
 kernel/pure.rs	FN	neginf_f32
 kernel/pure.rs	FN	neginf_f64
-kernel/pure.rs	FN	nth_expr
 kernel/pure.rs	FN	phi_f32
 kernel/pure.rs	FN	phi_f64
 kernel/pure.rs	FN	pi_f32

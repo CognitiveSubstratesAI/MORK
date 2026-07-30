@@ -1018,13 +1018,33 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
             cur = span_end
         end
 
-        # ── ifnz: short-circuit conditional ──────────────────────────
+        # ── ifnz: EAGER conditional (upstream semantics) ─────────────
         # Contract: (ifnz COND then THEN-EXPR [else ELSE-EXPR]) — `then`/`else` are literal
         # keyword symbols. SNK-1 (audit 2026-06-04): the keyword positions were SKIPPED
         # without validation, so a malformed shape like `(ifnz cond X Y)` (no keywords)
-        # silently evaluated the wrong branch. Now validate the keyword bytes and return
-        # `nothing` (skip) on a mismatch instead of mis-branching.
-        if fn_name == "ifnz" && length(arg_spans) >= 3
+        # silently evaluated the wrong branch. The keyword bytes are validated below.
+        #
+        # 🔴 THIS USED TO SHORT-CIRCUIT, AND THAT WAS A DIVERGENCE — SETTLED BY EXECUTION 2026-07-30.
+        # `ifnz` is `scope.add_func("ifnz", ifnz, FuncType::Pure)` (pure.rs:911) — a REGISTERED PURE
+        # FN, not a special form — and upstream's `eval_impl` (experiments/eval/src/lib.rs:128-150)
+        # runs a frame's `func` only once `rest == 0`, i.e. after ALL of its children have evaluated
+        # into its sink. `'`(quote) is identity-special-cased in `push_eval` PRECISELY to escape
+        # that, which is the proof that nothing else escapes it.
+        #
+        # Measured against the release binary:
+        #   (ifnz 1 then (i64_from_string 5) else (i64_from_string notanumber))
+        #       -> upstream NOTHING   (the UNTAKEN else branch was evaluated and its error killed
+        #                              the whole op)          ours, when lazy: 5
+        #   (ifnz 1 then 5 else 6)  -> 5 on BOTH sides, which eliminates "the then/else keyword
+        #                              symbols are what break it"
+        # So laziness FABRICATED atoms upstream never produces — the dangerous direction, because a
+        # value that exists only in our engine can seed a fixpoint upstream never reaches.
+        # Ground truth for all five shapes is vendored at test/conformance/sinks/g4_ifnz_eager.mm2,
+        # whose header already said this before the behaviour was fixed.
+        #
+        # ⚠️ COST IS INHERENT, NOT A REGRESSION: nested `ifnz` now evaluates 2^depth branches, as
+        # upstream does. Do not "optimise" it back into a short-circuit.
+        if fn_name == "ifnz"
             _ifnz_kw(span) = begin
                 o = first(span)
                 o <= length(buf) || return ""
@@ -1033,19 +1053,28 @@ function _pure_eval_formula(buf::Vector{UInt8}, off::Int)::Union{Vector{UInt8}, 
                 n = Int(t.size)
                 (o + n) <= length(buf) ? String(@view buf[(o + 1):(o + n)]) : ""
             end
-            _ifnz_kw(arg_spans[2]) == "then" || return nothing   # arg[2] must be `then`
+            # Upstream: `if items != 3 && items != 5 { return Err(...) }` (pure.rs:878). We accepted
+            # `>= 3`, so the malformed 4-arg shape evaluated a branch where upstream emits nothing.
+            n_ifnz = length(arg_spans)
+            (n_ifnz == 3 || n_ifnz == 5) || return nothing
+            _ifnz_kw(arg_spans[2]) == "then" || return nothing
+            n_ifnz == 5 && (_ifnz_kw(arg_spans[4]) == "else" || return nothing)
+
+            # EAGER: every branch is evaluated BEFORE the condition selects one, and a failure in
+            # ANY of them kills the whole op — including the branch that is not taken.
             cond = _pure_eval_formula(buf, first(arg_spans[1]))
             cond === nothing && return nothing
-            cond_payload = _pure_strip_header(cond)
-            is_nz = !all(==(0x00), cond_payload)
-            if is_nz
-                return _pure_eval_formula(buf, first(arg_spans[3]))
-            elseif length(arg_spans) == 5
-                _ifnz_kw(arg_spans[4]) == "else" || return nothing   # arg[4] must be `else`
-                return _pure_eval_formula(buf, first(arg_spans[5]))
-            else
-                return nothing
+            then_val = _pure_eval_formula(buf, first(arg_spans[3]))
+            then_val === nothing && return nothing
+            else_val = nothing
+            if n_ifnz == 5
+                else_val = _pure_eval_formula(buf, first(arg_spans[5]))
+                else_val === nothing && return nothing
             end
+
+            all(==(0x00), _pure_strip_header(cond)) || return then_val
+            # Zero condition: upstream returns Err("ifnz no else branch") when there is no else.
+            return n_ifnz == 5 ? else_val : nothing
         end
 
         # ── quote: return the inner expression bytes verbatim ─────────

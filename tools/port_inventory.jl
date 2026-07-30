@@ -72,8 +72,59 @@ const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experime
 
 # ── extraction ────────────────────────────────────────────────────────────────────────────────────
 
+"""
+    strip_rust_comments(text) → String
+
+Blank out `//` line comments and `/* … */` block comments, preserving line structure so any
+line-numbered reporting stays honest. String and char literals are skipped, so a `"https://…"` is
+NOT mistaken for a comment.
+
+🔴 WHY: `rust_symbols` matched against RAW SOURCE, so **commented-out code counted as upstream API**.
+`pure.rs:858-868` is a commented-out `// pub extern "C" fn nth_expr(…)`, which upstream registers
+ZERO times — and the vendored baseline duly listed `kernel/pure.rs FN nth_expr`. We then carried an
+`nth_expr` op to satisfy a symbol upstream does not have, and deleting it FAILED the inventory test.
+An absence-prover that reads dead code manufactures obligations.
+
+⚠️ This is the RULE for a defect that was already fixed as an INSTANCE: the line below used to be
+`delete!(fns, "\$1")`, deleting exactly one artifact that came from the commented-out registration
+template `// scope.add_func("\$1", \$1, …)` (:927). Same cause, same file, patched one name at a
+time. Stripping comments subsumes it — `\$1` can no longer be produced, and neither can the next one.
+[[feedback_recurring_defect_derive_the_rule]]
+"""
+function strip_rust_comments(text::AbstractString)
+    out = IOBuffer()
+    chars = collect(text)
+    i, n = 1, length(chars)
+    while i <= n
+        c = chars[i]
+        if c == '"'                                   # string literal — copy verbatim
+            write(out, c); i += 1
+            while i <= n
+                if chars[i] == '\\' && i < n
+                    write(out, chars[i]); write(out, chars[i + 1]); i += 2; continue
+                end
+                write(out, chars[i]); i += 1
+                chars[i - 1] == '"' && break
+            end
+        elseif c == '/' && i < n && chars[i + 1] == '/'      # line comment
+            while i <= n && chars[i] != '\n'; i += 1; end
+        elseif c == '/' && i < n && chars[i + 1] == '*'      # block comment
+            i += 2
+            while i <= n && !(chars[i] == '*' && i < n && chars[i + 1] == '/')
+                chars[i] == '\n' && write(out, '\n')         # keep line count
+                i += 1
+            end
+            i += 2
+        else
+            write(out, c); i += 1
+        end
+    end
+    String(take!(out))
+end
+
 "Public + macro-generated symbol names an upstream .rs file offers."
-function rust_symbols(text::AbstractString)
+function rust_symbols(raw::AbstractString)
+    text = strip_rust_comments(raw)
     fns = Set{String}()
     # `pub fn`, `pub(crate) fn`, `pub unsafe fn`, `pub extern "C" fn`, `pub const fn`
     for m in eachmatch(r"\bpub(?:\(crate\))?\s+(?:unsafe\s+|extern\s+\"C\"\s+|const\s+)*fn\s+(\w+)", text)
@@ -83,7 +134,8 @@ function rust_symbols(text::AbstractString)
     for m in eachmatch(r"op!\s*\(\s*(?:num\s+)?\w+\s+(\w+)", text); push!(fns, m.captures[1]); end
     # explicit registrations: `scope.add_func("lt_i64", …)`
     for m in eachmatch(r"add_func\(\s*\"([^\"]+)\"", text); push!(fns, m.captures[1]); end
-    delete!(fns, "\$1")            # macro-expansion artifact, not a real op
+    # (`delete!(fns, "$1")` used to live here. It is now unreachable by construction — the artifact
+    #  came from a COMMENTED-OUT template, which strip_rust_comments removes. See that docstring.)
     tys = Set{String}()
     for m in eachmatch(r"\bpub\s+(?:struct|enum|trait|type)\s+(\w+)", text); push!(tys, m.captures[1]); end
     fns, tys

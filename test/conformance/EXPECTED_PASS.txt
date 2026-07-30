@@ -56,6 +56,8 @@ sinks/g4_baseline
 sinks/g4_cmp
 sinks/g4_dedup
 sinks/g4_hash
+sinks/g4_ifnz_eager
+sinks/g4_oursonly
 sinks/g4_quote
 sinks/g4_rebase
 sinks/g4_selffeed

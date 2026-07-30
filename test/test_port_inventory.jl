@@ -23,7 +23,7 @@
 #
 # HOW THE RATCHET WORKS
 #   `tools/port_inventory.jl` set-compares the VENDORED upstream symbol inventory
-#   (`test/conformance/PORT_INVENTORY.txt`, 636 symbols) against the names our `src/` defines. This
+#   (`test/conformance/PORT_INVENTORY.txt`, 640 symbols) against the names our `src/` defines. This
 #   file pins the CURRENT missing counts. A count that GROWS fails — something that was ported is gone,
 #   or upstream grew and we did not follow. A count that SHRINKS also fails, telling you to lower the
 #   pin, so progress is recorded rather than silently absorbed.
@@ -75,7 +75,27 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # ⚠️ STILL UNSCANNED: `experiments/eval-ffi` (a KERNEL dependency), `experiments/eval-examples`,
     # `experiments/unification_test_laws` (883 lines of unification LAWS — a ready-made oracle we have
     # never run), and ALL of PathMap. Do not read this percentage as whole-port coverage.
-    PIN_FNS = 111
+    # 111 -> 106 and TYS 35 -> 32 on 2026-07-30, and this FALL is attributable and verified:
+    # `rust_symbols` matched against RAW SOURCE, so COMMENTED-OUT CODE counted as upstream API. Seven
+    # phantom symbols were in the vendored baseline — `kernel/pure.rs FN nth_expr` (a `//`-commented
+    # fn upstream registers ZERO times), four in `expr/_main.rs`, `expr/lib.rs FN str_item`, and
+    # `expr/macros.rs FN apply_e_clears_and_cycles_check` (a `///` doc-comment code sample). Each was
+    # hand-checked in upstream and every one carries a leading `//`. Baseline 647 -> 640.
+    # Of the six phantom FNs, three had been "matched" by name coincidence in our source and three
+    # counted MISSING, hence -3 here; the one phantom TYPE (`AExpr`) was counted missing, hence -1.
+    #
+    # 🔴 THE REAL FINDING IS THAT AN ABSENCE-PROVER WAS MANUFACTURING OBLIGATIONS. We carried an
+    # `nth_expr` op solely to satisfy a symbol upstream does not have, and deleting it (correctly,
+    # while removing all 160 ours-only ops) FAILED this test. The extractor now strips `//` and
+    # `/* */` outside string literals — which also subsumes the old `delete!(fns, "$1")` line, an
+    # INSTANCE fix for this same cause: `$1` came from the commented-out registration template.
+    # One name at a time was the wrong granularity. [[feedback_recurring_defect_derive_the_rule]]
+    #
+    # ⚠️ INHERITED AND STILL UNATTRIBUTED: before this change the pins read 111/35 while the tool
+    # measured 109/33. That 2/2 gap predates this session's work (verified: the Pure.jl diff could
+    # not have moved it) and was never explained. It is now folded into the tightened pin rather
+    # than investigated — if you widen the scan and this fails, that is the alarm working.
+    PIN_FNS = 106
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
@@ -85,7 +105,7 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # traits, Traversal/TraverseSide iterator types, serde derive types) plus the deliberate `linalg`
     # skip. Only ~5 names are worth a look: WriteResourceRequest, ASpaceTranscriber, ATranscriber,
     # DebugTranscriber, Tables. So this pin is a REGRESSION guard, not a target to drive to zero.
-    PIN_TYS = 35
+    PIN_TYS = 32
 
     @test c.fns_missing <= PIN_FNS
     @test c.tys_missing <= PIN_TYS
