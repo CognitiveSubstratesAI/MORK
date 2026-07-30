@@ -4556,6 +4556,16 @@ const _MORK_TS = @testset "MORK" begin
     # These are what makes MM2's "ordering is derivable in the pure-sink layer" claim actually true.
     include("integration/pure_comparison_ops.jl")
 
+    # ── pure.rs hand-written extern fns + the 256-arm LUT3 (2026-07-30) ──────
+    # The 52-op sweep ported the `op!` MACRO ARMS; these two cover what has no arm to port. The ten
+    # hand-written `extern "C"` fns (pure.rs:748-908) were the file's last unexamined surface and four
+    # diverged — most severely `collapse_symbol`, whose missing 63-byte cap let an oversized result
+    # reach the Expr layer, where the Rule-of-64 assertion ABORTED THE WHOLE EXEC RUN instead of
+    # skipping one atom. The LUT3 file proves the computed `_ternarylogic` equals upstream's 256-arm
+    # `match s` for ALL selectors (the code comment had claimed five).
+    include("integration/pure_handwritten_fns.jl")
+    include("integration/pure_ternarylogic_table.jl")
+
     # ── AndSink/SumSink three-branch conformance (fix 2026-07-26) ─────────────
     # Upstream's reduction sinks have THREE branches (SIZES fixed-literal / NewVar ignored guard /
     # VarRef splice-with-rebasing); ours had implemented COMPLEMENTARY SINGLE halves — AndSink only

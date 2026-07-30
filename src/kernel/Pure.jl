@@ -115,9 +115,15 @@ _read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr
 # General 3-input bitwise LUT (x86 vpternlog) — the result bit for each bit position
 # is bit ((x<<2)|(y<<1)|z) of the selector `s`. Computed via the 8 minterms, which is
 # equivalent to (and replaces) the upstream 256-case `match s` table
-# (main:kernel/src/pure.rs `ternary_table`), verified against s = 0,1,2,4,6.
-# (The *_ternarylogic ops previously ignored x, y, AND the selector — they just
-# rebuilt z — audit P-2.)
+# (main:kernel/src/pure.rs `ternary_table`, :113-370).
+#
+# ✅ EQUIVALENCE PROVEN FOR ALL 256 SELECTORS, not spot-checked (2026-07-30; the previous comment
+# claimed only s = 0,1,2,4,6). Method — bit-slicing, which turns the whole table into one identity:
+# feed x=0xF0, y=0xCC, z=0xAA, so that bit j of the operand triple encodes the input combination
+# (x<<2)|(y<<1)|z == j. Under those inputs a correct arm for selector `s` must evaluate to exactly
+# `s`. Every one of upstream's 256 arms does (test/integration/pure_ternarylogic_table.jl), and so
+# does this function, so the two agree pointwise on the whole selector domain.
+# (The *_ternarylogic ops previously ignored x, y, AND the selector — they just rebuilt z — audit P-2.)
 function _ternarylogic(x::T, y::T, z::T, s::UInt8)::T where {T <: Base.BitUnsigned}
     r = zero(T)
     for j in 0:7
@@ -366,6 +372,66 @@ _checked_shl(x::T, y::UInt32) where {T <: Unsigned} =
     y >= 8 * sizeof(T) ? error("shl overflow") : x << y
 _checked_shr(x::T, y::UInt32) where {T <: Unsigned} =
     y >= 8 * sizeof(T) ? error("shr overflow") : x >> y
+
+"""
+    _rust_parse_int(T, s) → T
+
+Rust's `str::parse::<iN>()` grammar is **exactly** `[+-]?[0-9]+` — no `0x`/`0b`/`0o` prefix, no
+digit separators, no surrounding whitespace. Julia's `parse(T, s)` is LAXER on all three counts, so
+`(i64_from_string 0x10)` returned 16 here and `Err` upstream: we FABRICATED an atom upstream never
+emits, which is the dangerous direction (a value existing only in our engine can seed a fixpoint
+upstream never reaches).
+
+Measured against the binary 2026-07-30: upstream rejects `0x10` and `0b101` (we accepted both) and
+also rejects `1_000` and `5abc` (we already agreed on those two).
+
+`base = 10` alone is not enough — the explicit character guard is what rejects whitespace. Overflow
+needs no special handling: Rust returns `Err` and Julia throws, and both end in the atom being
+skipped.
+"""
+function _rust_parse_int(::Type{T}, s::AbstractString) where {T <: Integer}
+    isempty(s) && error("empty integer literal")
+    i = firstindex(s)
+    (s[i] == '+' || s[i] == '-') && (i = nextind(s, i))
+    i > lastindex(s) && error("sign with no digits")
+    for c in SubString(s, i)
+        ('0' <= c <= '9') || error("not a Rust integer literal: $s")
+    end
+    parse(T, s; base = 10)
+end
+
+"""
+    _rust_powi(x, n::Int32) → typeof(x)
+
+`f32::powi`/`f64::powi` lower to `llvm.powi`, i.e. compiler-rt's `__powi{s,d}f2` — binary
+exponentiation by REPEATED MULTIPLICATION:
+
+    double __powidf2(double a, int b) {
+      const int recip = b < 0;
+      double r = 1;
+      while (1) { if (b & 1) r *= a;  b /= 2;  if (b == 0) break;  a *= a; }
+      return recip ? 1/r : r;
+    }
+
+Julia's `x^n::Integer` for floats routes to libm `pow`, which is more accurate — so it disagrees in
+the last bit. Measured: `powi_f64(1.1, 10)` gave `4004bffc0c03023e` here vs `…3d` upstream.
+**A more accurate answer is still a divergence**; `powi` is a specified multiply chain, not `pow`.
+
+Note this is NOT the same helper as `_rust_pow` (the INTEGER `i*::pow`): that one takes an already
+`as u32`-cast exponent and wraps, this one takes a signed `i32` and reciprocates. `b /= 2` truncates
+toward zero and `b & 1` is 1 for odd negatives, so the loop is sign-agnostic and `recip` does the
+work — which is why `n = typemin(Int32)` needs no special case (unlike an `abs`-based formulation).
+"""
+function _rust_powi(x::T, n::Int32)::T where {T <: AbstractFloat}
+    r, a, b = one(T), x, n
+    while true
+        isodd(b) && (r *= a)
+        b = div(b, Int32(2))          # C's `/` truncates toward zero, as does Julia's `div`
+        b == 0 && break
+        a *= a
+    end
+    n < 0 ? one(T) / r : r
+end
 
 """
     _rust_clamp(x, lo, hi)
@@ -676,14 +742,17 @@ const PURE_OPS = Dict{String, Function}(
     "f64_to_u64" => (a) -> UInt64(_read_f64(a[1])),
 
     # ── string conversions ────────────────────────────────────────────
-    "u8_from_string" => (a) -> parse(UInt8, String(a[1])),
-    "u16_from_string" => (a) -> parse(UInt16, String(a[1])),
-    "u32_from_string" => (a) -> parse(UInt32, String(a[1])),
-    "u64_from_string" => (a) -> parse(UInt64, String(a[1])),
-    "i8_from_string" => (a) -> parse(Int8, String(a[1])),
-    "i16_from_string" => (a) -> parse(Int16, String(a[1])),
-    "i32_from_string" => (a) -> parse(Int32, String(a[1])),
-    "i64_from_string" => (a) -> parse(Int64, String(a[1])),
+    # STRICT `[+-]?[0-9]+` — Julia's bare `parse` accepts `0x10`/`0b101` (and whitespace), Rust's
+    # `str::parse` does not, so we emitted values upstream never produces. See `_rust_parse_int`.
+    # The u* ops are OURS (upstream has no unsigned from_string) but follow the same rule.
+    "u8_from_string" => (a) -> _rust_parse_int(UInt8, String(a[1])),
+    "u16_from_string" => (a) -> _rust_parse_int(UInt16, String(a[1])),
+    "u32_from_string" => (a) -> _rust_parse_int(UInt32, String(a[1])),
+    "u64_from_string" => (a) -> _rust_parse_int(UInt64, String(a[1])),
+    "i8_from_string" => (a) -> _rust_parse_int(Int8, String(a[1])),
+    "i16_from_string" => (a) -> _rust_parse_int(Int16, String(a[1])),
+    "i32_from_string" => (a) -> _rust_parse_int(Int32, String(a[1])),
+    "i64_from_string" => (a) -> _rust_parse_int(Int64, String(a[1])),
     "f32_from_string" => (a) -> parse(Float32, String(a[1])),
     "f64_from_string" => (a) -> parse(Float64, String(a[1])),
     "u8_to_string" => (a) -> Vector{UInt8}(string(_read_u8(a[1]))),
@@ -745,7 +814,7 @@ const PURE_OPS = Dict{String, Function}(
     # max/clamp/sum/product were already _read_i128 — this completes the family.)
     "mod_i128" => (a) -> rem(_read_i128(a[1]), _read_i128(a[2])),
     "i128_one" => (_) -> Int128(1),
-    "i128_from_string" => (a) -> parse(Int128, String(a[1])),
+    "i128_from_string" => (a) -> _rust_parse_int(Int128, String(a[1])),
     "i128_to_string" => (a) -> Vector{UInt8}(string(_read_i128(a[1]))),
     "sub_i128" => (a) -> _read_i128(a[1]) - _read_i128(a[2]),
     "div_i128" => (a) -> div(_read_i128(a[1]), _read_i128(a[2])),
@@ -831,8 +900,11 @@ const PURE_OPS = Dict{String, Function}(
     "copysign_f64" => (a) -> copysign(_read_f64(a[1]), _read_f64(a[2])),
     "powf_f32" => (a) -> _read_f32(a[1]) ^ _read_f32(a[2]),
     "powf_f64" => (a) -> _read_f64(a[1]) ^ _read_f64(a[2]),
-    "powi_f32" => (a) -> _read_f32(a[1]) ^ Int32(_read_i32(a[2])),
-    "powi_f64" => (a) -> _read_f64(a[1]) ^ Int32(_read_i32(a[2])),
+    # `powi` is a MULTIPLY CHAIN (llvm.powi / __powi{s,d}f2), not libm `pow`. Julia's `^` uses `pow`
+    # and is MORE accurate, which still diverges: `powi_f64(1.1, 10)` was `4004bffc0c03023e` here vs
+    # `…3d` upstream. See `_rust_powi`.
+    "powi_f32" => (a) -> _rust_powi(_read_f32(a[1]), _read_i32(a[2])),
+    "powi_f64" => (a) -> _rust_powi(_read_f64(a[1]), _read_i32(a[2])),
     "hypot_f32" => (a) -> hypot(_read_f32(a[1]), _read_f32(a[2])),
     "hypot_f64" => (a) -> hypot(_read_f64(a[1]), _read_f64(a[2])),
     "sqrt_f32" => (a) -> sqrt(_read_f32(a[1])),
@@ -965,34 +1037,50 @@ const PURE_OPS = Dict{String, Function}(
     # collapse_symbol: takes ONE argument (raw payload from _pure_strip_header).
     # Arg may be arity expression bytes (from explode_symbol or quote) or plain bytes.
     # Mirrors collapse_symbol in pure.rs: reads arity-N expression, extracts symbol payloads.
+    # 🔴 EVERY EXIT PATH HERE USED TO BE PERMISSIVE, AND ONE OF THEM COULD KILL THE WHOLE RUN.
+    # Upstream (pure.rs:825-843) has exactly three failure modes, all `Err` ⇒ the atom is skipped:
+    #   1. the argument is not `Tag::Arity`             -> "argument should be an expression"
+    #   2. any element is not `SourceItem::Symbol`      -> "can only concat symbols in collapse"
+    #   3. `i + symbol.len() >= 64`                     -> "new symbol can not be larger than 63 bytes"
+    # We had: (1) fall through to `reduce(vcat, a)`, concatenating the raw argument — `(collapse_symbol
+    # foo)` returned "foo" where upstream errors; (2) `break`, returning the PARTIAL prefix collected
+    # so far — `(collapse_symbol ('(a (b c))))` returned "a"; (3) no cap at all.
+    #
+    # (3) was the severe one, and it was NOT a wrong value. Our Expr layer asserts the Rule of 64 when
+    # the oversized result is WRITTEN, one layer above this op, so the throw escaped the pure sink's
+    # per-atom error handling as a TaskFailedException and **aborted the entire exec run** — measured:
+    # one 64-byte `collapse_symbol` took down all 9 probes in its file. Upstream skips one atom and
+    # keeps going. Raising INSIDE the op is what converts a run-killing assertion into a skipped atom.
+    #
+    # The 63-byte limit is `>=` in upstream, so 63 bytes is the maximum TOTAL, not 64.
     "collapse_symbol" => function (a)
         buf = a[1]
-        isempty(buf) && return UInt8[]
+        _bad = () -> error("collapse_symbol: argument should be an expression")
+        isempty(buf) && _bad()
         tag = try
             byte_item(buf[1])
         catch
-            ;
-            nothing
+            _bad()
         end
-        if tag isa ExprArity
-            result = UInt8[]
-            off = 2
-            for _ in 1:Int(tag.arity)
-                off > length(buf) && break
-                st = try
-                    byte_item(buf[off])
-                catch
-                    ;
-                    break
-                end
-                st isa ExprSymbol || break
-                n = Int(st.size)
-                append!(result, buf[(off + 1):min(off + n, length(buf))])
-                off += 1 + n
+        tag isa ExprArity || _bad()
+        result = UInt8[]
+        off = 2
+        for _ in 1:Int(tag.arity)
+            off <= length(buf) || error("collapse_symbol: truncated expression")
+            st = try
+                byte_item(buf[off])
+            catch
+                error("collapse_symbol: can only concat symbols in collapse")
             end
-            return result
+            st isa ExprSymbol || error("collapse_symbol: can only concat symbols in collapse")
+            n = Int(st.size)
+            length(result) + n >= 64 &&
+                error("collapse_symbol: new symbol can not be larger than 63 bytes")
+            off + n <= length(buf) || error("collapse_symbol: truncated symbol payload")
+            append!(result, buf[(off + 1):(off + n)])
+            off += 1 + n
         end
-        reduce(vcat, a; init=UInt8[])
+        result
     end,
     # explode_symbol: takes ONE symbol payload, returns MORK arity-N expression.
     # Mirrors explode_symbol in pure.rs. Called by _pure_eval_formula's MORK_EXPR path.
