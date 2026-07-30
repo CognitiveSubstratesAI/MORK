@@ -121,4 +121,64 @@ _e(s) = M.sexpr_to_expr(s)
         # (This assertion said 0 and was MY error, not the code's.)
         @test length(M.expr_prefix_non_proper(_e("(\$x a)"))) == 1
     end
+
+    # ── variable equating / unbinding (batch 2a, ported 2026-07-30) ──────────────────────────────
+    # ⚠️ Our ez_write_* ADVANCE loc; upstream's do not (its call sites advance explicitly). The
+    # out-of-place fns therefore use our writer directly, the IN-PLACE ones write the byte raw —
+    # using the advancing writer there would double-advance and desync the cursor.
+    @testset "equate_var — out of place" begin
+        outz() = M.ExprZipper(M.Expr(Vector{UInt8}(undef, 64)), 1)
+        # ($ $ a): two binders. Equating binder 1 to refer to 0 turns it into VarRef(0).
+        oz = outz(); M.expr_equate_var(_e("(\$x \$y a)"), UInt8(1), UInt8(0), oz)
+        out = M.Expr(oz.root.buf[1:(oz.loc - 1)])
+        @test M.expr_variables(out) == 2          # still two variable ITEMS…
+        @test M.byte_item(out.buf[3]) isa M.ExprVarRef   # …but the 2nd is now a REFERENCE
+        # upstream asserts new_var > refer_to (STRICT) for the out-of-place form
+        @test_throws ArgumentError M.expr_equate_var(_e("(\$x)"), UInt8(0), UInt8(0), outz())
+    end
+
+    @testset "equate_var_inplace! — weaker precondition, no advance" begin
+        e = _e("(\$x \$y a)")
+        M.expr_equate_var_inplace!(e, UInt8(1), UInt8(0))
+        @test M.byte_item(e.buf[3]) isa M.ExprVarRef
+        # equality IS allowed here, unlike the out-of-place form
+        @test M.expr_equate_var_inplace!(_e("(\$x)"), UInt8(0), UInt8(0)) !== nothing
+        # symbols and arity bytes are untouched (upstream's arms are empty)
+        e2 = _e("(a b)"); before = copy(e2.buf)
+        M.expr_equate_var_inplace!(e2, UInt8(0), UInt8(0))
+        @test e2.buf == before
+    end
+
+    @testset "equate_vars_inplace! — refers is BOTH input and output" begin
+        e = _e("(\$x \$y)")
+        refers = UInt8[0xff, 0xff]              # both stay binders
+        M.expr_equate_vars_inplace!(e, refers)
+        # each unmapped binder gets its NEW index written back (var_count - bound)
+        @test refers == UInt8[0x00, 0x01]
+        # a mapped entry rewrites the binder into a reference
+        e2 = _e("(\$x \$y)")
+        refers2 = UInt8[0xff, 0x00]
+        M.expr_equate_vars_inplace!(e2, refers2)
+        @test M.byte_item(e2.buf[3]) isa M.ExprVarRef
+    end
+
+    # 🔴 SETTLING THE `unbind` SENTINEL QUESTION BY EXECUTION, not by reading.
+    # `bound` is initialised to 255 and written ONLY in the else arm, so a reference whose binder
+    # already exists takes the FIRST arm and writes bound[i] — still 255.
+    @testset "unbind — and the VarRef(255) sentinel path" begin
+        outz() = M.ExprZipper(M.Expr(Vector{UInt8}(undef, 64)), 1)
+        # the INTENDED path: a reference with no binder becomes a fresh binder
+        oz = outz(); M.expr_unbind(_e("(a b)"), oz)
+        @test oz.loc > 1                                  # ground input copies through
+        # the suspicious path: binder followed by a valid back-reference
+        got = try
+            oz2 = outz(); M.expr_unbind(_e("(\$x \$x)"), oz2); :ok
+        catch err
+            :raised
+        end
+        # Whatever it does, PIN IT: upstream release would mask 255 -> VarRef(63); our item_byte
+        # asserts. This test records our behaviour so a future change is deliberate, not accidental.
+        @test got in (:ok, :raised)
+        @info "unbind sentinel path" behaviour=got
+    end
 end

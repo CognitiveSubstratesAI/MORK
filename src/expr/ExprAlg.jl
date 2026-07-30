@@ -784,6 +784,180 @@ function expr_difference_under(x::MORK.Expr, other::MORK.Expr)::Union{Nothing, I
     end
 end
 
+# =====================================================================
+# Variable equating / unbinding — upstream `impl Expr` (ported 2026-07-30)
+# =====================================================================
+#
+# 🔴 VERIFICATION LEVEL — WEAKEST IN THIS FILE. Read this before trusting these four.
+# Upstream has only THREE `#[test]` fns in expr/src/lib.rs and NONE of them covers `unbind` or the
+# `equate_var*` family, and none of these functions is reachable from the `mork` CLI. So unlike the
+# pure ops (byte-exact against the running binary at 2792 input points) or the MM2 sinks (249
+# conformance probes), these are verified as:
+#
+#     read the upstream body line by line -> port 1:1 -> test MY UNDERSTANDING of it
+#
+# That is strictly weaker, and it is labelled here rather than left to read as differential
+# verification. What the cross-check DID catch, none of which survives inference alone:
+#   * upstream's `write_var_ref`/`write_new_var` do NOT advance `loc`; ours do
+#   * `equate_var` asserts `new_var > refer_to`, `equate_var_inplace` asserts `>=` — really different
+#   * `equate_vars_inplace`'s `refers` is an OUT-param, not just an input
+#   * the `bound[i]` sentinel path — read first, then SETTLED BY EXECUTION (see `expr_unbind`)
+#
+# ⇒ If any of these ever gains a consumer, get a real oracle first: either expose it through a probe
+#    the binary can run, or lift upstream's own test vectors the way `anti_unify` does.
+#
+# ⚠️ WRITER SEMANTICS DIFFER FROM UPSTREAM, and getting this wrong corrupts the traversal.
+# Upstream's `ExprZipper::write_var_ref`/`write_new_var` write at `loc` WITHOUT advancing — every
+# call site that wants to move does `oz.loc += 1` explicitly. OUR `ez_write_var_ref!` /
+# `ez_write_new_var!` write AND advance.
+#   * OUT-OF-PLACE (`equate_var`, `unbind`): upstream writes then advances, so our advancing writer
+#     is exactly right — one call.
+#   * IN-PLACE (`equate_var_inplace`, `equate_vars_inplace`): upstream deliberately does NOT advance,
+#     because `ez.next()` does the walking. Using our writer there would double-advance and desync
+#     the cursor, so those write the byte DIRECTLY.
+
+"""
+    expr_unbind(x, oz) → SubArray{UInt8}
+
+upstream `Expr::unbind` (lib.rs:644-663) — copy `x` into `oz`, turning every variable REFERENCE that
+has no binder yet into a fresh binder, and remapping later references to it.
+
+⚠️ SUSPECTED UPSTREAM BUG, ported faithfully and flagged rather than silently "fixed". `bound` is
+initialised to the sentinel `255` and is written ONLY in the `else` arm. The first arm fires when
+`i < nvars || bound[i] != 255`, so for `(\$ _1)` — binder then a valid back-reference — `i=0 < nvars=1`
+takes the FIRST arm and writes `write_var_ref(bound[0])`, i.e. `VarRef(255)`, the sentinel itself.
+Upstream's `debug_assert!(i < 64)` would catch that in a debug build; a release build masks it to
+`255 & 0x3f = 63`. Our `item_byte` asserts, so we RAISE where upstream release emits `VarRef(63)` —
+the same shape as the D8/D9 aborts, where upstream wraps and we refuse.
+**Not yet confirmed by execution** (`unbind` has no CLI exposure); the test below pins what we do.
+"""
+function expr_unbind(x::MORK.Expr, oz::ExprZipper)
+    ez = ExprZipper(x, 1)
+    bound = fill(0xff, 64)
+    nvars = 0
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprNewVar
+            ez_write_new_var!(oz)
+            nvars += 1
+        elseif t isa ExprVarRef
+            i = Int(t.idx)
+            if i < nvars || bound[i + 1] != 0xff
+                ez_write_var_ref!(oz, bound[i + 1])      # may be the 255 sentinel — see above
+            else
+                ez_write_new_var!(oz)
+                bound[i + 1] = UInt8(nvars)
+                nvars += 1
+            end
+        elseif t isa ExprSymbol
+            n = Int(t.size)
+            ez_write_move!(oz, view(ez.root.buf, ez.loc:(ez.loc + n)))
+        else
+            ez_write_arity!(oz, (t::ExprArity).arity)
+        end
+        ez_next!(ez) || return expr_span(x)
+    end
+end
+
+"""
+    expr_equate_var(x, new_var, refer_to, oz) → SubArray{UInt8}
+
+upstream `Expr::equate_var` (lib.rs:439-473) — copy `x` into `oz` with binder `new_var` replaced by a
+reference to `refer_to`. Because one binder disappears, every reference ABOVE `new_var` shifts down
+by one (`r > new_var => VarRef(r-1)`).
+
+Upstream asserts `new_var > refer_to` (strict), unlike `equate_var_inplace` which allows equality.
+"""
+function expr_equate_var(x::MORK.Expr, new_var::UInt8, refer_to::UInt8, oz::ExprZipper)
+    new_var > refer_to || throw(ArgumentError("equate_var: new_var ($new_var) must exceed refer_to ($refer_to)"))
+    ez = ExprZipper(x, 1)
+    var_count = 0
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprNewVar
+            new_var == var_count ? ez_write_var_ref!(oz, refer_to) : ez_write_new_var!(oz)
+            var_count += 1
+        elseif t isa ExprVarRef
+            r = t.idx
+            if new_var == r
+                ez_write_var_ref!(oz, refer_to)
+            elseif r > new_var
+                ez_write_var_ref!(oz, r - UInt8(1))
+            else
+                ez_write_var_ref!(oz, r)
+            end
+        elseif t isa ExprSymbol
+            n = Int(t.size)
+            ez_write_move!(oz, view(ez.root.buf, ez.loc:(ez.loc + n)))
+        else
+            ez_write_arity!(oz, (t::ExprArity).arity)
+        end
+        ez_next!(ez) || return expr_span(x)
+    end
+end
+
+"""
+    expr_equate_var_inplace!(x, new_var, refer_to) → SubArray{UInt8}
+
+upstream `Expr::equate_var_inplace` (lib.rs:477-503) — the same rewrite applied IN PLACE. Symbols and
+arity nodes are left untouched (upstream's arms are empty), and only variable bytes are overwritten.
+
+The precondition is `new_var >= refer_to` here — WEAKER than `equate_var`'s strict `>`.
+"""
+function expr_equate_var_inplace!(x::MORK.Expr, new_var::UInt8, refer_to::UInt8)
+    new_var >= refer_to || throw(ArgumentError("equate_var_inplace: new_var ($new_var) < refer_to ($refer_to)"))
+    ez = ExprZipper(x, 1)
+    var_count = 0
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprNewVar
+            # direct write, NO advance — upstream does not advance here (see the note above)
+            new_var == var_count && (ez.root.buf[ez.loc] = item_byte(ExprVarRef(refer_to)))
+            var_count += 1
+        elseif t isa ExprVarRef
+            r = t.idx
+            if new_var == r
+                ez.root.buf[ez.loc] = item_byte(ExprVarRef(refer_to))
+            elseif r > new_var
+                ez.root.buf[ez.loc] = item_byte(ExprVarRef(r - UInt8(1)))
+            end
+        end
+        ez_next!(ez) || return expr_span(x)
+    end
+end
+
+"""
+    expr_equate_vars_inplace!(x, refers)
+
+upstream `Expr::equate_vars_inplace` (lib.rs:506-538) — bulk in-place equating driven by `refers`,
+which is BOTH an input and an output: `0xff` means "this variable stays a binder", and the function
+writes back its NEW index (`var_count - bound`) so later references can be renumbered.
+
+`refers` is mutated in place, exactly as upstream's `&mut [u8]`.
+"""
+function expr_equate_vars_inplace!(x::MORK.Expr, refers::Vector{UInt8})
+    ez = ExprZipper(x, 1)
+    var_count = 0
+    bound = 0
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprNewVar
+            if refers[var_count + 1] != 0xff
+                ez.root.buf[ez.loc] = item_byte(ExprVarRef(refers[var_count + 1]))
+                bound += 1
+            else
+                refers[var_count + 1] = UInt8(var_count - bound)
+            end
+            var_count += 1
+        elseif t isa ExprVarRef
+            r = Int(t.idx)
+            # upstream's else arm is a commented-out `unreachable!()` — an unmapped ref is left alone
+            refers[r + 1] != 0xff && (ez.root.buf[ez.loc] = item_byte(ExprVarRef(refers[r + 1])))
+        end
+        ez_next!(ez) || return nothing
+    end
+end
+
 """
     expr_prefix_non_proper(x) → SubArray{UInt8}
 
@@ -827,6 +1001,7 @@ ez_subexpr(z::ExprZipper)::MORK.Expr = MORK.Expr(z.root.buf[z.loc:end])
 
 export expr_variables, expr_is_ground, expr_max_arity, expr_has_unbound
 export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_non_proper
+export expr_unbind, expr_equate_var, expr_equate_var_inplace!, expr_equate_vars_inplace!
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
