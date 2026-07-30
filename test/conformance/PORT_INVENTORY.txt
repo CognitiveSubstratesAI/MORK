@@ -1,4 +1,8 @@
 # PORT_INVENTORY — upstream MORK symbol inventory, VENDORED.
+# UPSTREAM: main @ 5464713 (2026-07-02)
+#   ^ REQUIRED. Without it this file cannot distinguish a port gap from upstream drift.
+#     Our port draws from main AND server; the differential binary is built from MAIN,
+#     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl.
 # Regenerate: MORK_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract
 # Format:  <crate/file>\tFN|TY\t<name>
 expr/_main.rs	FN	new

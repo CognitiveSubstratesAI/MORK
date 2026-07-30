@@ -1,3 +1,14 @@
+# PROVENANCE: upstream MORK `server` branch @ 2d6730b (2026-05-08) — NOT `main`.
+#
+# ⚠️ READ BEFORE "FIXING" A GAP HERE. The port-inventory ratchet
+# (test/test_port_inventory.jl) is anchored to MAIN @ 5464713, because the release binary the
+# 277-probe differential grades us against is built from main. This file's upstream source does
+# NOT EXIST on main, so:
+#   * inventory tooling cannot see its symbols and will not report them as covered;
+#   * an upstream symbol from this subsystem that we did not port will not appear as a gap either.
+# Neither is drift. Treat this subsystem as out of main's scope, and diff it against `server`,
+# not against main. Server HEAD is ~55 days staler than main, so it is also not a source to chase
+# for new features.
 # DyckZipper — 1:1 port of experiments/expr/dyck/ (server branch)
 #
 # Compact bit-packed binary tree representation using Dyck words.

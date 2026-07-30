@@ -1,3 +1,15 @@
+# PROVENANCE: upstream MORK `server` branch @ 2d6730b (2026-05-08) — this file's upstream source
+# DOES NOT EXIST on `main`. Verified 2026-07-30: `git cat-file -e main:frontend/src/cz3_parser.rs` fails,
+# `server:frontend/src/cz3_parser.rs` succeeds.
+#
+# ⚠️ The port-inventory ratchet (test/test_port_inventory.jl) is anchored to MAIN @ 5464713, because
+# the release binary the 277-probe differential grades us against is built from main. So for this
+# file: its symbols are NOT counted as covered, and an upstream symbol from this subsystem that we
+# never ported will NOT show up as a gap. Neither is drift — diff it against `server`, not `main`.
+#
+# Context: 5 of 6 files in this directory are server-sourced (1365 of 2154 lines, 63%). Their headers
+# used to read "port of `mork/frontend/src/...`" with no branch, which is why the inventory reported
+# frontend coverage ABOVE 100% — most of our code was not in main's denominator at all.
 """
 CZ3Parser — 1:1 port of `mork/frontend/src/cz3_parser.rs`.
 

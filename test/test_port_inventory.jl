@@ -43,14 +43,30 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     @test c.fns_total >= 550          # the vendored baseline is present and plausible
     @test c.tys_total >= 75
 
+    # The baseline MUST record which upstream revision it was taken from, and it must be MAIN.
+    # Without a pinned revision this whole file is unfalsifiable — it cannot distinguish "we never
+    # ported X" from "upstream added X after we ported". That is not hypothetical: the 42 typed
+    # comparison ops read as a 30-day miss until the pin showed they landed upstream 2026-07-02
+    # (PR #125 `add-comparison`, which IS main's HEAD). And MAIN specifically, because the release
+    # binary the 277-probe differential grades us against is built from main, while our port also
+    # draws from a `server` branch that is ~55 days staler.
+    rev = baseline_revision()
+    @test !occursin("UNPINNED", rev)
+    @test !occursin("NO BASELINE", rev)
+    @test startswith(rev, "main @")
+    @info "port inventory baseline" upstream = rev
+
     # ── the pins. Update DELIBERATELY, in a commit that says which symbols moved and why. ─────────
     # Recorded 2026-07-29 against upstream MORK @ dev-zone. Two of these gaps are DOCUMENTED
     # decisions, not drift, and should not be "fixed" without revisiting the decision:
     #   * expr/lib.rs — memory `reference_mork_port_state_and_rule64`: "DELIBERATE PARTIAL
     #     (38/74 expr fns)". Matches: 31 of 43 present here.
     #   * linalg/*    — CODEMAP: "linalg = standalone, NOT wired to MM2". Deliberately unported.
-    # The rest are genuine gaps, and `kernel/pure.rs` is the one that prompted this file.
-    PIN_FNS = 148
+    # The rest are genuine gaps. `kernel/pure.rs` prompted this file and is now at ZERO — not because
+    # anything was ported today, but because the tool was WRONG: it read source text instead of the
+    # live registries and invented a 42-op gap (see the header). 148 -> 106 is that fiction being
+    # removed from the measurement, so the pin must come down with it or it re-admits the fiction.
+    PIN_FNS = 106
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
@@ -72,14 +88,27 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # ── named guards: families whose absence is a KNOWN, ACTIONABLE gap. ───────────────────────────
     bysite = Dict(f => m for (f, m) in c.report)
 
-    @testset "kernel/pure.rs — the 42 typed comparison ops" begin
+    @testset "kernel/pure.rs — inventory is COMPLETE (the 42 comparison ops are PORTED)" begin
         fm, _ = bysite["kernel/pure.rs"]
-        # This is the gap that motivated the file. When they are ported this test flips, and the
-        # `ifnz(sub(max(x,y),x),T,E)` derivation built to stand in for them can be deleted — as can
-        # the CODEMAP row claiming ordering is only "DERIVABLE in the PURE-SINK layer".
+        # 🔴🔴 THIS ASSERTION USED TO READ `== 42`, AND IT WAS A FALSE FACT FROZEN AS AN EXPECTATION.
+        # The ops were ported in `a1fef45` (2026-07-26) and verified 79/79 by the differential in
+        # `integration/pure_comparison_ops.jl` — which is wired into THIS SAME SUITE. So the suite was
+        # green while asserting both "these 42 are missing" and "these 42 match upstream".
+        #
+        # Cause: the tool regexed source text for literal `"name" =>` pairs, and our 42 keys are
+        # interpolated (`PURE_OPS["$(name)_$(suffix)"]`, Pure.jl:1002) — invisible to any grep.
+        # `tools/port_inventory.jl` now reads the LIVE registries, so this is a real measurement.
+        #
+        # ⚠️ WHAT THIS TEST DOES AND DOES NOT PROVE. It proves upstream registers no `pure.rs` op name
+        # we lack. It says NOTHING about behaviour: the per-op differential probes each op at ONE input
+        # (`gen_pure_probes.py` FEED = one value per type, nary ops fed exactly 2 args), and a
+        # 2026-07-30 edge-domain audit found 16 BEHAVIOURAL divergences among these very ops — nary
+        # min/max folded as binary, NaN, 0-arg sum/product, shift >= width, signum(-0.0), `tuple`
+        # flattening nested exprs. A complete inventory with divergent bodies is exactly the state a
+        # name diff reports as perfect. Do not read this green as "pure.rs is ported correctly".
         cmpops = filter(n -> any(startswith(n, p) for p in ("eq_", "ne_", "lt_", "lte_", "gt_", "gte_")), fm)
-        @test length(cmpops) == 42          # <- port them, then change this to 0
-        @test length(fm) == 42              # …and NOTHING ELSE in pure.rs is missing (373 -> 331 present)
+        @test isempty(cmpops)
+        @test isempty(fm)                   # NOTHING in pure.rs is missing by name (370/370 registered)
     end
 
     @testset "documented-deliberate gaps stay bounded" begin

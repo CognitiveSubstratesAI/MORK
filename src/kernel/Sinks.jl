@@ -10,9 +10,24 @@ Julia translation notes
   - Rust `WriteZipperTracked` arg → mutating the btm PathMap directly
   - Rust `USink`, `AUSink` (coroutine-based) → iterative
   - Rust `ACTSink` → ported (act_from_zipper + act_save, tested)
-  - Rust `WASMSink` → skipped (external wasmtime dep)
-  - Rust `Z3Sink` → skipped (external Z3 dep, Linux-only in upstream)
-  - Rust `PureSink` (eval-ffi) → skipped (eval-ffi experiment only)
+  - Rust `WASMSink` → PORTED (`struct WASMSink <: AbstractSink`, line 606)
+  - Rust `Z3Sink`   → PORTED (`mutable struct Z3Sink <: AbstractSink`, line 618)
+  - Rust `PureSink` → PORTED (`mutable struct PureSink <: AbstractSink`, line 955) — and it is the
+    host of all 532 `PURE_OPS`, i.e. the single most load-bearing sink in the file
+  #
+  # ⚠️ CORRECTED 2026-07-30. Those three lines previously read "→ skipped": WASMSink "skipped
+  # (external wasmtime dep)", Z3Sink "skipped (external Z3 dep, Linux-only in upstream)", PureSink
+  # "skipped (eval-ffi experiment only)". ALL THREE ARE FALSE — each is a real struct defined in this
+  # file, at the lines cited above. PureSink in particular carries the entire pure-op surface.
+  #
+  # This is the FOURTH stale comment found contradicting its own code in two days, after
+  # `mm2_is_relational`'s justification (claimed GROUNDED_REGISTRY held "only the 3 WILLIAM ops";
+  # it holds 69), `space_metta_calculus!`'s docstring (claimed it HALTS on error; it continues), and
+  # a `nothing ≡ ExecNoReduce` equivalence claim. The pattern is not carelessness — it is that
+  # nothing CHECKS prose. A "skipped" note is exactly the kind of claim that makes a reader stop
+  # looking, so it is worse than silence: it was still here while the sink layer got an intense
+  # debugging pass. If you write "skipped"/"absent"/"not ported" anywhere in this repo, grep for the
+  # symbol first.
   - `AlgebraicStatus` return from `subtract_into`/`join_into` → Bool
 """
 
