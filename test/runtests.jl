@@ -4566,6 +4566,13 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/pure_handwritten_fns.jl")
     include("integration/pure_ternarylogic_table.jl")
 
+    # ── pure-op EDGE VALUES (2026-07-30) ─────────────────────────────────────
+    # The per-op differential probed ONE interior point per op and fed nary ops exactly two args.
+    # Widening it to 2792 points (arity {0,1,3,4}, zero, ±1, typemin/typemax, NaN, ±0.0,
+    # shift == width) took it from 2657/2711 to 2707/2711 AGREE — 56 divergences to 4, and the 4 are
+    # last-bit libm rather than logic. This file pins what that widening found.
+    include("integration/pure_edge_values.jl")
+
     # ── AndSink/SumSink three-branch conformance (fix 2026-07-26) ─────────────
     # Upstream's reduction sinks have THREE branches (SIZES fixed-literal / NewVar ignored guard /
     # VarRef splice-with-rebasing); ours had implemented COMPLEMENTARY SINGLE halves — AndSink only

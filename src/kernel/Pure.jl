@@ -107,6 +107,68 @@ end
         nan
     end
 end
+
+"""
+    _rust_domain_neg(f, x) -> typeof(x)
+
+Same contract as `_rust_domain`, but yields a **NEGATIVE** quiet NaN.
+
+🔴 THE NaN SIGN IS NOT UNIFORM ACROSS OPS, and it is not derivable — it falls out of how each libm
+routine computes the out-of-domain case, so it has to be MEASURED per op. Pinned from the release
+binary (2026-07-30), f32 and f64 agreeing in every case:
+
+| op                                  | out-of-domain result |
+|-------------------------------------|----------------------|
+| `asin` `acos` `log10`               | `7fc00000` / `7ff8…` — **POSITIVE** NaN |
+| `ln` `log2` `sqrt` `acosh` `sin` `cos` `tan` `atanh` | `ffc00000` / `fff8…` — **NEGATIVE** NaN |
+
+`log10` sitting on the opposite side from `ln` and `log2` is the reason this is a table and not a
+rule: a "logs give -NaN" generalisation would have been wrong for one of the three.
+
+⚠️ The sign is constructed INSIDE this function rather than threaded in as an argument. The existing
+note on `atanh` records that passing a non-default NaN through the 3-arg `_rust_domain` produced a
+wrong encoding at that call site, so this avoids the parameter entirely.
+
+WHY A WHOLE FAMILY NEEDED THIS. `_rust_domain` already existed for `asin`/`acos`, and `atanh` was
+spelled out beside it — the rule "Julia RAISES where Rust returns a value, and inside a pure sink a
+raise means NO ATOM AT ALL" was derived, then applied to three ops and not swept. The widened
+differential found it still open on eight more: 48 of 56 divergences, one cause.
+[[feedback_recurring_defect_derive_the_rule]]
+"""
+@inline function _rust_domain_neg(f::F, x::T) where {F, T <: AbstractFloat}
+    try
+        f(x)
+    catch
+        -T(NaN)
+    end
+end
+
+"""
+    _rust_parse_float(T, s) -> T
+
+Rust's `str::parse::<fN>()` grammar (std docs for `f64::from_str`):
+
+    Float  ::= Sign? ( 'inf' | 'infinity' | 'nan' | Number )     -- those three case-INSENSITIVE
+    Number ::= ( Digit+ | Digit+ '.' Digit* | Digit* '.' Digit+ ) Exp?
+    Exp    ::= [eE] Sign? Digit+
+
+Julia's `parse(Float64, s)` additionally accepts **hex float literals**: `parse(Float64, "0x10")` is
+`16.0` where Rust returns `Err`. Measured against the binary — we emitted `4030000000000000` for
+`(f64_from_string 0x10)` and upstream emitted nothing.
+
+⚠️ THIS CORRECTS A CLAIM I MADE EARLIER THE SAME DAY. On the narrower probe set I wrote that floats
+were "Rust-compatible as-is and NOT narrowed by the guard" for the integers, because `NaN`, `inf`,
+`infinity` and `1e3` all agreed. They do — the hex form was simply not in that probe set. A parser
+agreeing on ten accepted inputs says nothing about what it wrongly accepts; only the REJECT cases
+test strictness.
+"""
+const _RUST_FLOAT_RE =
+    r"^[+-]?(?:(?i:inf(?:inity)?|nan)|(?:[0-9]+|[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$"
+
+function _rust_parse_float(::Type{T}, s::AbstractString) where {T <: AbstractFloat}
+    occursin(_RUST_FLOAT_RE, s) || error("not a Rust float literal: $s")
+    parse(T, s)
+end
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr all take `y: u32`
                                # (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
@@ -323,8 +385,19 @@ end
 # ⚠️ This rule was already found and applied INLINE in the FloatReduction sink on 2026-07-26
 # (Sinks.jl, `op === :min ? ... isnan ...`) and never swept to the pure ops sitting beside it. It now
 # lives in ONE place that both call, so the next float reduction cannot miss it.
-_rust_fmax(x::T, y::T) where {T <: AbstractFloat} = isnan(x) ? y : isnan(y) ? x : max(x, y)
-_rust_fmin(x::T, y::T) where {T <: AbstractFloat} = isnan(x) ? y : isnan(y) ? x : min(x, y)
+#
+# SIGNED ZERO, measured 2026-07-30. `f*::min`/`f*::max` do not specify which operand they return when
+# the two compare EQUAL, and on this platform both return the SECOND. Folding `[-0.0, +0.0]`:
+#     min: min(+Inf,-0.0) = -0.0, then min(-0.0,+0.0) -> +0.0   (upstream 0000…, ours was 8000… )
+#     max: max(-Inf,-0.0) = -0.0, then max(-0.0,+0.0) -> +0.0   (upstream 0000…)
+# Julia's `min` returns the FIRST on a signed-zero tie, so `min_f32`/`min_f64` emitted -0.0. Julia's
+# `max` happened to return +0.0 and therefore AGREED — by coincidence of Julia's tie-break, not
+# because our code encoded the rule. Both now state it explicitly, so max's agreement is principled
+# rather than accidental. `x == y` is the right test: it is true for ±0.0 and false for NaN.
+_rust_fmax(x::T, y::T) where {T <: AbstractFloat} =
+    isnan(x) ? y : isnan(y) ? x : x == y ? y : max(x, y)
+_rust_fmin(x::T, y::T) where {T <: AbstractFloat} =
+    isnan(x) ? y : isnan(y) ? x : x == y ? y : min(x, y)
 
 # `f32::signum`/`f64::signum` are a SIGN-BIT test, not a three-way compare:
 #     if self.is_nan() { Self::NAN } else { 1.0.copysign(self) }
@@ -753,8 +826,8 @@ const PURE_OPS = Dict{String, Function}(
     "i16_from_string" => (a) -> _rust_parse_int(Int16, String(a[1])),
     "i32_from_string" => (a) -> _rust_parse_int(Int32, String(a[1])),
     "i64_from_string" => (a) -> _rust_parse_int(Int64, String(a[1])),
-    "f32_from_string" => (a) -> parse(Float32, String(a[1])),
-    "f64_from_string" => (a) -> parse(Float64, String(a[1])),
+    "f32_from_string" => (a) -> _rust_parse_float(Float32, String(a[1])),
+    "f64_from_string" => (a) -> _rust_parse_float(Float64, String(a[1])),
     "u8_to_string" => (a) -> Vector{UInt8}(string(_read_u8(a[1]))),
     "u16_to_string" => (a) -> Vector{UInt8}(string(_read_u16(a[1]))),
     "u32_to_string" => (a) -> Vector{UInt8}(string(_read_u32(a[1]))),
@@ -907,26 +980,26 @@ const PURE_OPS = Dict{String, Function}(
     "powi_f64" => (a) -> _rust_powi(_read_f64(a[1]), _read_i32(a[2])),
     "hypot_f32" => (a) -> hypot(_read_f32(a[1]), _read_f32(a[2])),
     "hypot_f64" => (a) -> hypot(_read_f64(a[1]), _read_f64(a[2])),
-    "sqrt_f32" => (a) -> sqrt(_read_f32(a[1])),
-    "sqrt_f64" => (a) -> sqrt(_read_f64(a[1])),
+    "sqrt_f32" => (a) -> _rust_domain_neg(sqrt, _read_f32(a[1])),
+    "sqrt_f64" => (a) -> _rust_domain_neg(sqrt, _read_f64(a[1])),
     "cbrt_f32" => (a) -> cbrt(_read_f32(a[1])),
     "cbrt_f64" => (a) -> cbrt(_read_f64(a[1])),
     "exp_f32" => (a) -> exp(_read_f32(a[1])),
     "exp_f64" => (a) -> exp(_read_f64(a[1])),
     "exp2_f32" => (a) -> exp2(_read_f32(a[1])),
     "exp2_f64" => (a) -> exp2(_read_f64(a[1])),
-    "ln_f32" => (a) -> log(_read_f32(a[1])),
-    "ln_f64" => (a) -> log(_read_f64(a[1])),
-    "log2_f32" => (a) -> log2(_read_f32(a[1])),
-    "log2_f64" => (a) -> log2(_read_f64(a[1])),
-    "log10_f32" => (a) -> log10(_read_f32(a[1])),
-    "log10_f64" => (a) -> log10(_read_f64(a[1])),
-    "sin_f32" => (a) -> sin(_read_f32(a[1])),
-    "sin_f64" => (a) -> sin(_read_f64(a[1])),
-    "cos_f32" => (a) -> cos(_read_f32(a[1])),
-    "cos_f64" => (a) -> cos(_read_f64(a[1])),
-    "tan_f32" => (a) -> tan(_read_f32(a[1])),
-    "tan_f64" => (a) -> tan(_read_f64(a[1])),
+    "ln_f32" => (a) -> _rust_domain_neg(log, _read_f32(a[1])),
+    "ln_f64" => (a) -> _rust_domain_neg(log, _read_f64(a[1])),
+    "log2_f32" => (a) -> _rust_domain_neg(log2, _read_f32(a[1])),
+    "log2_f64" => (a) -> _rust_domain_neg(log2, _read_f64(a[1])),
+    "log10_f32" => (a) -> _rust_domain(log10, _read_f32(a[1])),
+    "log10_f64" => (a) -> _rust_domain(log10, _read_f64(a[1])),
+    "sin_f32" => (a) -> _rust_domain_neg(sin, _read_f32(a[1])),
+    "sin_f64" => (a) -> _rust_domain_neg(sin, _read_f64(a[1])),
+    "cos_f32" => (a) -> _rust_domain_neg(cos, _read_f32(a[1])),
+    "cos_f64" => (a) -> _rust_domain_neg(cos, _read_f64(a[1])),
+    "tan_f32" => (a) -> _rust_domain_neg(tan, _read_f32(a[1])),
+    "tan_f64" => (a) -> _rust_domain_neg(tan, _read_f64(a[1])),
     "asin_f32" => (a) -> _rust_domain(asin, _read_f32(a[1])),
     "asin_f64" => (a) -> _rust_domain(asin, _read_f64(a[1])),
     "acos_f32" => (a) -> _rust_domain(acos, _read_f32(a[1])),
@@ -943,8 +1016,8 @@ const PURE_OPS = Dict{String, Function}(
     "tanh_f64" => (a) -> tanh(_read_f64(a[1])),
     "asinh_f32" => (a) -> asinh(_read_f32(a[1])),
     "asinh_f64" => (a) -> asinh(_read_f64(a[1])),
-    "acosh_f32" => (a) -> acosh(_read_f32(a[1])),
-    "acosh_f64" => (a) -> acosh(_read_f64(a[1])),
+    "acosh_f32" => (a) -> _rust_domain_neg(acosh, _read_f32(a[1])),
+    "acosh_f64" => (a) -> _rust_domain_neg(acosh, _read_f64(a[1])),
     # ⚠️ NaN SIGN IS NOT UNIFORM. Rust's `atanh` returns a NEGATIVE NaN outside the domain
     # (ffc00000 / fff8000000000000) while `acos`/`asin` return a POSITIVE one (7fc00000) — because
     # atanh is computed through a log of a negative quantity, whose libm result carries the sign.
@@ -1261,6 +1334,61 @@ for (suffix, rd) in (("u8", _read_u8), ("u16", _read_u16), ("u32", _read_u32),
         (a) -> _checked_shr(rd(a[1]), _read_u32s(a[2]))
     end
 end
+
+# =====================================================================
+# `pub fn register(scope: &mut EvalScope)` — pure.rs:910-1300
+# =====================================================================
+#
+# THE LAST THING IN THIS FILE, exactly as it is the last thing in pure.rs.
+#
+# 🔴 IT USED TO LIVE IN EvalScope.jl, AND THAT WAS WRONG (user-identified, 2026-07-30). The
+# justification on record was "it mutates an `EvalScope`, which upstream keeps in another crate" —
+# but upstream's `register` mutates that other crate's type from INSIDE pure.rs. What decides a
+# function's home is the file that DEFINES it, not the type it touches. Having it elsewhere also
+# forced the include order backwards: `pure.rs:6` is `use eval::{EvalScope, FuncType}`, so pure.rs
+# DEPENDS ON eval and eval is built first — MORK.jl now includes EvalScope.jl before Pure.jl, which
+# is both upstream's dependency direction and what lets this function sit here.
+#
+# Source order, upstream's own name list, and `FuncPure` for every one: all **370** registrations are
+# `FuncType::Pure` — NONE are Macro. `ifnz` included, even though it controls its own argument
+# evaluation; upstream classifies it Pure and so do we.
+#
+# ⚠️ 370, NOT 371. `pure.rs` holds 371 `scope.add_func` lines, but one is the commented-out generator
+# template `// scope.add_func("$1", $1, FuncType::Pure);` (:927) — the same artifact `rust_symbols`
+# in tools/port_inventory.jl deletes, for the same reason, and the one that once yielded a bogus
+# `"$1"` op (a hard ParseError in Julia). Verified LIVE rather than read off the source: 370 in
+# `PURE_REGISTER`, 370 live, 0 unregistered, 0 missing an implementation, 370 FuncPure / 0 FuncMacro,
+# 325 carrying an arity check.
+function pure_register!()
+    for name in PURE_REGISTER
+        arity = get(PURE_OP_ARITY, name, nothing)
+        body = get(PURE_OPS, name, nothing)
+        if body !== nothing
+            add_func!(PURE_SCOPE, name, op_skeleton(name, body, arity), FuncPure, arity)
+        elseif name in PURE_SPECIAL_FORMS
+            # Implemented in the EVALUATOR, not the table — `_pure_eval_formula` intercepts it before
+            # dispatch. Registered so the name resolves and the classification is truthful; the body
+            # is a sentinel that names the real site rather than silently doing the wrong thing.
+            add_func!(PURE_SCOPE, name,
+                      (::ExprSource, ::ExprSink) -> throw(EvalError(
+                          "$name is a special form; _pure_eval_formula handles it before dispatch")),
+                      FuncPure, arity)
+        else
+            push!(PURE_SCOPE_UNREGISTERED, name)
+        end
+    end
+    # ── ops we carry beyond upstream's list ──
+    upstream = Set(PURE_REGISTER)
+    for (name, body) in PURE_OPS
+        name in upstream && continue
+        push!(PURE_SCOPE_EXTRA, name)
+        add_func!(PURE_SCOPE, name, op_skeleton(name, body, get(PURE_OP_ARITY, name, nothing)),
+                  FuncPure, get(PURE_OP_ARITY, name, nothing))
+    end
+    sort!(PURE_SCOPE_UNREGISTERED); sort!(PURE_SCOPE_EXTRA)
+    nothing
+end
+pure_register!()
 
 # =====================================================================
 # Exports

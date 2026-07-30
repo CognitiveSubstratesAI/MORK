@@ -43,17 +43,25 @@ include("kernel/Sources.jl")
 # `hash_expr` pure-op is its consumer).
 include("kernel/XXH3.jl")
 
-# Kernel: pure numeric primitives. Ports mork/kernel/src/pure.rs.
-include("kernel/Pure.jl")
+# Kernel: the evaluator SCOPE the 370 pure ops register into. Ports
+# mork/experiments/eval/src/lib.rs + the eval-ffi signatures it needs (EvalError, ExprSource,
+# ExprSink, SourceItem). This whole crate was ABSENT until 2026-07-30 — see the file header.
+#
+# ⚠️ ORDER REVERSED 2026-07-30, and the direction now MATCHES UPSTREAM'S. `pure.rs:6` is
+# `use eval::{EvalScope, FuncType}` — pure.rs DEPENDS ON the eval crate, so eval is built first.
+# EvalScope.jl used to be included AFTER Pure.jl because it hosted the registration loop; that loop
+# is upstream's `pub fn register`, which lives in pure.rs, so it moved to the end of Pure.jl where
+# upstream puts it and the include order followed the real dependency.
+include("kernel/EvalScope.jl")
 
 # Kernel: the arity constants upstream's `op!` arms hard-code, extracted from pure.rs and vendored.
 include("kernel/PureOpArity.jl")
 
-# Kernel: the evaluator SCOPE the 370 pure ops register into. Ports
-# mork/experiments/eval/src/lib.rs + the eval-ffi signatures it needs (EvalError, ExprSource,
-# ExprSink, SourceItem). Must follow Pure.jl and PureOpArity.jl: it registers PURE_OPS with their
-# FuncType and arity. This whole crate was ABSENT until 2026-07-30 — see the file header.
-include("kernel/EvalScope.jl")
+# Kernel: pure numeric primitives. Ports mork/kernel/src/pure.rs — INCLUDING its `pub fn register`
+# (pure.rs:910-1300), which is the last thing in this file exactly as it is the last thing in that
+# one. Must follow the two above: `pure_register!` reads PURE_REGISTER/PURE_OP_ARITY and calls into
+# the EvalScope API.
+include("kernel/Pure.jl")
 
 # Kernel: write sinks. Ports mork/kernel/src/sinks.rs.
 include("kernel/Sinks.jl")

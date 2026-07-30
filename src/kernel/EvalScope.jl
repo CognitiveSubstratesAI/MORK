@@ -301,40 +301,20 @@ distinguishable, because an op with no upstream counterpart also has no upstream
 """
 const PURE_SCOPE_EXTRA = String[]
 
-function _register_pure_ops!()
-    # ── 1:1 with upstream `pub fn register(scope: &mut EvalScope)` (pure.rs:910-1300) ──
-    # Source order, upstream's own name list, and `FuncPure` for every one: all 371 registrations are
-    # `FuncType::Pure` — NONE are Macro. `ifnz` included, even though it controls its own argument
-    # evaluation; upstream classifies it Pure and so do we.
-    for name in PURE_REGISTER
-        arity = get(PURE_OP_ARITY, name, nothing)
-        body = get(PURE_OPS, name, nothing)
-        if body !== nothing
-            add_func!(PURE_SCOPE, name, op_skeleton(name, body, arity), FuncPure, arity)
-        elseif name in PURE_SPECIAL_FORMS
-            # Implemented in the EVALUATOR, not the table — `_pure_eval_formula` intercepts it before
-            # dispatch. Registered so the name resolves and the classification is truthful; the body is
-            # a sentinel that names the real site rather than silently doing the wrong thing.
-            add_func!(PURE_SCOPE, name,
-                      (::ExprSource, ::ExprSink) -> throw(EvalError(
-                          "$name is a special form; _pure_eval_formula handles it before dispatch")),
-                      FuncPure, arity)
-        else
-            push!(PURE_SCOPE_UNREGISTERED, name)
-        end
-    end
-    # ── ops we carry beyond upstream's list ──
-    upstream = Set(PURE_REGISTER)
-    for (name, body) in PURE_OPS
-        name in upstream && continue
-        push!(PURE_SCOPE_EXTRA, name)
-        add_func!(PURE_SCOPE, name, op_skeleton(name, body, get(PURE_OP_ARITY, name, nothing)),
-                  FuncPure, get(PURE_OP_ARITY, name, nothing))
-    end
-    sort!(PURE_SCOPE_UNREGISTERED); sort!(PURE_SCOPE_EXTRA)
-    nothing
-end
-_register_pure_ops!()
+# ── The registration loop is NOT here. It is `pure_register!` at the END of Pure.jl. ─────────────
+#
+# Upstream's `pub fn register(scope: &mut EvalScope)` is defined in `kernel/src/pure.rs` (:910-1300),
+# not in the eval crate — the eval crate provides `add_func`, and pure.rs calls it. It lived here
+# until 2026-07-30, which put a pure.rs function in the file that ports eval/src/lib.rs.
+#
+# The justification for keeping it here had been "it mutates EvalScope, which is a different crate",
+# and that does not survive contact with upstream: pure.rs mutates another crate's type too. What
+# decides a function's home is the file that DEFINES it. (User-identified.)
+#
+# `PURE_SCOPE` above stays here because it is an `EvalScope` INSTANCE, not a pure.rs function —
+# though note that upstream has no global one either: `PureSink::new` builds its own
+# (`sinks.rs:1090-1091`, `let mut scope = EvalScope::new(); pure::register(&mut scope);`). Making the
+# scope sink-owned belongs with the `_pure_eval_formula` -> `scope.eval` migration, not here.
 
 """
     pure_scope_arity_coverage() → (declared, total)

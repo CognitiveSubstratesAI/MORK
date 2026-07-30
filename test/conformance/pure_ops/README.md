@@ -13,17 +13,38 @@ covered=18   UNCOVERED=342
 ## Method
 
 `gen_pure_probes.py` parses upstream's macro-generated `op!(...)` table
-(`kernel/src/pure.rs`) for name, arity class and parameter types, then emits one MM2 probe per
-type family exercising every op.
+(`kernel/src/pure.rs`) for name, arity class and parameter types, then emits **one MM2 file per op,
+with many input points each**.
 
-Two things make it work:
+🔴 **It emitted ONE point per op until 2026-07-30, and that is why it kept reporting green over real
+defects.** A single interior value (`3` for every integer, `2.5` for every float) and exactly TWO
+arguments for nary ops cannot see: a nary fold transcribed as binary, a `checked_shl` transcribed as
+a total shift, a sign-bit `signum` transcribed as `sign`, a `pow` whose exponent wraps, or a float
+`min/max` that ignores NaN. All five were live, all five read as AGREEING. Widening to arity
+{0,1,3,4} plus zero, ±1, typemin/typemax, NaN, ±0.0 and shift == width moved the count from
+**341 points to 2792** and surfaced 56 divergences where the narrow set had shown 3.
+
+⇒ **An op's defect lives at the EDGE of its input domain.** One interior point per op is a smoke
+test, not a differential.
+
+Four things make it work:
 
 * **The result symbol is emitted RAW — no `*_to_string` wrapper.** Its BYTE LENGTH is the result
   width, so this observes width directly instead of assuming a type. That matters because the
   macro writes `($e).to_be_bytes()`, so the width is that of the Rust *expression*:
   `u8_leading_zeros(x: u8)` returns `u32` and emits **four** bytes, not one.
 * **Arguments are fed by BYTE WIDTH.** Upstream has no unsigned `from_string`, so a `u8`
-  parameter is fed by `i8_from_string` — `consume::<u8>` just reads the symbol's bytes.
+  parameter is fed by `i8_from_string` — `consume::<u8>` just reads the symbol's bytes. This is also
+  how unsigned EDGE values are reachable: `u64::MAX` is fed as `i64_from_string -1`, the same 8 bytes.
+* **One FILE per op**, which is a correctness requirement rather than tidiness. A panic inside
+  upstream's `extern "C"` is a NON-UNWINDING ABORT — the process dies and writes no output at all.
+  Grouped by family, one aborting op silently erased every other op in its file, and a missing `.raw`
+  reads as "skipped" rather than "lost".
+* **Aborts are reported, not skipped.** `run_probes.sh` records every one in `ABORTED.txt`.
+  Three shapes abort upstream and are deliberately NOT probed (all recorded in CODEMAP as intentional
+  deviations): `mod_i*` with **divisor 0 OR `typemin % -1`** (Rust checks division overflow even in
+  release), `clamp_*` with `lo > hi`, and `*_ternarylogic` at any arity (its `quaternary` arm checks
+  `items != 3` then consumes four operands, so the op is unreachable upstream).
 
 ## ⚠️ Pin ground truth to a FILE, never stdout
 
@@ -37,15 +58,25 @@ ops produce high bytes, so stdout cannot be ground truth for them.
 ## Running
 
     python3 gen_pure_probes.py <outdir>
-    cd ~/JuliaAGI/dev-zone/MORK
-    for f in <outdir>/*.mm2; do ./target/release/mork run $f ${f%.mm2}.raw; done
+    ./run_probes.sh <outdir>                 # upstream ground truth + an explicit abort report
     PROBES=<outdir> julia --project=. test/conformance/pure_ops/cmp_pure.jl
 
-## Status 2026-07-28
+## Status 2026-07-30 (widened: 355 ops, 2792 input points)
 
-    ops compared 341 · AGREE 338 · we produce nothing 0 · differing 3 · upstream errors 5
+    ops compared 2711 · AGREE 2707 · we produce nothing 0 · differing 4 · upstream errors 0
 
-Closed here: the 16 silently-absent ops (float->int `as` saturation, domain-error NaN), the
+Findings are pinned as regression tests in `test/integration/pure_edge_values.jl` (74 assertions).
+What the widening closed, none of which the 341-point run could see:
+
+| class | count | cause |
+|---|---|---|
+| Julia RAISES where Rust returns NaN | **48** | `sqrt` `ln` `log2` `log10` `acosh` `sin` `cos` `tan` out of domain. Inside a pure sink a raise means NO ATOM AT ALL. The rule had been derived for `asin`/`acos`/`atanh` and applied to those three only. **The NaN SIGN is per-op and had to be measured** — `log10` yields a POSITIVE NaN while `ln` and `log2` yield NEGATIVE, so "logs give −NaN" would have been wrong |
+| signed zero in the nary min fold | 2 | `f*::min`/`max` do not specify which operand wins an EQUAL comparison; this platform returns the SECOND. Julia's `min` returns the first, so `min_f*` emitted −0.0 where upstream emits +0.0. `max_f*` agreed **by coincidence** of Julia's tie-break, not because the rule was encoded |
+| float `from_string` too lax | 2 | Julia's `parse` accepts HEX FLOAT literals — `(f64_from_string 0x10)` gave `16.0` where upstream errors. The integer guard added earlier the same day did not cover floats, and the narrower probe set contained only inputs Rust ACCEPTS, so it looked covered. **Only reject cases test strictness** |
+
+### Earlier, on the 341-point run (2026-07-28)
+
+Closed then: the 16 silently-absent ops (float->int `as` saturation, domain-error NaN), the
 `space_dump_all_sexpr` byte-encoding defect (~92 apparent divergences, ONE cause), plus:
 
 | op | was | cause |
@@ -54,9 +85,10 @@ Closed here: the 16 silently-absent ops (float->int `as` saturation, domain-erro
 | `atanh_f32` / `atanh_f64` | +NaN | Rust yields a NEGATIVE NaN out of domain (it goes through a log of a negative quantity, so libm's sign carries) while `acos`/`asin` yield a POSITIVE one. Verified for both input signs |
 | `to_degrees_f32` | 1 ULP low | Rust multiplies by a precomputed f32 constant; Julia's `rad2deg` performs the DIVISION in Float32 and rounds twice. `to_degrees_f64` and both `to_radians` already agreed |
 
-### The 3 remaining are libm, not logic
+### The 4 remaining are libm, not logic
 
-`cbrt_f64`, `sin_f64`, `sinh_f32` — each differs in the LAST BIT only (…ed/…ee, …b0/…b1, F/G).
+`cbrt_f64`, `sin_f64`, `sinh_f32` and — new on the widened run — `atan2_f32` (at `-f32::MAX, -1`),
+each differing in the LAST BIT only (…ed/…ee, …b0/…b1, F/G, …da/…db).
 Julia links openlibm; Rust uses the system libm. Matching bit-for-bit would mean reimplementing one
 of them inside the port. **Recorded as an accepted deviation, not a TODO** — and note the contrast
 with `to_degrees_f32`, which LOOKED like the same 1-ULP class but was arithmetic and exactly
