@@ -398,6 +398,13 @@ function jt_ascend_key!(t::ASpaceTranscriber, k::String, last::Bool)
     last && resize!(t.buf, length(t.buf) - 1)
 end
 
+# THIS IS THE PORT OF `Parser::parse_stream` (frontend/src/json_parser.rs:874), which has no separate
+# function here and does not need one. Upstream's `parse_stream` is `parse` rewritten as a coroutine
+# so it can YIELD each path to a consumer; its only two call sites in the entire tree are
+# `json_to_paths` (space.rs:571) and `jsonl_to_paths` (:600), both below. Our `json_parse!` already
+# drives the transcriber synchronously, and a transcriber whose `emit` is `put!(channel, …)`
+# suspends the producing task at exactly the point Rust yields. Same streaming, no second parser.
+#
 # Bridge a PUSH-based producer (the transcriber calls `emit` per path) to PathMap's PULL-based
 # `serialize_paths_from_funcs(target, advance_f, path_f)`. Upstream inverts this with two Rust
 # coroutines resumed against each other; a `Channel` is Julia's own coroutine and does the same job,
@@ -1640,7 +1647,29 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     false
 end
 
-# Mirrors transform_multi_multi_io(pat_expr, tpl_expr, add, no_source, no_sink)
+# Ports transform_multi_multi_io (space.rs:1569) — upstream's GENERAL form, taking the two axes as
+# runtime flags.
+#
+# 🔴 THE OTHER THREE ARE DELIBERATELY NOT PORTED, and that is "port the generator, not its
+# expansion" applied literally. Upstream has four functions over the same algorithm:
+#
+#     transform_multi_multi_    (`,` source, `,` sink)   cfg(feature="specialize_io")
+#     transform_multi_multi_i   (`I` source, `,` sink)   cfg(feature="specialize_io")
+#     transform_multi_multi_o   (`,` source, `O` sink)   cfg(feature="specialize_io")
+#     transform_multi_multi_io  both axes as ARGUMENTS   always compiled
+#
+# The first three are what `specialize_io` (a DEFAULT feature) monomorphizes out of the fourth so
+# Rust can drop the runtime branches. Julia has no equivalent win from three copies of one function,
+# and the copies would be three places to keep correct. Verified structurally, not assumed: diffing
+# `_` against `_o` shows the only differences are the sink axis (plain write zippers +
+# prefix_subsumption vs ASink + prefix_subsumption_resources + write_handler) and the source axis.
+# Both sink branches are live below, so this function already covers `_` and `_o`.
+#
+# What is genuinely missing is ONE capability shared by all four: `no_source=false`, the `I`
+# external ACT/Z3 source. That is an infrastructure gap (mmaps/z3s), not a gap that porting the
+# specializations would close.
+#
+# Signature note: upstream (pat_expr, tpl_expr, add, no_source, no_sink)
 # no_source=true  → pattern is `,`  (query the trie — compat path)
 # no_source=false → pattern is `I`  (external ACT/Z3 source via query_multi_i;
 #                                    not ported — requires mmaps/z3s infrastructure.

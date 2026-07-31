@@ -249,6 +249,10 @@ end
 
 Parse error from `json_parse`.  Mirrors `Error` in json_parser.rs.
 """
+# `Error::wrong_type` (json_parser.rs:25) is NOT ported as a named constructor, and does not need to
+# be: `JSONError(:wrong_type, expected)` expresses it through the generic 2-arg constructor below.
+# Upstream never CONSTRUCTS it either — `WrongType` appears only in its own definition and in the
+# Display/description arms, and both it and the constructor carry `#[allow(unused)]`.
 struct JSONError <: Exception
     kind::Symbol    # :unexpected_char, :unexpected_eof, :depth_limit, :bad_utf8
     ch::Char
