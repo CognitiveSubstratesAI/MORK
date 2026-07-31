@@ -21,13 +21,13 @@
 # `PURE_OPS`. For these ten names `pure_register!` installs the NATIVE `(ExprSource, ExprSink)`
 # function instead (Pure.jl:1385), so the bodies exercised below are NOT the code the sinks call.
 #
-# The natives are covered end to end by the 2792-point pure-op differential and the conformance
-# corpus, both of which run real MM2 through the registered scope. The gap is unit coverage at this
-# layer, and closing it means routing `pure_apply` through `scope_eval!` — which changes its return
-# from a raw payload to an encoded expression and touches every assertion in five files.
+# ✅ CLOSED 2026-07-31 by the second testset at the bottom, which calls `pure_apply_native` and so
+# runs the REGISTERED natives. `pure_apply` was left alone rather than rewired: it is the correct
+# oracle for the ~276 ops whose registration really does go through PURE_OPS, and its raw-payload
+# contract is what four other test files are written against.
 #
-# So the expectations below remain valuable — they are upstream binary output, and they pin the
-# byte-level semantics — but do not read a green run here as proof that the registered natives work.
+# The expectations below therefore keep their value — they are upstream binary output pinning the
+# byte-level semantics — and the native path is now covered too, at the bottom.
 using MORK, Test
 
 _hw_sym(s) = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(s))))],
@@ -146,4 +146,49 @@ _hw_str(name, args...) = String(_hw(name, args...))
         @test _hw("powi_f64", MORK._be_bytes(1.0), MORK._be_bytes(typemin(Int32))) ==
               MORK._be_bytes(1.0)
     end
+end
+
+@testset "the SAME ten, through the REGISTERED path" begin
+    # `pure_apply` above dispatches into PURE_OPS. `pure_register!` installs the NATIVE
+    # `(ExprSource, ExprSink)` function for these ten instead (Pure.jl:1385), so the assertions above
+    # exercise the byte-level bodies and NOT the code the sinks call. `pure_apply_native` builds
+    # `(name arg…)` and runs it through `scope_eval!(PURE_SCOPE, …)` — the real path.
+    #
+    # Two contract differences follow from going through the EVALUATOR rather than a table lookup,
+    # and both are invisible to `pure_apply`:
+    #   * every ARG is a complete EXPRESSION, not a raw payload
+    #   * the RESULT is the encoded result expression — a symbol result carries its SymbolSize header
+    _s(x)  = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(x))))],
+                  Vector{UInt8}(codeunits(String(x))))
+    _e(xs...) = vcat(UInt8[MORK.item_byte(MORK.ExprArity(UInt8(length(xs))))], xs...)
+    _q(x)  = _e(_s("'"), x)
+    _n(nm, a...) = MORK.pure_apply_native(nm, Vector{UInt8}[a...])
+
+    @test _n("encode_hex", _s("ab"))            == _s("6162")
+    @test _n("decode_hex", _s("6162"))          == _s("ab")
+    # URL-safe and UNPADDED, the documented fix — standard base64 would give `YWJjZA==`
+    @test _n("encode_base64url", _s("abcd"))    == _s("YWJjZA")
+    @test _n("decode_base64url", _s("YWJjZA"))  == _s("abcd")
+    @test _n("reverse_symbol", _s("abc"))       == _s("cba")
+    @test _n("explode_symbol", _s("abc"))       == _e(_s("a"), _s("b"), _s("c"))
+    @test _n("tuple", _s("a"), _s("b"))         == _e(_s("a"), _s("b"))
+    # hash_expr yields a 16-byte symbol (XXH3-128)
+    @test length(_n("hash_expr", _s("a"))) == 17
+    @test _n("hash_expr", _s("a"))[1] == MORK.item_byte(MORK.ExprSymbol(0x10))
+
+    # 🔴 THE QUOTE REQUIREMENT, which `pure_apply` cannot see. On the real path the evaluator
+    # EVALUATES arguments, so a bare `(a b c)` is read as a call to `a` and raises "unknown
+    # function". Upstream's own test uses the quote form for exactly this reason
+    # (sink_pure_quote_collapse_symbol, main.rs:1097).
+    @test_throws Exception _n("collapse_symbol", _e(_s("a"), _s("b"), _s("c")))
+    @test _n("collapse_symbol", _q(_e(_s("a"), _s("b"), _s("c")))) == _s("abc")
+
+    # ifnz is the special form: strict 3-or-5 arity with `then`/`else` KEYWORD SYMBOLS
+    @test _n("ifnz", _s("\x01"), _s("then"), _s("a"), _s("else"), _s("b")) == _s("a")
+    @test _n("ifnz", _s("\x00"), _s("then"), _s("a"), _s("else"), _s("b")) == _s("b")
+    @test _n("ifnz", _s("\x01"), _s("then"), _s("a")) == _s("a")
+    # the 3-arity form with a FALSE condition has no branch to take
+    @test_throws Exception _n("ifnz", _s("\x00"), _s("then"), _s("a"))
+    # the keyword symbols are checked, not positional
+    @test_throws Exception _n("ifnz", _s("\x01"), _s("nope"), _s("a"))
 end

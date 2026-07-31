@@ -556,6 +556,36 @@ function pure_apply(name::String, arg_bufs::Vector{Vector{UInt8}})::Vector{UInt8
 end
 
 """
+    pure_apply_native(name, args) → Vector{UInt8}
+
+Apply a pure op THROUGH THE REGISTERED SCOPE — the path the sinks actually take.
+
+Unlike [`pure_apply`], which dispatches into `PURE_OPS`, this builds the expression `(name arg…)` and
+hands it to `scope_eval!(PURE_SCOPE, …)`. So for the ten hand-written names it reaches the NATIVE
+`(ExprSource, ExprSink)` function that `pure_register!` installs (Pure.jl:1385), and for every other
+op it reaches the `op_skeleton`-wrapped body — in both cases whatever is actually registered.
+
+Two consequences for callers, both from going through the evaluator rather than a table lookup:
+
+  * each ARG must be a complete EXPRESSION, not a raw payload (wrap bytes with a SymbolSize tag)
+  * the RESULT is the encoded result expression, not a bare payload — a symbol result carries its
+    SymbolSize header
+
+`pure_apply` is kept for the ops whose registration genuinely goes through `PURE_OPS`; it is the
+right oracle there and its raw-payload contract is more convenient.
+"""
+function pure_apply_native(name::String, args::Vector{Vector{UInt8}})::Vector{UInt8}
+    buf = UInt8[item_byte(ExprArity(UInt8(1 + length(args)))),
+                item_byte(ExprSymbol(UInt8(length(name))))]
+    append!(buf, Vector{UInt8}(name))
+    for a in args
+        append!(buf, a)
+    end
+    scope_eval!(PURE_SCOPE, ExprSource(buf, 1))
+end
+
+
+"""
     PURE_SPECIAL_FORMS
 
 Op names upstream registers in `EvalScope` that CANNOT live in `PURE_OPS`, because they control the
@@ -1438,4 +1468,4 @@ pure_register!()
 # Exports
 # =====================================================================
 
-export PURE_OPS, pure_apply
+export PURE_OPS, pure_apply, pure_apply_native
