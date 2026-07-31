@@ -421,12 +421,25 @@ function op_skeleton(name::String, body::Function, arity::Union{Vector{Int}, Not
             throw(EvalError("$name takes $(join(arity, " or ")) argument" *
                             (arity == [1] ? "" : "s") * ", got $items"))
         end
+        # upstream reads each operand with `expr.consume::<$tx>()`, whose check is EXACT:
+        # `*e.ptr == item_byte(SymbolSize(size_of::<T>()))`. A symbol of any other length is
+        # `Err("failed to consume <T>")` and the atom is skipped — never coerced. The widths are
+        # vendored from the `op!` invocations; see PureOpArity.jl for why, and for the measured
+        # divergence (we used to ACCEPT over-long operands and emit a result upstream skips).
+        widths = get(PURE_OP_OPERAND_WIDTHS, name, nothing)
+        nary_w = get(PURE_OP_NARY_WIDTH, name, nothing)
         args = Vector{Vector{UInt8}}(undef, items)
         for i in 1:items
             item = source_read!(src)
             item isa SourceSymbol ||
                 throw(EvalError("$name: argument $i is not a symbol"))
-            args[i] = (item::SourceSymbol).bytes
+            bytes = (item::SourceSymbol).bytes
+            want = nary_w !== nothing ? nary_w :
+                   (widths !== nothing && i <= length(widths)) ? widths[i] : nothing
+            want === nothing || length(bytes) == want ||
+                throw(EvalError("failed to consume <T> ($name argument $i is \
+$(length(bytes)) bytes, expected $want)"))
+            args[i] = bytes
         end
         result = try
             body(args)

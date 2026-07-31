@@ -4746,6 +4746,11 @@ const _MORK_TS = @testset "MORK" begin
     # expression only 9 bytes long with the document outside the span; jsonl_to_paths tags it.
     include("test_json_to_paths.jl")
 
+    # ── consume::<T> operand width (2026-07-31) ──────────────────────────────
+    # The arms' operand check is EXACT. We accepted over-long operands and emitted a result the
+    # binary skips — silent, across every typed op. Pinned against upstream's own dump.
+    include("integration/pure_operand_width.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 
