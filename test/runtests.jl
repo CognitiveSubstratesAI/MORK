@@ -4739,6 +4739,13 @@ const _MORK_TS = @testset "MORK" begin
     # against the unrelated `is_grounded`.
     include("test_expr_queries.jl")
 
+    # ── Space::json_to_paths / jsonl_to_paths (2026-07-31) ───────────────────
+    # The `*_to_paths` pair streams JSON straight to a zlib `.paths` stream without building a trie.
+    # Asserted as a PATH SET against what load_json! inserts, not as a count. Also pins an upstream
+    # inconsistency: load_jsonl writes the 8-byte line index UNTAGGED, so its path parses as an
+    # expression only 9 bytes long with the document outside the span; jsonl_to_paths tags it.
+    include("test_json_to_paths.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 

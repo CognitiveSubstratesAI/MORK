@@ -320,6 +320,166 @@ function jt_ascend_key!(t::SpaceTranscriber, k::String, last::Bool)
     last && wz_ascend!(t.wz, 1)
 end
 
+# =====================================================================
+# ASpaceTranscriber + json_to_paths / jsonl_to_paths
+# Mirrors ASpaceTranscriber (space.rs:318) and Space::json_to_paths / jsonl_to_paths (:564/:583)
+# =====================================================================
+
+"""
+    ASpaceTranscriber
+
+upstream `ASpaceTranscriber` (kernel/src/space.rs:318-326) — `SpaceTranscriber` with the write
+zipper replaced by a plain PATH BUFFER: it appends the same bytes, hands the completed path to
+`emit`, then truncates back. Nothing is inserted into a trie, which is the whole point of the
+`*_to_paths` entry points: serialize a JSON document straight to a `.paths` stream without ever
+materialising it as a PathMap.
+
+Upstream's `write` is a Rust generator --- `push; yield &wz[..]; truncate` (space.rs:321-326). Julia's
+equivalent of yielding to a consumer is either a callback or a `Channel`; the struct takes a
+callback and the streaming is arranged by the caller, see [`space_json_to_paths`].
+"""
+mutable struct ASpaceTranscriber <: JSONTranscriber
+    count::Int
+    buf::Vector{UInt8}
+    parser::SpaceParser
+    emit::Function
+end
+
+ASpaceTranscriber(emit::Function; buf::Vector{UInt8} = UInt8[], parser::SpaceParser = SpaceParser()) =
+    ASpaceTranscriber(0, buf, parser, emit)
+
+function _ast_write!(t::ASpaceTranscriber, bytes::AbstractVector{UInt8})
+    tok = fe_tokenizer(t.parser, bytes)
+    push!(t.buf, item_byte(ExprSymbol(UInt8(length(tok)))))
+    append!(t.buf, tok)
+    t.emit(t.buf)                                  # upstream `yield &self.wz[..]`
+    resize!(t.buf, length(t.buf) - (length(tok) + 1))
+    t.count += 1
+end
+
+jt_begin!(t::ASpaceTranscriber) = nothing
+jt_end!(t::ASpaceTranscriber) = nothing
+jt_write_empty_array!(t::ASpaceTranscriber) = _ast_write!(t, Vector{UInt8}("[]"))
+jt_write_empty_object!(t::ASpaceTranscriber) = _ast_write!(t, Vector{UInt8}("{}"))
+jt_write_true!(t::ASpaceTranscriber) = _ast_write!(t, Vector{UInt8}("true"))
+jt_write_false!(t::ASpaceTranscriber) = _ast_write!(t, Vector{UInt8}("false"))
+jt_write_null!(t::ASpaceTranscriber) = _ast_write!(t, Vector{UInt8}("null"))
+jt_write_string!(t::ASpaceTranscriber, str::String) = _ast_write!(t, Vector{UInt8}(str))
+
+function jt_write_number!(t::ASpaceTranscriber, neg::Bool, m::UInt64, e::Int16)
+    str = neg ? "-$(m)" : "$(m)"
+    e != 0 && (str *= "e$(e)")
+    _ast_write!(t, Vector{UInt8}(str))
+end
+
+function jt_descend_index!(t::ASpaceTranscriber, i::Int, first::Bool)
+    first && push!(t.buf, item_byte(ExprArity(UInt8(2))))
+    tok = fe_tokenizer(t.parser, Vector{UInt8}(string(i)))
+    push!(t.buf, item_byte(ExprSymbol(UInt8(length(tok)))))
+    append!(t.buf, tok)
+end
+
+function jt_ascend_index!(t::ASpaceTranscriber, i::Int, last::Bool)
+    tok = fe_tokenizer(t.parser, Vector{UInt8}(string(i)))
+    resize!(t.buf, length(t.buf) - (length(tok) + 1))
+    last && resize!(t.buf, length(t.buf) - 1)
+end
+
+function jt_descend_key!(t::ASpaceTranscriber, k::String, first::Bool)
+    first && push!(t.buf, item_byte(ExprArity(UInt8(2))))
+    tok = fe_tokenizer(t.parser, Vector{UInt8}(k))
+    push!(t.buf, item_byte(ExprSymbol(UInt8(length(tok)))))
+    append!(t.buf, tok)
+end
+
+function jt_ascend_key!(t::ASpaceTranscriber, k::String, last::Bool)
+    tok = fe_tokenizer(t.parser, Vector{UInt8}(k))
+    resize!(t.buf, length(t.buf) - (length(tok) + 1))
+    last && resize!(t.buf, length(t.buf) - 1)
+end
+
+# Bridge a PUSH-based producer (the transcriber calls `emit` per path) to PathMap's PULL-based
+# `serialize_paths_from_funcs(target, advance_f, path_f)`. Upstream inverts this with two Rust
+# coroutines resumed against each other; a `Channel` is Julia's own coroutine and does the same job,
+# streaming path-by-path rather than buffering the document. `take!` on a closed, drained Channel
+# throws InvalidStateException — that is the "no more paths" signal.
+function _paths_stream_to(target::IO, produce!::Function)::Int
+    produced = Ref(0)
+    ch = Channel{Vector{UInt8}}(256) do c
+        produced[] = produce!(p -> put!(c, copy(p)))
+    end
+    cur = Ref(UInt8[])
+    serialize_paths_from_funcs(target,
+        function ()
+            try
+                cur[] = take!(ch)
+                true
+            catch err
+                err isa InvalidStateException && return false
+                rethrow()
+            end
+        end,
+        () -> cur[])
+    produced[]
+end
+
+"""
+    space_json_to_paths(s, src, target) → Int
+
+upstream `Space::json_to_paths` (kernel/src/space.rs:564-581) — parse JSON and write every resulting
+path straight into `target` as a zlib `.paths` stream, WITHOUT building a trie. Returns the number of
+paths written.
+
+The `.paths` bytes are produced by PathMap's `serialize_paths_from_funcs`, the same deflate-level-7
+engine `serialize_paths` uses, so the output is the ordinary `.paths` format.
+"""
+function space_json_to_paths(s::Space, src, target::IO)::Int
+    bv = src isa Vector{UInt8} ? src : Vector{UInt8}(src)
+    _paths_stream_to(target, function (emit)
+        st = ASpaceTranscriber(emit)
+        json_parse!(JSONParser(bv), st)
+        st.count
+    end)
+end
+
+"""
+    space_jsonl_to_paths(s, src, target) → (lines, count)
+
+upstream `Space::jsonl_to_paths` (kernel/src/space.rs:583-616) — one JSON document per line, each
+filed under a `(JSONL <line-index-as-8-BE-bytes> …)` prefix, streamed to `target` as `.paths`.
+
+The prefix is built ONCE and only the 8 index bytes are rewritten per line (upstream pushes them,
+parses, then `wz.truncate(wz.len() - 8)`), so the arity/symbol header is shared by every line.
+"""
+function space_jsonl_to_paths(s::Space, src, target::IO)::Tuple{Int, Int}
+    bv = src isa Vector{UInt8} ? src : Vector{UInt8}(src)
+    lines = Ref(0)
+    parser = SpaceParser()
+
+    # (JSONL <8-byte index> <document>) — the constant head, built once
+    jsonl_tok = fe_tokenizer(parser, Vector{UInt8}("JSONL"))
+    head = UInt8[item_byte(ExprArity(UInt8(3))),
+                 item_byte(ExprSymbol(UInt8(length(jsonl_tok))))]
+    append!(head, jsonl_tok)
+    push!(head, item_byte(ExprSymbol(UInt8(8))))
+
+    count = _paths_stream_to(target, function (emit)
+        total = 0
+        buf = copy(head)
+        for line in split(String(copy(bv)), '\n')
+            isempty(line) && continue
+            append!(buf, reinterpret(UInt8, [hton(UInt64(lines[]))]))   # 8 bytes, big-endian
+            st = ASpaceTranscriber(emit; buf = buf, parser = parser)
+            json_parse!(JSONParser(Vector{UInt8}(line)), st)
+            resize!(buf, length(buf) - 8)                                # upstream's truncate(len-8)
+            lines[] += 1
+            total += st.count
+        end
+        total
+    end)
+    (lines[], count)
+end
+
 """
     space_load_json!(s, src) → Int
 
@@ -2398,6 +2558,7 @@ export SpaceParser
 export Space, new_space, space_val_count, space_statistics
 export space_add_all_sexpr!, space_remove_all_sexpr!
 export space_add_sexpr!, space_remove_sexpr!
+export ASpaceTranscriber, space_json_to_paths, space_jsonl_to_paths
 export space_dump_all_sexpr, space_dump_sexpr, space_load_json!, space_load_jsonl!, space_load_json_!
 export space_backup_tree, space_restore_tree!
 export space_backup_paths, space_restore_paths!
