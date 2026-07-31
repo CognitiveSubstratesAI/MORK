@@ -20,6 +20,51 @@ mork run probe.mm2 probe.raw    # ALWAYS to a FILE — stdout mangles the high b
 
 ---
 
+
+## 6. `#135` — quote loses variable coreference. CAUSE LOCALISED; fix is a DEVIATION, not a port
+
+Upstream issue **#135** (OPEN). `(exec 0 (,) (O (pure $r $r (tuple R (' ($a $a))))))` yields
+`(R ($a $b))` where `(R ($a $a))` is expected. **Our port reproduces it exactly.**
+
+⚠️ **There is NO upstream fix to port.** Upstream's latest commit is `45bdb9a` (2026-07-14) and the
+three commits ahead of our vendored `5464713` are all linalg work; the issue was filed 2026-07-20.
+Fixing this means DEVIATING from upstream on an OPEN issue.
+
+### Cause — every stage is individually correct, which is why it is hard to see
+
+Traced by instrumenting each stage with the real byte encodings:
+
+```
+parse (exec … (' ($a $a)))   -> …02 c0 81      NewVar + VarRef(1)   CORRECT
+expr_apply on the template   -> …02 c0 81      unchanged            CORRECT
+scope_eval! of (' ($a $a))   -> 02 c0 80       -> ($a $a)           CORRECT
+_expr_substitute_one_de_bruijn(tpl, result)  -> (R ($a $a))         CORRECT
+```
+
+The defect is a **scope mismatch, not a corruption**. In the enclosing expression `$r` is binder 0,
+so the quoted `$a` is binder **1** and its back-reference is `VarRef(1)`. The PureSink then evaluates
+the formula STANDALONE — `scope_eval!(s.scope, ExprSource(formula_buf, formula_start))`
+(`Sinks.jl:1065`) — where the same bytes mean something else: the NewVar is now binder **0**, so
+`VarRef(1)` points one past it and renders as a second, unrelated variable.
+
+Nothing rewrites the bytes; they are simply read in a scope with one fewer enclosing binder.
+
+### The fix, if we decide to deviate
+
+Re-base the formula's variable references when it is EXTRACTED, so the buffer handed to
+`scope_eval!` is self-contained: subtract `_expr_newvars(formula_buf, 1, formula_start - 1)` — the
+count of binders preceding the formula — from every `VarRef` in the span, and raise if any index
+would go negative (that would be a reference to a binder genuinely outside the formula).
+
+This belongs at the extraction site (`Sinks.jl:1030-1037`), NOT at the quote splice: `scope_eval!`
+receives a bare `(buf, position)` and has no way to know how many enclosing binders were dropped.
+
+⚠️ **NOT APPLIED.** It changes PureSink semantics on a hot path guarded by 2947 tests and 249
+conformance probes, and it makes us diverge from upstream on an issue that is still open — so
+whatever upstream eventually does, we would then have to reconcile. `test/integration/upstream_issues.jl`
+currently PINS the parity behaviour, with a note saying to port upstream's fix rather than edit the
+assertion. Applying this fix means deliberately flipping that pin.
+
 ## 1. `mod_i*` aborts on divisor 0 and on `typemin % -1`
 
 `kernel/src/pure.rs`, the `mod_i8/16/32/64/128` arms. Rust's `%` panics on a zero divisor, and
