@@ -4751,6 +4751,12 @@ const _MORK_TS = @testset "MORK" begin
     # binary skips — silent, across every typed op. Pinned against upstream's own dump.
     include("integration/pure_operand_width.jl")
 
+    # ── Upstream ISSUE reproducers (2026-07-31) ──────────────────────────────
+    # Every behavioural issue on trueagi-io/MORK, run against our port. CLOSED ones assert the fixed
+    # behaviour (a failure = our regression); OPEN ones pin parity (a failure = upstream changed, so
+    # re-read the issue); #47 pins a deliberate divergence where upstream now aborts and we skip.
+    include("integration/upstream_issues.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 
