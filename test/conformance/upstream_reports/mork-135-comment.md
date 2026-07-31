@@ -58,15 +58,31 @@ the back-reference to `$b` lands one PAST the last binder, so it materialises as
 fresh variable `$c` that appears nowhere in the input. Both follow from the single off-by-one and
 were not part of the original report.
 
-## Candidate fix
+## Candidate fix — the correct base is ALREADY COMPUTED, it is just discarded
 
-Re-base the formula's variable references when it is EXTRACTED, so the slice handed to
-`scope.eval` is self-contained: subtract the number of binders preceding the formula (`newvars` over
-`p[..clen]`) from every `VarRef` in the span, and error if any index would go negative — that would
-be a reference to a binder genuinely outside the formula, which cannot be resolved standalone.
+`ExprEnv::args` threads the de Bruijn base across siblings (`env.v += se_c`), so the formula's env
+already carries the number of binders that precede it. Measured on this exact program:
 
-It belongs at the extraction site rather than in the quote branch: `EvalScope::eval` receives a bare
-`ExprSource` and has no way to know how many enclosing binders were dropped.
+```
+arg 1  v=0   pure
+arg 2  v=0   $a                          <- template
+arg 3  v=1   $a                          <- pattern
+arg 4  v=1   (tuple R (' ($a $b)))       <- call; its VarRefs are relative to base 1
+```
+
+`v=1` is exactly the observed off-by-one. But `PureSink` then evaluates the call as a bare slice —
+`self.scope.eval(ExprSource::new(&p[clen]))` — which throws that base away.
+
+So the fix is to honour the base the env already has: re-base the call's `VarRef`s down by
+`call_env.v` before evaluating (erroring if an index would go negative, i.e. a reference to a binder
+genuinely outside the call, unresolvable standalone). Equivalently, give `EvalScope::eval` the base
+and let it resolve against it — the bare `ExprSource` is what makes the information unavailable today.
+
+Worth noting: **#137 already introduces the right vehicle.** Its `ExprEnv::subterms(k, dest)` extracts
+exactly this threading so it works on the sinks' bare operand run, and its own comment says the three
+subterms then "share one variable namespace and the pattern's VarRefs resolve to the template's
+introductions". Routing the *call* operand through the same path — and using its `v` when evaluating
+— looks like it would close this issue on the same mechanism, rather than needing a separate one.
 
 ## Note on a possibly-related defect in the same branch
 

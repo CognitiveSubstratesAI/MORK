@@ -31,7 +31,7 @@ resolution's own program corrected that.)
 | # | issue | ours |
 |---|---|---|
 | 135 | quotation does not handle variable references | **same behaviour** — `(R ($a $b))`. Faithful parity with current upstream. |
-| 136 | pure fails to capture a pattern output | upstream PANICS (`unrecognized sink`); ours produces no atoms. Both fail; ours does not abort. |
+| 136 | pure fails to capture a pattern output | upstream PANICS (`unrecognized sink`); ours produces no atoms. Both fail; ours does not abort. **PR #137 (OPEN, by MesTTo, 2026-07-22) implements this** — symbol and compound capture patterns in the pure sink, +198/-39 across 3 files. **When it merges, PORT IT** rather than inventing our own; `upstream_issues.jl` pins the current both-fail behaviour. |
 
 ## Divergence worth knowing about
 
@@ -44,6 +44,17 @@ loc.variables() == 0` (commit 28da5f9). Ours silently skips the exec instead. Sa
 `#1` `#2` `#4` `#5` `#15` `#16` `#30` `#33` — licence, docs, build, `Debug` derives.
 `#35` — Rust API usage (`parse_sexpr` signature), not a kernel behaviour.
 `#36` — a PeTTa vs hyperon-experimental `superpose`/`if` discrepancy at the MeTTa layer, not MORK.
+
+## In-flight upstream work to watch
+
+**PR #137** — *"Implement symbol and compound capture patterns in the pure sink"* (OPEN, 2026-07-22,
+`pr/mork-pure-compound-capture`). Fixes #136. Two things make it directly relevant to us:
+
+1. It is the fix for an issue our tests currently pin as "both engines fail". **Port it on merge.**
+2. It adds `ExprEnv::subterms(k, dest)` — an extraction of the de Bruijn threading already inside
+   `args()` (`env.v += se_c`), so it works on the sinks' bare operand run without a synthetic
+   `Arity(k)` wrapper. **That is the mechanism our #135 fix needs**, so the two issues may close
+   together. Our comment on #135 says so.
 
 ## Duplicate check for our seven reports
 
