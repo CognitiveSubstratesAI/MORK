@@ -211,4 +211,64 @@ _e(s) = M.sexpr_to_expr(s)
         @test !M.expr_is_ground(au("(a a)", "(b b)"))
         @test M.expr_is_ground(au("(a a)", "(a a)"))
     end
+
+    @testset "substitute_symbols — symbols mapped, structure preserved" begin
+        outz() = M.ExprZipper(M.Expr(Vector{UInt8}(undef, 256)), 1)
+        upper(b) = Vector{UInt8}(uppercase(String(copy(collect(b)))))
+
+        oz = outz(); M.expr_substitute_symbols(_e("(a b)"), oz, upper)
+        @test M.expr_span(M.Expr(oz.root.buf[1:(oz.loc - 1)])) == M.expr_span(_e("(A B)"))
+
+        # identity substitution must round-trip byte-for-byte
+        oz2 = outz(); M.expr_substitute_symbols(_e("(f (g a) b)"), oz2, collect)
+        @test oz2.root.buf[1:(oz2.loc - 1)] == M.expr_span(_e("(f (g a) b)"))
+
+        # variables and arity are copied VERBATIM — only symbols go through subst
+        oz3 = outz(); M.expr_substitute_symbols(_e("(\$x a \$y)"), oz3, upper)
+        got = M.Expr(oz3.root.buf[1:(oz3.loc - 1)])
+        @test M.expr_variables(got) == 2
+        @test M.expr_max_arity(got) == 0x03
+
+        # a length-changing substitution still produces a well-formed expression
+        oz4 = outz(); M.expr_substitute_symbols(_e("(a b)"), oz4, b -> Vector{UInt8}("xyz"))
+        @test M.expr_span(M.Expr(oz4.root.buf[1:(oz4.loc - 1)])) == M.expr_span(_e("(xyz xyz)"))
+    end
+
+    # ── extract_data — pattern/data matching with a TYPED failure taxonomy ───────────────────────
+    # upstream Expr::extract_data (lib.rs:805-863). The 12 ExtractFailure variants are load-bearing:
+    # `*EarlyMismatch` = the SHAPE disagreed (size/arity), `*Mismatch` = shape matched but CONTENT
+    # differed. Collapsing them would discard exactly what a caller branches on.
+    @testset "extract_data" begin
+        ed(pat, dat) = M.expr_extract_data(_e(pat), M.ExprZipper(_e(dat), 1))
+        # upstream returns Result<Vec<Expr>, ExtractFailure>, so a failure is a VALUE, not a throw
+        kind_of(f) = begin r = f(); r isa M.ExtractFailure ? r.kind : nothing end
+
+        # FIRST establish how our parser encodes a repeated variable name, rather than assuming:
+        # if `($x $x)` is binder+back-reference, byte 3 is a VarRef; if two binders, a NewVar.
+        two_x = _e("(\$x \$x)")
+        repeated_is_ref = M.byte_item(two_x.buf[3]) isa M.ExprVarRef
+        @info "parser: repeated var name encodes as" repeated_is_ref
+
+        # ground pattern vs identical data: matches, binds nothing
+        @test ed("(a b)", "(a b)") == M.Expr[]
+
+        # a pattern variable binds the data sub-expression it covers
+        b1 = ed("(\$x b)", "(a b)")
+        @test length(b1) == 1
+        @test M.expr_span(b1[1]) == M.expr_span(_e("a"))
+
+        # binding to a whole SUB-EXPRESSION must skip its entire span, not one item
+        b2 = ed("(\$x)", "((f g))")
+        @test length(b2) == 1
+        @test M.expr_span(b2[1]) == M.expr_span(_e("(f g)"))
+
+        # ── the failure taxonomy ──
+        @test kind_of(() -> ed("(a b)", "(a c)")) === M.EF_SYMBOL_MISMATCH        # bytes differ
+        @test kind_of(() -> ed("(a bb)", "(a c)")) === M.EF_SYMBOL_EARLY_MISMATCH # SIZES differ
+        @test kind_of(() -> ed("(a b)", "(a b c)")) === M.EF_EXPR_EARLY_MISMATCH  # arities differ
+        # data may not INTRODUCE a variable — the pattern is what carries them
+        @test kind_of(() -> ed("(a b)", "(a \$x)")) === M.EF_INTRODUCED_VAR
+        # a symbol pattern against a compound datum is a plain type mismatch
+        @test kind_of(() -> ed("(a b)", "(a (c d))")) === M.EF_TYPE_MISMATCH
+    end
 end

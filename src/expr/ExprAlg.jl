@@ -1103,6 +1103,143 @@ function expr_anti_unify(x::MORK.Expr, other::MORK.Expr, oz::ExprZipper)
     (left, right)
 end
 
+# =====================================================================
+# extract_data — pattern/data matching with a TYPED failure taxonomy (upstream lib.rs:805-863)
+# =====================================================================
+
+# ── `ExtractFailure` / `ExtractFailureKind` ARE ALREADY PORTED, in Expr.jl:587-618 ───────────────
+#
+# 🔴 I DUPLICATED THEM HERE AND BROKE PRECOMPILATION ("Method definition
+# (::Type{ExtractFailureKind})(Integer) overwritten"). The rename/definition-site filter that caught
+# five false absences in this file was applied to the FUNCTION `extract_data` — which really was
+# absent — and NOT to the TYPES it needs, which were already there with identical variant names.
+# ⇒ Filter the TYPES a port needs, not just its entry point.
+#
+# The pre-existing type is also the better one, and more faithful: it holds real `ExprTag` values for
+# the type-mismatch variants (upstream `RefTypeMismatch(u8, Tag, Tag)`), where my duplicate stored
+# raw bytes — and it is NOT `<: Exception`, i.e. a returned VALUE, matching upstream's
+# `Result<Vec<Expr>, ExtractFailure>`. My version threw. Adopted the existing design on both counts;
+# only `idx` was added to it, because the five `Ref*` variants carry an index PLUS two values.
+
+"""
+    expr_extract_data(pattern, iz) → Vector{Expr}
+
+upstream `Expr::extract_data` (lib.rs:805-863) — walk `pattern` (self) against the data zipper `iz`,
+binding each pattern variable to the data sub-expression it covers, and returning those bindings.
+
+⚠️ ONE DELIBERATE SIMPLIFICATION. Upstream's `(NewVar, Arity)` branch measures the bound
+sub-expression by walking a throwaway zipper to exhaustion:
+
+    let mut ez1 = ExprZipper::new(iz.subexpr());
+    let x = loop { if !ez1.next() { break ez1.finish_span(); } };
+    iz.loc += x.len();
+
+`expr_span` computes that span directly, so this is one call rather than a walk. Same result — noted
+so it does not read as a missed detail.
+
+(Upstream's `(VarRef, Arity)` branch also carries two leftover `println!` debug lines; not ported.)
+"""
+function expr_extract_data(pattern::MORK.Expr,
+                           iz::ExprZipper)::Union{Vector{MORK.Expr}, ExtractFailure}
+    ez = ExprZipper(pattern, 1)
+    bindings = MORK.Expr[]
+    while true
+        pt = byte_item(ez.root.buf[ez.loc])
+        dt = byte_item(iz.root.buf[iz.loc])
+
+        if dt isa ExprNewVar
+            return (ExtractFailure(EF_INTRODUCED_VAR))
+        elseif dt isa ExprVarRef
+            return (ExtractFailure(EF_RECURRENT_VAR; idx = dt.idx))
+        elseif pt isa ExprNewVar
+            push!(bindings, ez_subexpr(iz))
+            if dt isa ExprSymbol
+                ez_next!(iz)
+            else                                    # Arity: skip the WHOLE sub-expression
+                iz.loc += length(expr_span(iz.root, iz.loc))
+            end
+            ez_next!(ez) || return bindings
+        elseif pt isa ExprVarRef
+            i = Int(pt.idx)
+            bt = byte_item(bindings[i + 1].buf[1])
+            if dt isa ExprSymbol
+                bt isa ExprSymbol ||
+                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx,
+                                         tag_a = pt, tag_b = dt))
+                bt.size == dt.size ||
+                    return (ExtractFailure(EF_REF_SYMBOL_EARLY_MISMATCH; idx = pt.idx, a = bt.size, b = dt.size))
+                n = Int(dt.size)
+                av = bindings[i + 1].buf[2:(1 + n)]
+                bv = iz.root.buf[(iz.loc + 1):(iz.loc + n)]
+                av == bv || return (ExtractFailure(EF_REF_SYMBOL_MISMATCH; idx = pt.idx, sym_a = av, sym_b = bv))
+                ez_next!(iz)
+            elseif dt isa ExprArity
+                bt isa ExprArity ||
+                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx,
+                                         tag_a = pt, tag_b = dt))
+                bt.arity == dt.arity ||
+                    return (ExtractFailure(EF_REF_EXPR_EARLY_MISMATCH; idx = pt.idx, a = bt.arity, b = dt.arity))
+                av = collect(expr_span(bindings[i + 1]))
+                bv = collect(expr_span(iz.root, iz.loc))
+                av == bv || return (ExtractFailure(EF_REF_EXPR_MISMATCH; idx = pt.idx, sym_a = av, sym_b = bv))
+                ez_next!(iz)
+            else
+                return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx, tag_a = pt, tag_b = dt))
+            end
+            ez_next!(ez) || return bindings
+        elseif pt isa ExprSymbol && dt isa ExprSymbol
+            pt.size == dt.size ||
+                return (ExtractFailure(EF_SYMBOL_EARLY_MISMATCH; a = pt.size, b = dt.size))
+            n = Int(pt.size)
+            av = ez.root.buf[(ez.loc + 1):(ez.loc + n)]
+            bv = iz.root.buf[(iz.loc + 1):(iz.loc + n)]
+            av == bv || return (ExtractFailure(EF_SYMBOL_MISMATCH; sym_a = av, sym_b = bv))
+            ez_next!(iz)
+            ez_next!(ez) || return bindings
+        elseif pt isa ExprArity && dt isa ExprArity
+            pt.arity == dt.arity ||
+                return (ExtractFailure(EF_EXPR_EARLY_MISMATCH; a = pt.arity, b = dt.arity))
+            ez_next!(iz)
+            ez_next!(ez) || return bindings
+        else
+            return (ExtractFailure(EF_TYPE_MISMATCH; tag_a = pt, tag_b = dt))
+        end
+    end
+end
+
+"""
+    expr_substitute_symbols(x, oz, subst) → SubArray{UInt8}
+
+upstream `Expr::substitute_symbols` (lib.rs:866-880) — copy `x` into `oz`, passing every SYMBOL
+through `subst` and leaving variables and arity nodes byte-identical.
+
+⚠️ Upstream dispatches on `ez.item()`, which returns `Err(bytes)` for a symbol — which is why its
+`Ok(Tag::SymbolSize(_))` arm is `unreachable!()`. The symbol case is handled entirely by the `Err`
+arm; there is no path where a SymbolSize reaches the `Ok` side. We branch on the tag directly, which
+is the same partition without the Result detour.
+
+Writer note: unlike `write_var_ref`/`write_new_var`, upstream's `write_symbol` is followed by
+`oz.loc += 1 + ns.len()`, and OUR `ez_write_symbol!` advances by exactly that — so here our writer
+is used directly (one call for upstream's two lines). See the equating family for the case where
+that is NOT true.
+"""
+function expr_substitute_symbols(x::MORK.Expr, oz::ExprZipper, subst)
+    ez = ExprZipper(x, 1)
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprSymbol
+            n = Int(t.size)
+            ez_write_symbol!(oz, subst(view(ez.root.buf, (ez.loc + 1):(ez.loc + n))))
+        else
+            # NewVar / VarRef / Arity are copied VERBATIM — upstream's three Ok arms are identical
+            ez_ensure!(oz, oz.loc)
+            oz.root.buf[oz.loc] = ez.root.buf[ez.loc]
+            oz.loc += 1
+        end
+        ez_next!(ez) || return view(oz.root.buf, 1:(oz.loc - 1))
+    end
+end
+
 """
     expr_prefix_non_proper(x) → SubArray{UInt8}
 
@@ -1147,6 +1284,7 @@ ez_subexpr(z::ExprZipper)::MORK.Expr = MORK.Expr(z.root.buf[z.loc:end])
 export expr_variables, expr_is_ground, expr_max_arity, expr_has_unbound
 export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_non_proper
 export expr_unbind, expr_equate_var, expr_equate_var_inplace!, expr_equate_vars_inplace!
+export expr_substitute_symbols, expr_extract_data
 export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER

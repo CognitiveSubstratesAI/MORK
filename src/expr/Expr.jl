@@ -607,14 +607,25 @@ struct ExtractFailure
     sym_b::Vector{UInt8}
     tag_a::Union{Nothing, ExprTag}
     tag_b::Union{Nothing, ExprTag}
+    # `idx` added 2026-07-31 when `expr_extract_data` (ExprAlg.jl) became this type's FIRST consumer.
+    # The five `Ref*` variants carry a bound-variable index IN ADDITION to their two payload values —
+    # e.g. upstream `RefSymbolEarlyMismatch(u8, u8, u8)` is (index, size, bound_size) — and `a`/`b`
+    # alone cannot hold three. Defaults to 0 for the variants that do not use it.
+    idx::UInt8
 end
 
-ExtractFailure(k::ExtractFailureKind) =
-    ExtractFailure(k, 0x00, 0x00, UInt8[], UInt8[], nothing, nothing)
+# NOTE: there is deliberately NO 1-arg positional `ExtractFailure(k)` here. Julia does not dispatch
+# on keyword arguments, so it would share a signature with the keyword form below and precompilation
+# fails with "Method definition ... overwritten". The keyword form covers `ExtractFailure(k)`.
 ExtractFailure(k::ExtractFailureKind, a::UInt8) =
-    ExtractFailure(k, a, 0x00, UInt8[], UInt8[], nothing, nothing)
+    ExtractFailure(k, a, 0x00, UInt8[], UInt8[], nothing, nothing, 0x00)
 ExtractFailure(k::ExtractFailureKind, a::UInt8, b::UInt8) =
-    ExtractFailure(k, a, b, UInt8[], UInt8[], nothing, nothing)
+    ExtractFailure(k, a, b, UInt8[], UInt8[], nothing, nothing, 0x00)
+
+"Keyword form — only the fields a variant actually carries need naming."
+ExtractFailure(k::ExtractFailureKind; a = 0x00, b = 0x00, sym_a = UInt8[], sym_b = UInt8[],
+               tag_a = nothing, tag_b = nothing, idx = 0x00) =
+    ExtractFailure(k, UInt8(a), UInt8(b), sym_a, sym_b, tag_a, tag_b, UInt8(idx))
 
 # =====================================================================
 # expr_parse_str — compile-time-style string → Expr bytes
