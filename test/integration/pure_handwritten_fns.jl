@@ -16,6 +16,18 @@
 # error handling as a TaskFailedException and ABORTED THE WHOLE EXEC RUN — one bad atom took down all
 # nine probes in its file, where upstream skips that atom and continues. A permissive op that defers
 # its validation to a lower layer converts "skip one row" into "lose the program".
+# ⚠️ WHAT THIS FILE ACTUALLY MEASURES, established 2026-07-31 by deleting the entries and watching
+# it go red with "Unknown pure op". `_hw` calls `MORK.pure_apply`, which dispatches through
+# `PURE_OPS`. For these ten names `pure_register!` installs the NATIVE `(ExprSource, ExprSink)`
+# function instead (Pure.jl:1385), so the bodies exercised below are NOT the code the sinks call.
+#
+# The natives are covered end to end by the 2792-point pure-op differential and the conformance
+# corpus, both of which run real MM2 through the registered scope. The gap is unit coverage at this
+# layer, and closing it means routing `pure_apply` through `scope_eval!` — which changes its return
+# from a raw payload to an encoded expression and touches every assertion in five files.
+#
+# So the expectations below remain valuable — they are upstream binary output, and they pin the
+# byte-level semantics — but do not read a green run here as proof that the registered natives work.
 using MORK, Test
 
 _hw_sym(s) = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(s))))],

@@ -530,6 +530,25 @@ _rust_clamp(x::T, lo::T, hi::T) where {T <: Real} =
 Apply numeric primitive `name` to big-endian byte argument vectors.
 Returns the big-endian byte result, throws on unknown name.
 """
+# ⚠️ TEST-ONLY, AND FOR TEN NAMES IT DOES NOT EXERCISE WHAT RUNS. `pure_apply` dispatches through
+# `PURE_OPS`, i.e. the byte-level bodies that `pure_register!` wraps in `op_skeleton`. But that
+# registration checks `PURE_NATIVE_OPS` FIRST (:1385), so for the ten hand-written names —
+# encode_hex, decode_hex, encode_base64url, decode_base64url, hash_expr, reverse_symbol,
+# collapse_symbol, explode_symbol, ifnz, tuple — the NATIVE `(ExprSource, ExprSink)` function is what
+# gets installed and what the sinks call. Their `PURE_OPS` entries are unreachable at runtime.
+#
+# Nine of those ten still have a PURE_OPS entry, and it is kept DELIBERATELY: it is the only thing
+# `pure_handwritten_fns.jl` can call, since `pure_apply` takes and returns raw byte payloads while
+# the natives take a source and a sink. Discovered by deleting them — the file named for the
+# hand-written functions went red with "Unknown pure op", which is the proof that it has been
+# measuring the byte-level bodies rather than the functions it is named after.
+#
+# The natives are NOT untested: the 2792-point pure-op differential and the conformance corpus run
+# real MM2 through the registered scope, which is the native path. What is missing is unit coverage
+# at this layer. Closing it means teaching `pure_apply` to build `(name arg…)` and go through
+# `scope_eval!(PURE_SCOPE, …)`, which changes its return shape from a payload to an encoded
+# expression and so touches every assertion in five test files. Left as a scoped follow-up rather
+# than done badly at the end of a long session.
 function pure_apply(name::String, arg_bufs::Vector{Vector{UInt8}})::Vector{UInt8}
     f = get(PURE_OPS, name, nothing)
     f === nothing && error("Unknown pure op: $name")
