@@ -109,7 +109,10 @@ snake(n) = lowercase(replace(n, r"(?<!^)(?=[A-Z])" => "_"))
 # Every owner-prefix convention this port uses. See the PREFIXES note in the header.
 const PREFIXES = ("", "expr_", "ez_", "ee_", "_expr_", "space_", "_space_", "sink_", "_sink_",
                   "source_", "_source_", "pure_", "_pure_", "scope_", "eval_", "trie_", "morkl_",
-                  "fe_", "sexpr_", "json_", "dyck_", "zipper_", "_")
+                  "fe_", "sexpr_", "json_", "dyck_", "zipper_", "_",
+                  # PathMap conventions
+                  "wz_", "_wz_", "rz_", "_rz_", "node_", "_node_", "bn_", "_bn_", "ll_", "_ll_",
+                  "pm_", "_pm_", "zh_", "_zh_", "trie_", "_trie_", "cf_", "_cf_")
 
 function main(args)
     isempty(args) && (println("usage: rust_fn_inventory.jl <upstream.rs> [our_dirs...]"); return)
