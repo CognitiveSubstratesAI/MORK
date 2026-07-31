@@ -97,6 +97,228 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
     end
 end
 
+"""
+    FoldTruncated
+
+The truncation result of [`expr_traverseh_truncated`] — upstream's
+`Err((Vec<(u8, A)>, u8))` (lib.rs:1072). `stack` is the fold's PARTIAL accumulator stack at the cut
+point, outermost first. `tag` is upstream's second component, which its only `return Err` writes as
+a literal `0u8`; kept so the shape matches, never anything else.
+"""
+struct FoldTruncated{A}
+    stack::Vector{Tuple{UInt8, A}}
+    tag::UInt8
+end
+
+"""
+    expr_traverseh_truncated(h0, x, j0, m, cbs...) → (h, value, j_end) | FoldTruncated
+
+upstream `execute_loop_truncated` (expr/src/lib.rs:1072-1112) — [`expr_traverseh`] (upstream's
+`execute_loop`) with a BYTE BUDGET: on reaching offset `m` the walk stops and hands back the partial
+accumulator stack instead of a value, so a caller can resume or inspect a prefix fold.
+
+⚠️ ZERO consumers upstream, including its own tests — ported for completeness, not for a caller.
+
+⚠️ Arity(0) follows OUR `expr_traverseh`, which finalizes an empty node immediately. Upstream pushes
+`(0, acc)` and then decrements with `wrapping_sub`, taking the counter to 255 rather than 0, so an
+empty node never finalizes and the walk consumes the next 255 items as its children. Reproducing
+that would import a defect into a function with no caller to justify it; the deviation is the same
+one `expr_traverseh` already makes and is tested here.
+"""
+function expr_traverseh_truncated(h0, x::MORK.Expr, j0::Int, m::Int,
+    new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb)
+    h = h0
+    stack = Tuple{UInt8, Any}[]
+    j = j0
+
+    while true
+        j == m && return FoldTruncated(stack, UInt8(0))
+        b = x.buf[j + 1]
+        tag = byte_item(b)
+
+        local value
+        if tag isa ExprNewVar
+            j += 1
+            h, value = new_var_cb(h, j - 1)
+        elseif tag isa ExprVarRef
+            j += 1
+            h, value = var_ref_cb(h, j - 1, tag.idx)
+        elseif tag isa ExprSymbol
+            sz = Int(tag.size)
+            sl = view(x.buf, (j + 2):(j + 1 + sz))
+            h, value = symbol_cb(h, j, sl)
+            j += sz + 1
+        elseif tag isa ExprArity
+            h, acc = zero_cb(h, j, tag.arity)
+            j += 1
+            if tag.arity == 0
+                h, value = finalize_cb(h, j, acc)
+            else
+                push!(stack, (tag.arity, acc))
+                continue
+            end
+        else
+            error("unknown tag byte 0x$(string(b, base=16))")
+        end
+
+        while true
+            isempty(stack) && return (h, value, j)
+            k, acc = stack[end]
+            h, new_acc = add_cb(h, j, acc, value)
+            k -= UInt8(1)
+            if k == 0
+                pop!(stack)
+                h, value = finalize_cb(h, j, new_acc)
+            else
+                stack[end] = (k, new_acc)
+                break
+            end
+        end
+    end
+end
+
+"""
+    expr_leaves(x) → Int
+    expr_expressions(x) → Int
+    expr_symbols(x) → Int
+
+upstream `Expr::leaves` / `expressions` / `symbols` (lib.rs:319/323/327) — the remaining members of
+the one-line `traverse!` counter family whose other two, `newvars` and `variables`, were already
+ported. `leaves` counts NewVar + VarRef + Symbol (every non-Arity item), `expressions` counts Arity
+nodes, `symbols` counts Symbols.
+"""
+function expr_leaves(x::MORK.Expr)::Int
+    c = 0; i = 1
+    @inbounds while i <= length(x.buf)
+        t = byte_item(x.buf[i])
+        if t isa ExprSymbol; c += 1; i += 1 + Int(t.size)
+        elseif t isa ExprArity; i += 1
+        else; c += 1; i += 1
+        end
+    end
+    c
+end
+
+function expr_expressions(x::MORK.Expr)::Int
+    c = 0; i = 1
+    @inbounds while i <= length(x.buf)
+        t = byte_item(x.buf[i])
+        if t isa ExprSymbol; i += 1 + Int(t.size)
+        elseif t isa ExprArity; c += 1; i += 1
+        else; i += 1
+        end
+    end
+    c
+end
+
+function expr_symbols(x::MORK.Expr)::Int
+    c = 0; i = 1
+    @inbounds while i <= length(x.buf)
+        t = byte_item(x.buf[i])
+        if t isa ExprSymbol; c += 1; i += 1 + Int(t.size)
+        else; i += 1
+        end
+    end
+    c
+end
+
+"""
+    expr_difference(x, other) → Int | nothing
+
+upstream `Expr::difference` (lib.rs:363-376) — the 1-based offset of the first item at which two
+expressions differ, or `nothing` when neither runs out before disagreeing.
+
+The unconditional sibling of `expr_difference_under` (lib.rs:378), which takes a predicate letting
+chosen pairs count as equal.
+"""
+function expr_difference(x::MORK.Expr, other::MORK.Expr)::Union{Nothing, Int}
+    ez = ExprZipper(x, 1)
+    oz = ExprZipper(other, 1)
+    while true
+        a = byte_item(ez.root.buf[ez.loc])
+        b = byte_item(oz.root.buf[oz.loc])
+        same = if a isa ExprSymbol && b isa ExprSymbol
+            a.size == b.size &&
+                view(ez.root.buf, (ez.loc + 1):(ez.loc + Int(a.size))) ==
+                view(oz.root.buf, (oz.loc + 1):(oz.loc + Int(b.size)))
+        else
+            ez.root.buf[ez.loc] == oz.root.buf[oz.loc]
+        end
+        same || return ez.loc
+        n1 = ez_next!(ez)
+        n2 = ez_next!(oz)
+        (n1 && n2) || return nothing
+    end
+end
+
+"""
+    expr_unify_method(x, other, oz) → nothing | UnificationFailure
+
+upstream `Expr::_unify` (lib.rs:744-766) — unify, apply into `oz`, and THEN enforce the occurs check.
+
+This is not a wrapper around [`expr_unify`]; it is strictly stronger, and upstream says why in its
+own comment: *"the unify __function__ does not do full occurs check, this enforces it __after__
+apply, making the unify __method__ cycle safe"*. `apply` records every cyclic variable in `cycled`;
+if that map is non-empty the result is `Occurs` even though `unify` itself returned Ok.
+
+Upstream marks it `#[deprecated]` and `#[doc(hidden)]`, yet routes its only public cycle-safe entry
+point ([`expr_unifiable`]) through it — so the deprecation flags the API, not the behaviour.
+"""
+function expr_unify_method(x::MORK.Expr, other::MORK.Expr,
+                           oz::ExprZipper)::Union{Nothing, UnificationFailure}
+    stack = [(ExprEnv(0, x), ExprEnv(1, other))]
+    bindings = expr_unify(stack)
+    bindings isa UnificationFailure && return bindings
+
+    cycled = Dict{ExprVar, UInt8}()
+    expr_apply(UInt8(0), UInt8(0), UInt8(0), ExprZipper(x, 1), bindings, oz,
+               cycled, ExprVar[], ExprVar[])
+    if !isempty(cycled)
+        # upstream takes `cycled.first_key_value()` — the BTreeMap's least key, so the choice is
+        # ordered, not arbitrary. A Julia Dict has no order, so take the minimum explicitly.
+        return UnificationFailure(Val(:occurs), minimum(keys(cycled)), ExprEnv(1, other))
+    end
+    nothing
+end
+
+"""
+    expr_unifiable(x, other) → Bool
+
+upstream `Expr::unifiable` (lib.rs:721-734) — can these two unify, cycles included.
+
+Upstream runs the full [`expr_unify_method`] into a discarded 100_000-byte thread-local scratch
+buffer purely to reach the post-apply occurs check; the applied output is never read. Ours grows on
+demand instead of reserving a fixed block, so it starts small.
+"""
+function expr_unifiable(x::MORK.Expr, other::MORK.Expr)::Bool
+    expr_unify_method(x, other, ExprZipper(MORK.Expr(zeros(UInt8, 256)), 1)) === nothing
+end
+
+"""
+    ee_v_incr_traversal(ee) → ExprEnv
+
+upstream `ExprEnv::v_incr_traversal` (lib.rs:1765) — advance the env's variable counter `v` past
+every NewVar in the sub-expression it points at.
+
+Upstream returns a `TraverseSide` OBJECT (lib.rs:1745): a `Traversal` whose only non-empty method is
+`new_var`, which does `self.ee.v += 1`. It is an object there because `unify` drives it incrementally
+through `match2`, walking two expressions in step (lib.rs:2070) and mutating it as it goes. Our fold
+threads that state through `h` instead of a `&mut self`, so the same traversal IS this: `h = v`, and
+the NewVar callback increments it. `expr_unify` — already ported and tested — does this bookkeeping
+inline, exactly as upstream's `unify` is the sole user of `TraverseSide`.
+"""
+function ee_v_incr_traversal(ee::ExprEnv)::ExprEnv
+    (v, _, _) = expr_traverseh(
+        Int(ee.v), ee.base, Int(ee.offset),
+        (h, o) -> (h + 1, nothing),          # new_var — the only method upstream implements
+        (h, o, r) -> (h, nothing),
+        (h, o, sl) -> (h, nothing),
+        (h, o, a) -> (h, nothing),
+        (h, o, acc, sub) -> (h, nothing),
+        (h, o, acc) -> (h, nothing))
+    ExprEnv(ee.n, UInt8(v), ee.offset, ee.base)
+end
+
 # Convenience: traverse over the sub-expression of an ExprEnv
 function _ee_traverseh(
     h0, ee::ExprEnv, new_var_cb, var_ref_cb, symbol_cb, zero_cb, add_cb, finalize_cb
@@ -1420,6 +1642,9 @@ export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_n
 export expr_unbind, expr_equate_var, expr_equate_var_inplace!, expr_equate_vars_inplace!
 export expr_substitute_symbols, expr_extract_data
 export expr_substitute, expr_transform_data, expr_transformed
+export expr_traverseh_truncated, FoldTruncated, ee_v_incr_traversal
+export expr_leaves, expr_expressions, expr_symbols, expr_difference
+export expr_unify_method, expr_unifiable
 export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER

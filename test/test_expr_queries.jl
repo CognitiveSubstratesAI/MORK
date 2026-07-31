@@ -484,4 +484,109 @@ _e(s) = M.sexpr_to_expr(s)
         n = 1; while M.ez_gnext!(r); n += 1; end
         @test n == 4                                             # root + 3 children, walkable again
     end
+
+    @testset "serialize2 / serialize_highlight" begin
+        _f = M.expr_parse_str
+        # VARNAMES pinned against upstream's literal table (lib.rs:897)
+        @test M.EXPR_VARNAMES[1:11] == ["\$a","\$b","\$c","\$d","\$e","\$f","\$g","\$h","\$i","\$j","\$x10"]
+        @test length(M.EXPR_VARNAMES) == 64          # the Rule-of-64 ceiling on VarRef
+
+        # These three are the upstream RELEASE BINARY's dump output, transcribed from a run of
+        # `mork run` on `(foo bar) / (pat $x) / (twice $y $y) / (two $a $b)`.
+        @test M.expr_serialize2(_f("[2] foo bar"))   == "(foo bar)"
+        @test M.expr_serialize2(_f("[2] pat \$"))     == "(pat \$a)"
+        @test M.expr_serialize2(_f("[3] two \$ \$"))   == "(two \$a \$b)"
+        @test M.expr_serialize2(_f("[3] twice \$ _1")) == "(twice \$a \$a)"
+        # a back-reference prints the SAME name as its binder — that is the whole difference from
+        # `expr_serialize`, which renders the pair as `\$` and `_1`
+        @test M.expr_serialize(_f("[3] twice \$ _1"))  == "(twice \$ _1)"
+
+        # highlight: byte offsets are 1-based here (upstream's are 0-based)
+        e = _f("[3] f a b")            # 1=[3]  2=f  4=a  6=b
+        @test M.expr_serialize_highlight(e; target = 4) == "(f \e[43ma\e[0m b)"
+        # an Arity target closes AFTER its `)` — the accumulator carries the end code
+        @test M.expr_serialize_highlight(e; target = 1) == "\e[43m(f a b)\e[0m"
+        # a target that matches nothing leaves the output identical to serialize2
+        @test M.expr_serialize_highlight(e; target = 99) == M.expr_serialize2(e)
+        # nested: highlight a whole sub-expression
+        @test M.expr_serialize_highlight(_f("[3] f [2] g x \$"); target = 4) ==
+              "(f \e[43m(g x)\e[0m \$a)"
+    end
+
+    @testset "traverseh_truncated / v_incr_traversal" begin
+        _f = M.expr_parse_str
+        # a counting fold: h = number of items visited
+        cnt = (h, o) -> (h + 1, nothing)
+        cbs = (cnt, (h, o, r) -> (h + 1, nothing), (h, o, sl) -> (h + 1, nothing),
+               (h, o, a) -> (h, nothing), (h, o, acc, sub) -> (h, nothing), (h, o, acc) -> (h, nothing))
+
+        e = _f("[3] f a b")                      # 0-based offsets: 0=[3] 1=f 3=a 5=b, 7 bytes
+        # no budget hit -> same shape as expr_traverseh: (h, value, j_end)
+        r = M.expr_traverseh_truncated(0, e, 0, 999, cbs...)
+        @test !(r isa M.FoldTruncated)
+        @test r[1] == 3 && r[3] == 7             # three leaves visited, ended past the last byte
+
+        # budget hit exactly at the `a` symbol -> partial stack handed back
+        t = M.expr_traverseh_truncated(0, e, 0, 3, cbs...)
+        @test t isa M.FoldTruncated
+        @test t.tag == 0x00                       # upstream's Err writes a literal 0u8
+        @test length(t.stack) == 1 && t.stack[1][1] == 0x02   # root [3], one child already folded
+
+        # truncating at offset 0 stops before reading anything
+        t0 = M.expr_traverseh_truncated(0, e, 0, 0, cbs...)
+        @test t0 isa M.FoldTruncated && isempty(t0.stack)
+
+        # Arity(0) finalizes immediately rather than wrapping the counter to 255 (see the docstring)
+        @test !(M.expr_traverseh_truncated(0, _f("[0]"), 0, 999, cbs...) isa M.FoldTruncated)
+
+        # v_incr_traversal advances `v` past every NewVar in the sub-expression
+        @test M.ee_v_incr_traversal(M.ExprEnv(0, _f("[3] f a b"))).v == 0x00
+        @test M.ee_v_incr_traversal(M.ExprEnv(0, _f("[3] f \$ \$"))).v == 0x02
+        @test M.ee_v_incr_traversal(M.ExprEnv(0, _f("[3] f \$ _1"))).v == 0x01   # a ref is not a binder
+        # it ADDS to the existing counter rather than replacing it
+        @test M.ee_v_incr_traversal(M.ExprEnv(UInt8(0), UInt8(5), UInt32(0), _f("[2] f \$"))).v == 0x06
+    end
+
+    @testset "leaves / expressions / symbols / difference / unifiable" begin
+        _f = M.expr_parse_str
+        # the traverse! counter family — siblings of the already-ported newvars/variables
+        e = _f("[3] f [2] g \$ _1")           # (f (g $) _1)
+        @test M.expr_leaves(e)       == 4     # f, g, $, _1 — every non-Arity item
+        @test M.expr_expressions(e)  == 2     # the two Arity nodes
+        @test M.expr_symbols(e)      == 2     # f, g
+        @test M.expr_variables(e)    == 2     # $ and _1 — holds against its ported sibling
+        @test M.expr_leaves(e) == M.expr_symbols(e) + M.expr_variables(e)
+        @test M.expr_leaves(_f("foo")) == 1 && M.expr_expressions(_f("foo")) == 0
+
+        # difference: 1-based offset of the first differing item, nothing when they agree
+        @test M.expr_difference(_f("[2] a b"), _f("[2] a b")) === nothing
+        @test M.expr_difference(_f("[2] a b"), _f("[2] a c")) == 4    # the `c` slot
+        @test M.expr_difference(_f("[2] a b"), _f("[3] a b")) == 1    # differing arity header
+        # symbols compare by BYTES, not just by the size tag
+        @test M.expr_difference(_f("[2] a xx"), _f("[2] a yy")) == 4
+
+        # unifiable — upstream's cycle-SAFE entry point
+        @test M.expr_unifiable(_f("[2] f \$"), _f("[2] f a"))
+        @test M.expr_unifiable(_f("[2] \$ \$"), _f("[2] a b"))
+        @test !M.expr_unifiable(_f("[2] f a"), _f("[2] f b"))
+        @test !M.expr_unifiable(_f("[2] f a"), _f("[3] f a b"))
+        # it is STRICTLY STRONGER than expr_unify: the occurs check runs AFTER apply, which is the
+        # whole reason upstream keeps the `_unify` method alongside the `unify` function
+        @test M.expr_unify_method(_f("[2] f \$"), _f("[2] f a"),
+                                  M.ExprZipper(M.Expr(zeros(UInt8, 128)), 1)) === nothing
+    end
+
+    @testset "ez_traverse — upstream's debug printer" begin
+        _f = M.expr_parse_str
+        pr(z, i=0) = (io = IOBuffer(); n = M.ez_traverse(z, i; io = io); (String(take!(io)), n))
+        @test pr(M.ExprZipper(_f("[3] f a b"), 1)) == ("(f a b)", 7)
+        @test pr(M.ExprZipper(_f("foo"), 1))       == ("foo", 4)
+        # renders like expr_serialize (`$` / `_N`), NOT like serialize2
+        @test pr(M.ExprZipper(_f("[3] twice \$ _1"), 1))[1] == "(twice \$ _1)"
+        # `i` offsets from the zipper's own loc; here it lands on the nested (g x)
+        @test pr(M.ExprZipper(_f("[3] f [2] g x \$"), 1), 3) == ("(g x)", 5)
+        # a RESERVED byte prints as its decimal value instead of raising — the point of going
+        # through maybe_byte_item, and where expr_serialize would throw
+        @test pr(M.ExprZipper(M.Expr(UInt8[0x02, 0x40, 0xc1, UInt8('a')]), 1))[1] == "(64 a)"
+    end
 end

@@ -816,6 +816,175 @@ end
 
 expr_serialize2(e::Expr; kwargs...) = expr_serialize2(e.buf; kwargs...)
 
+"""
+    expr_serialize_highlight(bytes; target, map_symbol=nothing, map_variable=expr_varname,
+                             start_code="\e[43m", end_code="\e[0m") → String
+
+upstream `Expr::serialize_highlight` (lib.rs:906-911) — `expr_serialize2` with the item that BEGINS
+at byte `target` wrapped in ANSI codes. For an Arity node the closing code is carried in the fold's
+accumulator and emitted AFTER its `)`, so a whole sub-expression highlights, not just its head.
+
+⚠️ Upstream's own wrapper is marked unfinished: it builds
+`[(target, "\x1B[43m", "\x1B[0m")].repeat(10)  // FIXE` — the same target ten times, because the
+traversal indexes `targets[0]` unconditionally and CONSUMES an entry on every match, so a shorter
+list would panic. Ten copies is the padding. We take one target and simply stop matching once it has
+fired, which is the same observable behaviour without the sentinel-list trick.
+
+⚠️ RELATIONSHIP TO [`ee_show`]: upstream's `ExprEnv::show` (lib.rs:1777-1785) is built on THIS —
+it serializes the whole `base` and highlights the env's current `offset`. Our `ee_show` instead
+renders just the sub-expression AT that offset, which is upstream's own COMMENTED-OUT alternative
+on the very next line (`// self.subsexpr().serialize2(...)`, lib.rs:1782). That is left as it is
+deliberately: `ee_show` feeds diagnostics and unification traces, and the live upstream form would
+put raw ANSI escapes into those strings on the strength of a line upstream marks `FIXE`. The
+mechanism is here if it is ever wanted.
+"""
+function expr_serialize_highlight(bytes::AbstractVector{UInt8};
+                                  target::Int,
+                                  map_symbol = nothing,
+                                  map_variable = expr_varname,
+                                  start_code::String = "\e[43m",
+                                  end_code::String = "\e[0m")::String
+    io = IOBuffer()
+    stack = Tuple{Int, String}[]      # (children remaining, closing code to emit after `)`)
+    transient = false
+    n = 0
+    fired = false
+    i = 1
+    while i <= length(bytes)
+        tag = byte_item(bytes[i])
+        hit = !fired && i == target
+        hit && (fired = true)
+
+        if tag isa ExprArity
+            transient && write(io, ' ')
+            hit && write(io, start_code)
+            write(io, '(')
+            transient = false
+            push!(stack, (Int(tag.arity), hit ? end_code : ""))
+            i += 1
+        elseif tag isa ExprSymbol
+            transient && write(io, ' ')
+            hit && write(io, start_code)
+            m = Int(tag.size)
+            i += 1
+            sym = view(bytes, i:min(i + m - 1, length(bytes)))
+            if map_symbol === nothing
+                for b in sym
+                    write(io, b)
+                end
+            else
+                write(io, map_symbol(sym))
+            end
+            i += m
+            hit && write(io, end_code)
+            transient = true
+        elseif tag isa ExprNewVar
+            transient && write(io, ' ')
+            hit && write(io, start_code)
+            write(io, map_variable(UInt8(n), true))
+            hit && write(io, end_code)
+            n += 1
+            i += 1
+            transient = true
+        elseif tag isa ExprVarRef
+            transient && write(io, ' ')
+            hit && write(io, start_code)
+            write(io, map_variable(tag.idx, false))
+            hit && write(io, end_code)
+            i += 1
+            transient = true
+        else
+            i += 1
+        end
+
+        while !isempty(stack)
+            (rem, close) = stack[end]
+            rem -= 1
+            if rem < 0
+                pop!(stack)
+                write(io, ')')
+                isempty(close) || write(io, close)
+                transient = true
+            else
+                stack[end] = (rem, close)
+                break
+            end
+        end
+    end
+    for (_, close) in Iterators.reverse(stack)
+        write(io, ')')
+        isempty(close) || write(io, close)
+    end
+    String(take!(io))
+end
+
+expr_serialize_highlight(e::Expr; kwargs...) = expr_serialize_highlight(e.buf; kwargs...)
+
+"""
+    ez_traverse(z, i=0; io=stdout) → Int
+
+upstream `ExprZipper::traverse` (lib.rs:1457-1483), labelled "Debug traversal" — print the
+expression at `loc + i` and return how many bytes it spanned.
+
+Recursive there, iterative here, and it renders like `expr_serialize` (a NewVar as `\$`, a VarRef as
+`_N`) rather than like `expr_serialize2`. Unlike `expr_serialize` it goes through `maybe_byte_item`,
+so a RESERVED byte prints as its decimal value and counts as one item instead of raising — upstream's
+`Err(b) => print!("{}", b as usize)` arm, which is what makes this usable on a malformed buffer.
+"""
+function ez_traverse(z::ExprZipper, i::Int = 0; io::IO = stdout)::Int
+    start = z.loc + i
+    j = start
+    depth = Int[]                      # children remaining at each open Arity
+    transient = false
+    while j <= length(z.root.buf)
+        t = maybe_byte_item(z.root.buf[j])
+        if t isa ExprArity
+            transient && print(io, ' ')
+            print(io, '(')
+            transient = false
+            push!(depth, Int(t.arity))
+            j += 1
+        elseif t isa ExprSymbol
+            transient && print(io, ' ')
+            m = Int(t.size)
+            for k in (j + 1):min(j + m, length(z.root.buf))
+                write(io, z.root.buf[k])
+            end
+            j += 1 + m
+            transient = true
+        elseif t isa ExprNewVar
+            transient && print(io, ' ')
+            print(io, '$')
+            j += 1
+            transient = true
+        elseif t isa ExprVarRef
+            transient && print(io, ' ')
+            print(io, "_$(Int(t.idx) + 1)")
+            j += 1
+            transient = true
+        else
+            # reserved byte — upstream prints its numeric value and consumes exactly one
+            transient && print(io, ' ')
+            print(io, Int(z.root.buf[j]))
+            j += 1
+            transient = true
+        end
+
+        while !isempty(depth)
+            depth[end] -= 1
+            if depth[end] < 0
+                pop!(depth)
+                print(io, ')')
+                transient = true
+            else
+                break
+            end
+        end
+        isempty(depth) && break        # one expression only, like upstream's single recursion
+    end
+    j - start
+end
+
 # =====================================================================
 # ExprEnv — expression with unification scope
 # =====================================================================
@@ -1043,7 +1212,8 @@ end
 export ExprTag, ExprNewVar, ExprVarRef, ExprSymbol, ExprArity
 export item_byte, byte_item, _derive_prefix
 export Expr, expr_tag_at, expr_span, expr_serialize
-export expr_serialize2, expr_varname, EXPR_VARNAMES
+export expr_serialize2, expr_serialize_highlight, expr_varname, EXPR_VARNAMES
+export ez_traverse
 export ExprZipper, ez_tag, ez_item, ez_next!, ez_span, ez_symbol
 export Breadcrumb, ez_gnext!, ez_next_skip!, ez_parent!, ez_next_child!, ez_next_descendant!
 export ez_ensure!, ez_write_new_var!, ez_write_var_ref!, ez_write_arity!
