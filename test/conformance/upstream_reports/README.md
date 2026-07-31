@@ -22,7 +22,8 @@ done
 | silent corruption | `mork-2` | `encode_hex` emits a Rule-of-64-violating 64-byte symbol at 32 bytes in, ABORTS at 33 |
 | silent corruption | `mork-5` | `load_jsonl` writes the line index untagged; the path parses as a 9-byte expression with the document outside its span |
 | abort | `mork-1` | `mod_i*` aborts on a zero divisor and on `typemin % -1` |
-| wrong answer | `mork-3` | `'` (quote) rewinds the evaluation cursor by one item |
+| **comment, not a new issue** | `mork-135-comment` | **#135 already exists** — this adds an independent confirmation, the CAUSE (a scope mismatch at `sinks.rs:1165`, not a corruption), two verified predictions, and a candidate fix |
+| wrong answer | `mork-3` | `'` (quote) rewinds the evaluation cursor by one item. ⚠️ **Folded into the #135 comment as a "possibly related" note** — file separately ONLY if the maintainer asks to split it out |
 | wrong answer | `mork-4` | `unbind` emits its internal 255 sentinel as a `VarRef`, which cannot decode |
 
 Full write-ups, including what we do instead and why, are in `../UPSTREAM_BUGS.md`.
