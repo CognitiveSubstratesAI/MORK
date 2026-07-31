@@ -118,16 +118,29 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
         end
     end
 
-    @testset "OPEN upstream — pinned parity, re-read the issue before changing" begin
+    @testset "OPEN upstream — #135 is FIXED here (deviation); #136 still pinned as parity" begin
 
-        @testset "#135 quotation does not handle variable references correctly" begin
-            # Upstream yields (R ($a $b)) where ($a $a) is expected: quotation treats every variable
-            # as new. WE REPRODUCE IT. Faithful parity, and NOT a defect introduced here.
-            # ⚠️ If this flips to (R ($a $a)), upstream likely fixed #135 — port the fix, do not
-            # "correct" this assertion.
+        @testset "#135 quotation variable references — FIXED HERE, deliberate deviation" begin
+            # ⚠️ THIS NO LONGER PINS PARITY. Upstream #135 is OPEN and its binary still yields
+            # (R ($a $b)) — two unrelated variables where one was written. We FIXED it (Sinks.jl,
+            # `_expr_rebase_varrefs`): the call operand's VarRefs are re-based onto their own scope
+            # using the de Bruijn base `ee_args!` already threaded, which the sink used to discard.
+            #
+            # Justified under UPSTREAM_BUGS.md's rule that reproducing silent CORRUPTION is worse
+            # than deviating: the bug invents a variable appearing nowhere in the input.
+            #
+            # RECONCILE when #135 or PR #137 lands — the fix is shaped to converge (it honours the
+            # base upstream's own args/subterms thread), so their fix should look like this one.
             a = _issue_run("#135", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$a))))))")
-            @test _any_containing(a, "(R (")
-            @test _has(a, "(R (\$a \$b))")
+            @test _has(a, "(R (\$a \$a))")          # correct; upstream still gives (R ($a $b))
+
+            # The two shapes predicted from the diagnosis and confirmed against the binary BEFORE
+            # the fix — upstream gave ($a $b $b) and ($a $b $c), the latter inventing a THIRD
+            # variable. Both now round-trip.
+            b = _issue_run("#135 three vars", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$a))))))")
+            @test _has(b, "(R (\$a \$b \$a))")
+            c = _issue_run("#135 trailing repeat", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$b))))))")
+            @test _has(c, "(R (\$a \$b \$b))")
         end
 
         @testset "#136 pure fails to capture an output pattern" begin

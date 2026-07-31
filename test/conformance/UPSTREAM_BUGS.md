@@ -59,11 +59,21 @@ would go negative (that would be a reference to a binder genuinely outside the f
 This belongs at the extraction site (`Sinks.jl:1030-1037`), NOT at the quote splice: `scope_eval!`
 receives a bare `(buf, position)` and has no way to know how many enclosing binders were dropped.
 
-⚠️ **NOT APPLIED.** It changes PureSink semantics on a hot path guarded by 2947 tests and 249
-conformance probes, and it makes us diverge from upstream on an issue that is still open — so
-whatever upstream eventually does, we would then have to reconcile. `test/integration/upstream_issues.jl`
-currently PINS the parity behaviour, with a note saying to port upstream's fix rather than edit the
-assertion. Applying this fix means deliberately flipping that pin.
+✅ **APPLIED 2026-07-31** as `_expr_rebase_varrefs` (`Sinks.jl`), after one further measurement made
+the case decisive: **upstream's `hash_expr` is not content-addressed.** The same expression hashed
+from templates differing only in how many binders precede the call gives `bssGabbteWo` vs
+`0Z2xrn_VwuU` on the release binary; ours gives one digest either way. A content hash that changes
+with syntactic position defeats the op's purpose, and that is silent — a variable-free expression is
+unaffected, so it hides.
+
+The deviation is WIDER than #135's own symptom and that is recorded where it bites:
+`sink_pure_advanced.jl`'s byte-parity assertion now differs from `main.rs:1201-1225` for the
+expression containing a back-reference (the variable-free one still matches exactly). The expected
+value was changed WITH the reason attached, not silently.
+
+Shaped to converge: it honours the de Bruijn base `ee_args!`/`args` already thread — the same value
+PR #137 extracts as `ExprEnv::subterms` — so an upstream fix should look like this one. Reconcile
+when #135 or #137 lands.
 
 ## 1. `mod_i*` aborts on divisor 0 and on `typemin % -1`
 

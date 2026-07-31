@@ -65,12 +65,25 @@ end
     @test length(result_lines) == 2
     # Two distinct expressions → two distinct hash values
     @test length(Set(result_lines)) == 2
-    # UPSTREAM BYTE PARITY (kernel/src/main.rs:1201-1225 asserts exactly these two strings).
-    # Reachable since 2026-07-27: `Expr::hash()` is XXH3-128 (NOT gxhash — `#[cfg(gxhash)]` is a bare
-    # cfg nothing sets, so the xxh3 stub at expr/src/lib.rs:76 is live), now ported in
-    # src/kernel/XXH3.jl. Asserting the VALUES, not just distinctness — "two distinct hashes" passes
-    # for any hash function at all and is exactly how a wrong digest would hide here.
-    @test sort(String.(result_lines)) == ["(result XoicVnQv2bk)", "(result tspt4QCdRB8)"]
+    # Asserting the VALUES, not just distinctness — "two distinct hashes" passes for any hash
+    # function at all and is exactly how a wrong digest would hide here. `Expr::hash()` is XXH3-128
+    # (NOT gxhash — `#[cfg(gxhash)]` is a bare cfg nothing sets), ported in src/kernel/XXH3.jl.
+    #
+    # 🔴 THE SECOND VALUE DIVERGES FROM UPSTREAM BY DESIGN (2026-07-31, the #135 fix).
+    # `(myexpr symbols)` has no variables and still matches upstream byte for byte. The other,
+    # `(foo $q $q (bar baz))`, contains a BACK-REFERENCE, and upstream hashes it in the enclosing
+    # exec's variable scope rather than its own — so upstream's `hash_expr` IS NOT CONTENT-ADDRESSED.
+    # Measured on the release binary: the SAME expression, hashed from templates differing only in
+    # how many binders precede the call, gives
+    #
+    #     1 binder  -> bssGabbteWo        2 binders -> 0Z2xrn_VwuU        (upstream)
+    #     1 binder  -> lzt106T12AQ        2 binders -> lzt106T12AQ        (ours, stable)
+    #
+    # A content hash that changes with syntactic position is unusable for content addressing, which
+    # is what this op exists for. `_expr_rebase_varrefs` (Sinks.jl) re-bases the call onto its own
+    # scope, so ours depends only on the expression. Upstream's `main.rs:1201-1225` still asserts its
+    # own context-dependent value; reconcile if #135 or PR #137 lands.
+    @test sort(String.(result_lines)) == ["(result XoicVnQv2bk)", "(result _fzUq-NL4VY)"]
 end
 
 # ── sink_pure_dynamic_subformula (ip_sudoku subset) ───────────────────

@@ -58,6 +58,32 @@ the back-reference to `$b` lands one PAST the last binder, so it materialises as
 fresh variable `$c` that appears nowhere in the input. Both follow from the single off-by-one and
 were not part of the original report.
 
+## The same defect makes `hash_expr` NOT content-addressed
+
+This is the consequence we found most alarming, and it is measurable without any reference to
+quoting. Take ONE expression and hash it from two templates that differ only in how many binders
+precede the call:
+
+```
+(m (foo $q $q))
+(exec 0 (, (m $x)) (O (pure (result $i)    $i (encode_base64url (i128_as_i64 (hash_expr (' $x)))))))
+(exec 0 (, (m $x)) (O (pure (result $k $i) $i (encode_base64url (i128_as_i64 (hash_expr (' $x)))))))
+```
+
+On the release binary:
+
+```
+1 binder before the call  ->  bssGabbteWo
+2 binders before the call ->  0Z2xrn_VwuU
+```
+
+Same expression, different digest. The back-reference is hashed in the ENCLOSING scope, so the hash
+depends on syntactic position rather than on content — which defeats the purpose of the op. An
+expression with no variables (e.g. a bare symbol) is unaffected and hashes identically either way,
+which is why this can sit unnoticed.
+
+After re-basing the call onto its own scope, both give the same digest.
+
 ## Candidate fix — the correct base is ALREADY COMPUTED, it is just discarded
 
 `ExprEnv::args` threads the de Bruijn base across siblings (`env.v += se_c`), so the formula's env

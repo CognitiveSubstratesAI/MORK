@@ -994,10 +994,64 @@ PureSink(e::MORK.Expr) = PureSink(e, false, eval_scope_sharing(PURE_SCOPE))
 
 
 """
+    _expr_rebase_varrefs(buf, from, base) -> Vector{UInt8}
+
+Copy the expression starting at `buf[from]`, reducing every `VarRef` index by `base`.
+
+FIXES UPSTREAM #135 — quotation losing variable coreference. A quoted `(x x)` inside a `pure` formula
+came out as two UNRELATED variables where one was written.
+
+It is a SCOPE MISMATCH, not a corruption: nothing rewrites the bytes. `ee_args!` threads the de Bruijn
+base across the `(pure <tpl> <pat> <call>)` operands (`env.v + new_var_count`, ExprAlg.jl:368), so the
+CALL's VarRefs are relative to however many binders precede it. `PureSink` then evaluated that call as
+a BARE SLICE, where the same bytes mean something else: the first NewVar is now binder 0, so a
+`VarRef(1)` written against base 1 points one PAST it and materialises a second variable that appears
+nowhere in the input.
+
+Measured on the issue's own program, the operands carry v = 0, 0, 1, 1 — the call's base is 1, exactly
+the observed off-by-one. So the base is not something to compute: `ee_args!` already computed it and
+the sink discarded it. This restores it, which is why the fix is a re-base and not a rewrite.
+
+DELIBERATE DEVIATION — upstream #135 is OPEN and the release binary still exhibits it. Justified under
+the `test/conformance/UPSTREAM_BUGS.md` rule that reproducing silent corruption is worse than
+deviating. Shaped to CONVERGE rather than conflict: it honours the base upstream's own `args` (and PR
+#137's extracted `ExprEnv::subterms`) already thread, which is what any upstream fix must also do.
+Reconcile when #135 or #137 lands.
+
+A reference below `base` points at a binder OUTSIDE the call, unresolvable standalone, so it raises
+rather than silently aliasing onto the wrong variable.
+"""
+function _expr_rebase_varrefs(buf::AbstractVector{UInt8}, from::Int, base::Int)::Vector{UInt8}
+    stop = _expr_end_offset(collect(UInt8, buf), from) - 1
+    out = UInt8[]
+    i = from
+    @inbounds while i <= stop
+        t = byte_item(buf[i])
+        if t isa ExprVarRef
+            idx = Int(t.idx)
+            idx >= base || throw(EvalError(
+                "pure: variable reference _$(idx + 1) points outside the call expression \
+(de Bruijn base $base) and cannot be resolved standalone"))
+            push!(out, item_byte(ExprVarRef(UInt8(idx - base))))
+            i += 1
+        elseif t isa ExprSymbol
+            n = Int(t.size)
+            append!(out, @view buf[i:min(i + n, stop)])
+            i += n + 1
+        else                      # NewVar / Arity — copied verbatim
+            push!(out, buf[i])
+            i += 1
+        end
+    end
+    out
+end
+
+"""
     _expr_end_offset(buf, off) → Int
 
 Return the offset just past the expression starting at `off` (exclusive end).
 """
+
 function _expr_end_offset(buf::Vector{UInt8}, off::Int)::Int
     off > length(buf) && return off
     tag = byte_item(buf[off])
@@ -1061,8 +1115,14 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
         # Only EvalError is caught. Anything else is the analogue of an upstream PANIC and is left to
         # propagate rather than silently dropping an atom — silent skips are how a defect population
         # stays invisible.
+        # Re-base the call's VarRefs onto its OWN scope before evaluating it standalone — see
+        # `_expr_rebase_varrefs`. `formula_ee.v` is the base `ee_args!` already threaded; without
+        # this, a back-reference inside the call resolves against the wrong binder (upstream #135).
+        fbase = Int(formula_ee.v)
+        formula_src = fbase == 0 ? ExprSource(formula_buf, formula_start) :
+                      ExprSource(_expr_rebase_varrefs(formula_buf, formula_start, fbase), 1)
         result_mork = try
-            scope_eval!(s.scope, ExprSource(formula_buf, formula_start))
+            scope_eval!(s.scope, formula_src)
         catch err
             err isa EvalError || rethrow()
             return nothing
