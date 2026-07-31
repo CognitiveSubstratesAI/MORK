@@ -582,18 +582,30 @@ function _expr_bind!(sub::AbstractVector{UInt8}, n::Int, out::Vector{UInt8})
 end
 
 # Substitute the k-th NewVar of buf[from:to] with substitutions[k+1] (0-based k), re-basing all
-# other vars. Ports Expr::substitute_de_bruijn (lib.rs:571).
-function _expr_substitute_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
-        substitutions::Vector{<:AbstractVector{UInt8}})::Vector{UInt8}
-    out = UInt8[]
-    additions = zeros(Int, length(substitutions))
-    var_count = 0; i = from
+# other vars, with the re-basing state (`var_count`, `additions`) supplied and RETAINED BY THE
+# CALLER — that is the whole of what the `_ivc` suffix means. Ports
+# Expr::substitute_de_bruijn_ivc (lib.rs:547).
+#
+# Upstream keeps two functions whose bodies are byte-identical apart from where that state lives:
+# `substitute_de_bruijn` (lib.rs:571) declares `var_count`/`additions` locally, `substitute_de_bruijn_ivc`
+# takes them as `&mut`. We port the GENERAL one and let the specific one call it with fresh state,
+# so there is one loop to keep correct instead of two copies that can drift apart.
+#
+# ⚠️ Upstream types `additions: &mut [u8]`; ours is `Vector{Int}`. This matters only past 255
+# accumulated introductions, where upstream's `additions[j] += nvars` wraps silently in release
+# (and panics in debug) while ours keeps counting — and `_expr_shift!` would then throw
+# InexactError converting the index back to UInt8. Neither can represent a VarRef above 63 anyway
+# (Rule of 64), so both are already outside the encodable range well before the widths diverge.
+function _expr_substitute_de_bruijn_ivc!(out::Vector{UInt8}, buf::AbstractVector{UInt8},
+        from::Int, to::Int, substitutions::Vector{<:AbstractVector{UInt8}},
+        var_count::Base.RefValue{Int}, additions::Vector{Int})::Vector{UInt8}
+    i = from
     @inbounds while i <= to
         t = byte_item(buf[i])
         if t isa ExprNewVar
-            nvars = _expr_shift!(substitutions[var_count + 1], additions[var_count + 1], out)
-            var_count += 1
-            for j in (var_count + 1):length(additions); additions[j] += nvars; end
+            nvars = _expr_shift!(substitutions[var_count[] + 1], additions[var_count[] + 1], out)
+            var_count[] += 1
+            for j in (var_count[] + 1):length(additions); additions[j] += nvars; end
             i += 1
         elseif t isa ExprVarRef
             r = Int(t.idx)
@@ -606,6 +618,13 @@ function _expr_substitute_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::I
         end
     end
     out
+end
+
+# Ports Expr::substitute_de_bruijn (lib.rs:571) — the _ivc loop with fresh, private re-basing state.
+function _expr_substitute_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
+        substitutions::Vector{<:AbstractVector{UInt8}})::Vector{UInt8}
+    _expr_substitute_de_bruijn_ivc!(UInt8[], buf, from, to, substitutions,
+                                    Ref(0), zeros(Int, length(substitutions)))
 end
 
 # Substitute the single NewVar at de-Bruijn index `idx` with `substitution` (a complete sub-expr),
@@ -1241,6 +1260,121 @@ function expr_substitute_symbols(x::MORK.Expr, oz::ExprZipper, subst)
 end
 
 """
+    expr_substitute(x, substitutions, oz) → SubArray{UInt8}
+
+upstream `Expr::substitute` (lib.rs:411-436) — POSITIONAL substitution with NO re-basing: the k-th
+NewVar of `x` and every `VarRef(k)` are both replaced by `substitutions[k+1]`, written into `oz`.
+
+Distinct from `_expr_substitute_de_bruijn` (lib.rs:571), which is the same walk PLUS the `additions`
+re-basing machinery. Here a substituted sub-expression's variables are written through untouched, so
+the result is only well-formed when the substitutions are ground or the caller has arranged the
+indices — which is exactly the case for `expr_transform_data`, whose bindings come from
+`expr_extract_data` and are ground slices of the input.
+
+⚠️ `expr_span(s, 1)`, not `s.buf`. Upstream writes `substitutions[k].span()`, and `span()` PARSES
+the length off the first expression. That is load-bearing here because the bindings normally come
+from `expr_extract_data`, whose `ez_subexpr` — like upstream's bare-pointer `subexpr` — carries the
+ENTIRE REMAINING TAIL of the input, not one sub-expression. Writing `s.buf` therefore splices the
+matched atom's following siblings in behind it: `(pair a b)` through `(swap _2 _1)` produced
+`(swap b a b)` instead of `(swap b a)`. Caught by a test, not by reading.
+
+An EMPTY substitution is upstream's null `span().as_ref() == None`: the variable is written through
+UNCHANGED (NewVar stays a NewVar, `VarRef(r)` keeps index `r`) rather than substituted.
+
+⚠️ Upstream returns `ez.finish_span()` — a span of the INPUT, not the output it just wrote. Both this
+and `substitute_de_bruijn` do it, and every upstream caller discards the value (`transformData` writes
+`template.substitute(bindings, oz); Ok(())`), so nothing depends on it. We return the OUTPUT span,
+which is what a caller would actually want and what our `_expr_substitute_de_bruijn` already returns.
+"""
+function expr_substitute(x::MORK.Expr, substitutions::Vector{MORK.Expr}, oz::ExprZipper)
+    ez = ExprZipper(x, 1)
+    var_count = 0
+    while true
+        t = byte_item(ez.root.buf[ez.loc])
+        if t isa ExprNewVar
+            s = substitutions[var_count + 1]
+            isempty(s) ? ez_write_new_var!(oz) : ez_write_move!(oz, expr_span(s, 1))
+            var_count += 1
+        elseif t isa ExprVarRef
+            s = substitutions[Int(t.idx) + 1]
+            isempty(s) ? ez_write_var_ref!(oz, t.idx) : ez_write_move!(oz, expr_span(s, 1))
+        elseif t isa ExprSymbol
+            n = Int(t.size)
+            ez_write_move!(oz, view(ez.root.buf, ez.loc:(ez.loc + n)))
+        else  # Arity — copied verbatim
+            ez_ensure!(oz, oz.loc)
+            oz.root.buf[oz.loc] = ez.root.buf[ez.loc]
+            oz.loc += 1
+        end
+        ez_next!(ez) || return ez_finish_span(oz)
+    end
+end
+
+"""
+    expr_transform_data(x, pattern, template, oz) → nothing | ExtractFailure
+
+upstream `Expr::transformData` (lib.rs:769-775) — match `x` against `pattern`, then write `template`
+instantiated with the resulting bindings into `oz`. `nothing` is upstream's `Ok(())`.
+
+Two live consumers upstream (space.rs:542 and space.rs:879), which is why the `_data` variant exists
+at all: it takes a caller-owned output zipper instead of allocating, so a sweep can reuse one buffer.
+"""
+function expr_transform_data(x::MORK.Expr, pattern::MORK.Expr, template::MORK.Expr,
+                             oz::ExprZipper)::Union{Nothing, ExtractFailure}
+    ez = ExprZipper(x, 1)
+    bindings = expr_extract_data(pattern, ez)
+    bindings isa ExtractFailure && return bindings
+    expr_substitute(template, bindings, oz)
+    nothing
+end
+
+"""
+    expr_transformed(x, template, pattern) → Expr | ExtractFailure
+
+upstream `Expr::transformed` (lib.rs:777-803) — the UNIFICATION-based transform, and NOT merely a
+convenience wrapper over `transformData`: it is strictly more capable, and the argument order is
+reversed (`template, pattern`).
+
+The construction is indirect. Upstream builds two 2-tuples and unifies them:
+
+    transformation = (template pattern)
+    data           = (\$ <x, every VarRef shifted by 1>)
+
+The fresh NewVar in slot 0 of `data` is an OUTPUT HOLE, and the shift is what makes room for it
+without colliding with `x`'s own variables. Unifying the pair simultaneously (a) matches `pattern`
+against `x`, binding the pattern's variables, and (b) binds that hole to `template`. Applying the
+resulting MGU to `transformation` therefore instantiates the template; the answer is its FIRST
+element, which upstream reaches by returning a pointer one byte past the `Arity(2)` header.
+
+That pointer has no length — upstream's `Expr` is a bare `*mut u8` and the trailing instantiated
+pattern simply sits beyond whatever the reader parses. Our `Expr` owns its bytes, so we must cut the
+span explicitly with `expr_span`; returning the whole buffer would append the instantiated pattern to
+every result.
+
+Why unification rather than `extract_data`: matching is one-directional, so `transformData` fails on
+a pattern like `(axiom (= _2 _1))` whose variables are BARE back-references introduced by the other
+side. Unification binds across both, which is what upstream's own test vectors exercise.
+"""
+function expr_transformed(x::MORK.Expr, template::MORK.Expr,
+                          pattern::MORK.Expr)::Union{MORK.Expr, ExtractFailure}
+    transformation = UInt8[item_byte(ExprArity(0x02))]
+    append!(transformation, template.buf)
+    append!(transformation, pattern.buf)
+
+    data = UInt8[item_byte(ExprArity(0x02)), item_byte(ExprNewVar())]
+    _expr_shift!(x.buf, 1, data)     # upstream shifts in place over its own span; we append, same bytes
+
+    stack = [(ExprEnv(0, MORK.Expr(transformation)), ExprEnv(1, MORK.Expr(data)))]
+    bindings = expr_unify(stack)
+    # upstream collapses EVERY unification failure to this one constructor, losing the reason
+    bindings isa UnificationFailure && return ExtractFailure(EF_EXPR_EARLY_MISMATCH)
+
+    oz = ExprZipper(MORK.Expr(zeros(UInt8, 512)), 1)
+    expr_apply(ExprZipper(MORK.Expr(transformation), 1), bindings, oz)
+    MORK.Expr(collect(expr_span(oz.root, 2)))    # element 1 of the pair: skip the Arity(2) byte
+end
+
+"""
     expr_prefix_non_proper(x) → SubArray{UInt8}
 
 upstream `Expr::prefix_non_proper` (lib.rs:393-401) — the constant prefix before the first VARIABLE
@@ -1285,6 +1419,7 @@ export expr_variables, expr_is_ground, expr_max_arity, expr_has_unbound
 export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_non_proper
 export expr_unbind, expr_equate_var, expr_equate_var_inplace!, expr_equate_vars_inplace!
 export expr_substitute_symbols, expr_extract_data
+export expr_substitute, expr_transform_data, expr_transformed
 export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER

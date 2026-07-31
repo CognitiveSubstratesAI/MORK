@@ -271,4 +271,115 @@ _e(s) = M.sexpr_to_expr(s)
         # a symbol pattern against a compound datum is a plain type mismatch
         @test kind_of(() -> ed("(a b)", "(a (c d))")) === M.EF_TYPE_MISMATCH
     end
+
+    @testset "substitute / transformData / transformed" begin
+        # `expr_parse_str` is our port of upstream's `parse!` const fn and was verified byte-identical
+        # to it (`[n]`->Arity, `$`->NewVar, `_k`->VarRef(k-1), word->Symbol), so upstream's own test
+        # vectors are copied VERBATIM below rather than translated into s-expr syntax. That is not
+        # only convenience: `[2] axiom [3] = _2 _1` is a pattern of BARE back-references with no
+        # binder at all, which named s-expr syntax cannot express.
+        _f = M.expr_parse_str
+
+        # --- substitute (positional, NO re-basing) -------------------------------------------
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            # ($ _1) with slot 0 := `a` — the NewVar AND the back-reference both become `a`
+            M.expr_substitute(_f("[2] \$ _1"), [_f("a")], oz)
+            @test collect(M.ez_finish_span(oz)) == _f("[2] a a").buf
+        end
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            # an EMPTY substitution is upstream's null span: the variable passes through UNCHANGED
+            M.expr_substitute(_f("[2] \$ _1"), [M.Expr()], oz)
+            @test collect(M.ez_finish_span(oz)) == _f("[2] \$ _1").buf
+        end
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            # symbols and arity headers are copied verbatim; two independent slots
+            M.expr_substitute(_f("[3] f \$ \$"), [_f("x"), _f("[2] g y")], oz)
+            @test collect(M.ez_finish_span(oz)) == _f("[3] f x [2] g y").buf
+        end
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            # NO re-basing: a substituted sub-expression's own vars are written through as-is,
+            # which is precisely what separates this from substitute_de_bruijn.
+            M.expr_substitute(_f("[2] \$ _1"), [_f("[2] h \$")], oz)
+            @test collect(M.ez_finish_span(oz)) == _f("[2] [2] h \$ [2] h \$").buf
+        end
+
+        # --- transformData (match, then instantiate) ----------------------------------------
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            r = M.expr_transform_data(_f("[3] pair a b"), _f("[3] pair \$ \$"), _f("[3] swap _2 _1"), oz)
+            @test r === nothing                      # upstream's Ok(())
+            @test collect(M.ez_finish_span(oz)) == _f("[3] swap b a").buf
+        end
+        let oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            # a failed match RETURNS the ExtractFailure (it does not throw) and writes nothing useful
+            r = M.expr_transform_data(_f("[3] pair a b"), _f("[3] nope \$ \$"), _f("[2] t _1"), oz)
+            @test r isa M.ExtractFailure
+            @test r.kind === M.EF_SYMBOL_MISMATCH
+        end
+
+        # --- transformed: upstream's four vectors, verbatim ---------------------------------
+        # All four share this pattern/template pair. The pattern's `_2 _1` SWAPS the equation's
+        # sides; only unification can bind those bare refs, which is why `transformed` exists
+        # alongside `transformData`.
+        pat   = _f("[2] axiom [3] = _2 _1")
+        templ = _f("[2] flip [3] = \$ \$")
+        # _main.rs:1180 / :1201 / :1222 / :1240 (the last also at lib.rs:2388)
+        for (src, want) in (
+            ("[2] axiom [3] = [4] L \$ \$ \$ [4] R \$ _2 _3",
+             "[2] flip [3] = [4] R \$ \$ \$ [4] L \$ _2 _3"),
+            ("[2] axiom [3] = [4] L \$ \$ \$ [4] R _1 \$ _3",
+             "[2] flip [3] = [4] R \$ \$ \$ [4] L _1 \$ _3"),
+            ("[2] axiom [3] = [2] A \$ [4] B _1 _1 _1",
+             "[2] flip [3] = [4] B \$ _1 _1 [2] A _1"),
+            ("[2] axiom [3] = [3] T \$ [3] * \$ _2 [3] T _1 [3] R [4] a _1 \$ \$ [3] * _2 _2",
+             "[2] flip [3] = [3] T \$ [3] R [4] a _1 \$ \$ [3] * \$ _4 [3] T _1 [3] * _4 _4"),
+        )
+            got = M.expr_transformed(_f(src), templ, pat)
+            @test got isa M.Expr
+            got isa M.Expr && @test got.buf == _f(want).buf
+        end
+
+        # the result is CUT to the template instantiation — upstream returns a bare pointer whose
+        # implicit length hides the instantiated pattern that follows it in the same buffer
+        let got = M.expr_transformed(_f("[2] axiom [3] = [2] A \$ [4] B _1 _1 _1"), templ, pat)
+            @test got isa M.Expr
+            got isa M.Expr && @test length(got.buf) == length(collect(M.expr_span(got, 1)))
+        end
+
+        # a non-unifiable source collapses to upstream's single ExprEarlyMismatch(0,0)
+        let got = M.expr_transformed(_f("[2] theorem [3] = a b"), templ, pat)
+            @test got isa M.ExtractFailure
+            got isa M.ExtractFailure && @test got.kind === M.EF_EXPR_EARLY_MISMATCH
+        end
+    end
+
+    @testset "loaders use transformData, not unify (parity regression)" begin
+        # `space_load_csv!` / `space_add_sexpr!` ported the transform as unify + expr_apply, which is
+        # NOT upstream's `transformData` (extract_data + substitute). Both cases below were produced
+        # by RUNNING the two routes side by side, not by reading:
+        #
+        #   pattern `(parser $)`  data `($ foo)`  -> upstream Err(IntroducedVar); unify ADDED (parser foo)
+        #   pattern `(foo bar)`   data `(foo $)`  -> upstream Err(IntroducedVar); unify ADDED done
+        #
+        # Matching is one-directional: a variable on the DATA side is an error, because the data is
+        # meant to be ground. Unification binds it to the pattern's constant instead. Hidden because
+        # every upstream call site uses the identity transform `$` -> `_1`, where the two agree.
+        _f = M.expr_parse_str
+        _tr(pat, tpl, dat) = begin
+            oz = M.ExprZipper(M.Expr(zeros(UInt8, 256)), 1)
+            r = M.expr_transform_data(_f(dat), _f(pat), _f(tpl), oz)
+            r === nothing ? collect(M.ez_finish_span(oz)) : r
+        end
+
+        # a variable on the DATA side is rejected — this is the whole difference
+        @test _tr("[2] parser \$", "[2] p _1", "[2] \$ foo") isa M.ExtractFailure
+        @test _tr("[2] foo bar", "done", "[2] foo \$") isa M.ExtractFailure
+        @test _tr("[2] \$ \$", "[2] t _2 _1", "[2] a \$") isa M.ExtractFailure
+
+        # ground data still transforms normally
+        @test _tr("[2] parser \$", "[2] p _1", "[2] parser foo") == _f("[2] p foo").buf
+
+        # the identity transform every upstream caller uses accepts data WITH variables, because a
+        # lone NewVar pattern binds the whole datum in one step and never looks inside it
+        @test _tr("\$", "_1", "[2] foo \$") == _f("[2] foo \$").buf
+    end
 end

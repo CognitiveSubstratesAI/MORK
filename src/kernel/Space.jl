@@ -2231,19 +2231,12 @@ function space_load_csv!(s::Space, src, pattern::MORK.Expr, template::MORK.Expr,
         end
         data_expr = MORK.Expr(buf)
 
-        # Unify with pattern, apply template
-        bindings = Dict{ExprVar, ExprEnv}()
-        pairs = Tuple{ExprEnv, ExprEnv}[
-            (ExprEnv(UInt8(0), UInt8(0), UInt32(0), pattern),
-            ExprEnv(UInt8(1), UInt8(0), UInt32(0), data_expr))
-        ]
-        _expr_unify_inplace!(pairs, bindings) === true || continue
-
+        # upstream space.rs:542 — `data.transformData(pattern, template, &mut oz)`, skipping the row
+        # on any failure. See the note on `_space_load_sexpr_impl!` for why this is transformData
+        # (a one-directional MATCH) and not unify+apply.
         out_buf = Vector{UInt8}(undef, max(length(template.buf) * 4, 256))
-        ez_tpl = ExprZipper(template, 1)
         oz = ExprZipper(MORK.Expr(out_buf), 1)
-        expr_apply(UInt8(0), UInt8(0), UInt8(0), ez_tpl, bindings, oz,
-            Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
+        expr_transform_data(data_expr, pattern, template, oz) === nothing || continue
         set_val_at!(s.btm, oz.root.buf[1:(oz.loc - 1)], UNIT_VAL)
         count += 1
     end
@@ -2282,19 +2275,26 @@ function _space_load_sexpr_impl!(
         data_expr = MORK.Expr(z.root.buf[1:(z.loc - 1)])
         empty!(ctx.variables)
 
-        # Unify data_expr with pattern, apply template
-        bindings = Dict{ExprVar, ExprEnv}()
-        pairs = Tuple{ExprEnv, ExprEnv}[
-            (ExprEnv(UInt8(0), UInt8(0), UInt32(0), pattern),
-            ExprEnv(UInt8(1), UInt8(0), UInt32(0), data_expr))
-        ]
-        _expr_unify_inplace!(pairs, bindings) === true || continue
-
+        # upstream space.rs:879 — `data.transformData(pattern, template, &mut oz)`, `continue` on Err.
+        #
+        # ⚠️ This was unify + expr_apply until 2026-07-31, which is NOT the same operation, and the
+        # difference is observable — settled by running both (probe, this repo):
+        #
+        #     pattern `(parser $)`  data `($ foo)`   upstream FAILS (IntroducedVar)   ours ADDED (parser foo)
+        #     pattern `(foo bar)`   data `(foo $)`   upstream FAILS (IntroducedVar)   ours ADDED done
+        #
+        # transformData MATCHES one-directionally: a variable on the DATA side is an error
+        # (`EF_INTRODUCED_VAR` / `EF_RECURRENT_VAR`), because the data is meant to be ground. Unify
+        # is bidirectional and happily binds the data's variable to the pattern's constant, so we
+        # were ADDING rows upstream SKIPS — and returning a larger count for the same input.
+        #
+        # It stayed hidden because every upstream call site loads with the IDENTITY transform
+        # (`$` -> `_1`, main.rs:215/253/300/346/486/511/536/904), where a lone NewVar pattern binds
+        # the whole datum in one step and never inspects inside it. Both routes agree there — which
+        # is exactly why "it has no consumers / it passes today" is not evidence of parity.
         out_buf = Vector{UInt8}(undef, max(length(template.buf) * 4, 256))
-        ez_tpl = ExprZipper(template, 1)
         oz = ExprZipper(MORK.Expr(out_buf), 1)
-        expr_apply(UInt8(0), UInt8(0), UInt8(0), ez_tpl, bindings, oz,
-            Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
+        expr_transform_data(data_expr, pattern, template, oz) === nothing || continue
         result_bytes = oz.root.buf[1:(oz.loc - 1)]
         if add
             ;
