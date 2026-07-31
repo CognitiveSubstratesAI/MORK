@@ -181,4 +181,34 @@ _e(s) = M.sexpr_to_expr(s)
         @test got in (:ok, :raised)
         @info "unbind sentinel path" behaviour=got
     end
+
+    # ── anti-unification, verified against UPSTREAM'S OWN VECTORS ────────────────────────────────
+    # `test_anti_unify` (expr/src/lib.rs:2625-2700) — the only real oracle in this file. Vectors 3
+    # and 4 are the ones that matter: they only pass if the memo REUSES a disagreement pair AND
+    # treats a binder and a reference to it as the same variable identity. Keying the memo on raw
+    # spans passes 1-3 and fails 4.
+    @testset "anti_unify — upstream's five test vectors" begin
+        au(a, b) = begin
+            oz = M.ExprZipper(M.Expr(Vector{UInt8}(undef, 512)), 1)
+            M.expr_anti_unify(_e(a), _e(b), oz)
+            M.Expr(oz.root.buf[1:(oz.loc - 1)])
+        end
+        same(got, want) = M.expr_span(got) == M.expr_span(_e(want))
+
+        @test same(au("(a a)", "(a a)"), "(a a)")           # identical => itself
+        @test same(au("(a a)", "(a b)"), "(a \$x)")          # one disagreement => one fresh var
+        @test same(au("(a a)", "(b b)"), "(\$x \$x)")        # SAME pair twice => REUSE (vector 3)
+        @test same(au("(a a)", "(\$x \$x)"), "(\$x \$x)")   # binder vs reference (vector 4)
+        @test same(au("(\$x \$x)", "(\$x \$x)"), "(\$x \$x)")
+
+        # the substitution maps come back and name what each introduced var abstracts
+        oz = M.ExprZipper(M.Expr(Vector{UInt8}(undef, 512)), 1)
+        l, r = M.expr_anti_unify(_e("(a a)"), _e("(b b)"), oz)
+        @test length(l) == 1 && length(r) == 1               # one class, reused
+        @test haskey(l, 0x00) && haskey(r, 0x00)
+
+        # a generalization of two ground terms is never ground when they differ
+        @test !M.expr_is_ground(au("(a a)", "(b b)"))
+        @test M.expr_is_ground(au("(a a)", "(a a)"))
+    end
 end

@@ -958,6 +958,151 @@ function expr_equate_vars_inplace!(x::MORK.Expr, refers::Vector{UInt8})
     end
 end
 
+# =====================================================================
+# Anti-unification (least general generalization) — upstream expr/src/lib.rs:669, 2121-2320
+# =====================================================================
+#
+# ✅ VERIFIED AGAINST UPSTREAM'S OWN TEST VECTORS (`test_anti_unify`, lib.rs:2625-2700) — the only
+# function in this file with a real oracle. Upstream has just THREE `#[test]` fns and this is one.
+#
+# 🔴 THE MEMO KEY IS THE WHOLE DIFFICULTY, and a plausible shortcut is WRONG. Keying the memo on the
+# raw serialized spans of the two subterms passes vectors 1-3 and FAILS vector 4:
+#     `[2] a a` vs `[2] $ _1`  must generalize to `[2] $ _1`
+# because `$` (a binder) and `_1` (a reference to it) have different BYTES but are the SAME VARIABLE
+# IDENTITY. Upstream says so in its own comment on `RelExprEnv`: "Hash/Eq compares subexpressions
+# using *absolute* vars (so NewVar occurrences and VarRef occurrences compare as the same variable
+# identity)". Caught by working the oracle's vectors BY HAND before writing any code.
+#
+# WHY A CANONICAL KEY INSTEAD OF A TRANSLITERATED `==`/`hash` PAIR. Upstream needs both, and its
+# `Hash` (lib.rs:2180-2192) is already a CANONICAL SERIALIZATION:
+#     NewVar   -> (0, v) with v incrementing from `ee.v`     <- binder at absolute index v
+#     VarRef r -> (0, r)                                     <- and a reference to it: IDENTICAL
+#     Symbol s -> (1, s...)
+#     Arity  a -> (2, a)
+# Its lockstep `PartialEq` (:2138-2176) agrees with that form exactly. So emitting the canonical
+# token vector and using it directly as the Dict key gives the same equivalence with ONE function
+# defining it — and sidesteps Julia's requirement that `a == b => hash(a) == hash(b)`, which a
+# hand-written pair could silently violate, making the memo miss and vectors 3-4 regress.
+
+"Upstream `AntiUnificationFailure` (lib.rs:2121-2124)."
+@enum AntiUnifyFailureKind AU_TOO_MANY_VARS AU_MAX_DEPTH
+
+struct AntiUnificationFailure <: Exception
+    kind::AntiUnifyFailureKind
+    depth::Int
+end
+Base.showerror(io::IO, e::AntiUnificationFailure) =
+    print(io, "AntiUnificationFailure: ",
+          e.kind === AU_TOO_MANY_VARS ? "> 64 distinct disagreement classes" :
+          "max depth exceeded ($(e.depth))")
+
+const AU_MAX_DEPTH_LIMIT = 1000        # upstream `const AU_MAX_DEPTH` (lib.rs:2206)
+
+"""
+    _au_relkey(ee) → Vector{UInt8}
+
+The canonical variable-identity key — upstream `RelExprEnv`'s `Hash` (lib.rs:2180-2192) IS this
+form, and its `PartialEq` agrees with it. A binder and a reference to that binder both emit
+`(0, absolute_index)`, which is what makes them the same identity.
+"""
+function _au_relkey(ee::ExprEnv)::Vector{UInt8}
+    out = UInt8[]
+    v = Ref(ee.v)
+    _ee_traverseh(nothing, ee,
+                  (h, o) -> (push!(out, 0x00); push!(out, v[]); v[] += UInt8(1); (h, nothing)),
+                  (h, o, r) -> (push!(out, 0x00); push!(out, r); (h, nothing)),
+                  (h, o, s) -> (push!(out, 0x01); append!(out, s); (h, nothing)),
+                  (h, o, a) -> (push!(out, 0x02); push!(out, a); (h, nothing)),
+                  (h, o, x, y) -> (h, nothing),
+                  (h, o, acc) -> (h, acc))
+    out
+end
+
+"""
+    _au_decomposable(lhs, rhs) → Bool
+
+upstream `decomposable` (lib.rs:2209-2225). Variables are treated as ATOMS — a variable on either
+side is a disagreement, never a decomposition — so repetition is handled purely by memoizing the
+disagreement pair.
+"""
+function _au_decomposable(lhs::ExprEnv, rhs::ExprEnv)::Bool
+    (ee_var_opt(lhs) !== nothing || ee_var_opt(rhs) !== nothing) && return false
+    lt = byte_item(lhs.base.buf[Int(lhs.offset) + 1])
+    rt = byte_item(rhs.base.buf[Int(rhs.offset) + 1])
+    if lt isa ExprSymbol && rt isa ExprSymbol
+        lt.size == rt.size || return false
+        n = Int(lt.size)
+        lo = Int(lhs.offset) + 1
+        ro = Int(rhs.offset) + 1
+        return view(lhs.base.buf, (lo + 1):(lo + n)) == view(rhs.base.buf, (ro + 1):(ro + n))
+    elseif lt isa ExprArity && rt isa ExprArity
+        return lt.arity == rt.arity
+    end
+    false
+end
+
+"""
+    expr_anti_unify(x, other, oz) → (left, right)
+
+upstream `Expr::anti_unify` (lib.rs:669-679) — first-order syntactic anti-unification (least general
+generalization). Writes the generalization into `oz` and returns the substitution maps taking each
+introduced variable back to the original left/right subterms.
+
+Upstream's worklist pushes children REVERSED so they pop in preorder; the depth guard fires on the
+stack length AFTER the pop, both mirrored here.
+"""
+function expr_anti_unify(x::MORK.Expr, other::MORK.Expr, oz::ExprZipper)
+    memo = Dict{Tuple{Vector{UInt8}, Vector{UInt8}}, UInt8}()
+    left = Dict{UInt8, ExprEnv}()
+    right = Dict{UInt8, ExprEnv}()
+    next_var = Ref(UInt8(0))
+
+    stack = Tuple{ExprEnv, ExprEnv}[(ExprEnv(0, x), ExprEnv(1, other))]
+    largs = ExprEnv[]
+    rargs = ExprEnv[]
+
+    while !isempty(stack)
+        lhs, rhs = pop!(stack)
+        length(stack) > AU_MAX_DEPTH_LIMIT &&
+            throw(AntiUnificationFailure(AU_MAX_DEPTH, length(stack)))
+
+        if _au_decomposable(lhs, rhs)
+            t = byte_item(lhs.base.buf[Int(lhs.offset) + 1])
+            if t isa ExprArity
+                ez_write_arity!(oz, t.arity)
+                empty!(largs)
+                empty!(rargs)
+                ee_args!(lhs, largs)
+                ee_args!(rhs, rargs)
+                for i in length(largs):-1:1          # reversed => children pop in order
+                    push!(stack, (largs[i], rargs[i]))
+                end
+            else
+                n = Int((t::ExprSymbol).size)
+                lo = Int(lhs.offset) + 1
+                ez_write_move!(oz, view(lhs.base.buf, lo:(lo + n)))
+            end
+        else
+            # Disagreement: introduce OR REUSE a generalization variable. The reuse is what makes
+            # `[2] a a` vs `[2] b b` produce `[2] $ _1` rather than `[2] $ $`.
+            key = (_au_relkey(lhs), _au_relkey(rhs))
+            v = get(memo, key, nothing)
+            if v !== nothing
+                ez_write_var_ref!(oz, v)
+            else
+                next_var[] >= 0x40 && throw(AntiUnificationFailure(AU_TOO_MANY_VARS, 0))
+                nv = next_var[]
+                next_var[] += UInt8(1)
+                memo[key] = nv
+                left[nv] = lhs
+                right[nv] = rhs
+                ez_write_new_var!(oz)
+            end
+        end
+    end
+    (left, right)
+end
+
 """
     expr_prefix_non_proper(x) → SubArray{UInt8}
 
@@ -1002,6 +1147,7 @@ ez_subexpr(z::ExprZipper)::MORK.Expr = MORK.Expr(z.root.buf[z.loc:end])
 export expr_variables, expr_is_ground, expr_max_arity, expr_has_unbound
 export expr_forward_references, expr_difference_under, ez_subexpr, expr_prefix_non_proper
 export expr_unbind, expr_equate_var, expr_equate_var_inplace!, expr_equate_vars_inplace!
+export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
