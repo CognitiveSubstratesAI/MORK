@@ -121,6 +121,13 @@ function main(args)
     gated_on, gated_off = feature_gated(raw, defaults)
     clean = drop_gated(raw, "#[cfg(test)]")
     names = sort(unique(String[m.captures[1] for m in eachmatch(r"\bpub fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
+    # `pub(crate) fn` and type definitions are ALSO port surface. They are reported separately
+    # because they are noisier, but leaving them out understates: `WriteResourceRequest` --- an enum
+    # plus a pub(crate) `pjoin` --- was wholly absent while this tool reported sinks.rs clean.
+    crate_fns = sort(unique(String[m.captures[1] for m in
+        eachmatch(r"\bpub\(crate\)\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
+    types = sort(unique(String[m.captures[1] for m in
+        eachmatch(r"\bpub(?:\(crate\))?\s+(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
 
     ours = IOBuffer()
     for d in dirs, (root, _, files) in walkdir(d), f in files
@@ -129,6 +136,16 @@ function main(args)
     body = String(take!(ours))
     defs = Set{String}(m.captures[1] for m in
         eachmatch(r"^\s*(?:function\s+|const\s+)?([A-Za-z_][A-Za-z0-9_!]*)\s*(?:\(|=)"m, body))
+    # TYPE definitions too, or every ported struct reads as absent — `WASMSink` did, because the
+    # function pattern above matches `name(` / `name =` and a `struct Foo <: Bar` matches neither.
+    for pat in (r"^\s*(?:mutable\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)"m,
+                r"^\s*abstract\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m,
+                r"^\s*@enum\s+([A-Za-z_][A-Za-z0-9_]*)"m,
+                r"^\s*primitive\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m)
+        for m in eachmatch(pat, body)
+            push!(defs, m.captures[1])
+        end
+    end
 
     function present(n)
         # strip BOTH a leading and a trailing underscore: upstream's `_unify` is `expr_unify`, and
@@ -149,6 +166,23 @@ function main(args)
     println()
     for m in missing_
         println("    ", m)
+    end
+    miss_crate = filter(!present, crate_fns)
+    miss_types = filter(t -> !(t in defs || snake(t) in defs ||
+                               any(p * snake(t) in defs for p in PREFIXES)), types)
+    if !isempty(miss_crate)
+        println()
+        println("pub(crate) fn with no definition (", length(miss_crate), " of ", length(crate_fns), "):")
+        for m in miss_crate
+            println("    ", m)
+        end
+    end
+    if !isempty(miss_types)
+        println()
+        println("pub struct/enum/trait with no definition (", length(miss_types), " of ", length(types), "):")
+        for m in miss_types
+            println("    ", m)
+        end
     end
     println()
     println("Cargo.toml default features: ", isempty(defaults) ? "(none found)" : join(sort(collect(defaults)), ", "))
