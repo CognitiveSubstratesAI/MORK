@@ -100,9 +100,18 @@ export trie_argset, trie_join_unary
 include("expr/DyckZipper.jl")
 
 # Extend PathMap's ez_reset! for ExprZipper so both share a single function object.
-# Mirrors ExprZipper::reset in upstream Rust.
+# Ports ExprZipper::reset (expr/src/lib.rs:1412-1419).
+#
+# ⚠️ This was `z.loc = 1` alone until the breadcrumb trace was ported. Upstream's reset ALSO clears
+# the trace and re-pushes the root frame — without that, a reset zipper keeps the stack from wherever
+# it had walked to, and the trace-based traversal would resume mid-expression. Thirteen kernel call
+# sites reset zippers, so the two halves have to move together.
 import PathMap: ez_reset!
-ez_reset!(z::ExprZipper) = (z.loc=1; z)
+function ez_reset!(z::ExprZipper)
+    z.loc = 1
+    z.trace = nothing     # dropped, not rebuilt — it re-materialises at the root on next use
+    z
+end
 export ez_reset!
 
 """

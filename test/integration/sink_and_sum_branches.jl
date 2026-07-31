@@ -30,9 +30,13 @@
 # trailing — the one case where the old and new code agree. Hence these probes.
 #
 # GROUND TRUTH: every expectation below was produced by running the program through the upstream release
-# binary (`mork run <file>.mm2`, built 2026-07-25) and transcribing its dump. Upstream renders variables
-# as `$a`/`$b`; we render a NewVar as `$` and a VarRef(i) as `_{i+1}` — so upstream `(r $a 1)` is our
-# `(r $ 1)`, and upstream `(r 1 $a $a)` (a NewVar plus a backref to it) is our `(r 1 $ _1)`.
+# binary (`mork run <file>.mm2`, built 2026-07-25) and transcribing its dump.
+#
+# These expectations are now upstream's output VERBATIM. They used to be transcribed with a
+# translation step, because our dump rendered a NewVar as `$` and a VarRef(i) as `_{i+1}` where
+# upstream renders both under a shared name `$a`/`$b`. That gap closed on 2026-07-31 when
+# `space_dump_all_sexpr` was switched to `expr_serialize2` (upstream's `serialize2`, space.rs:903),
+# so `(r $a 1)` and `(r 1 $a $a)` below are literally what the binary prints — no translation.
 using MORK, Test
 
 # (name, program, expected FULL sorted atom set as upstream produces it, branch under test)
@@ -43,7 +47,7 @@ const _SINK_BRANCH_PROBES = Tuple{String,String,Vector{String},String}[
      (m k2 5)
      (exec 0 (, (m \$k \$v)) (O (and (r \$p \$nv) \$nv \$v)))
      """,
-     ["(m k1 3)", "(m k2 5)", "(r \$ 1)"],
+     ["(m k1 3)", "(m k2 5)", "(r \$a 1)"],
      "branch 3 — the result template has TWO NewVars and <source> names the SECOND; 0x33 & 0x35 = 0x31 ('1')"),
 
     ("and/varref: re-base trailing de-Bruijn refs",
@@ -52,7 +56,7 @@ const _SINK_BRANCH_PROBES = Tuple{String,String,Vector{String},String}[
      (m k2 5)
      (exec 0 (, (m \$k \$v)) (O (and (r \$nv \$x \$x) \$nv \$v)))
      """,
-     ["(m k1 3)", "(m k2 5)", "(r 1 \$ _1)"],
+     ["(m k1 3)", "(m k2 5)", "(r 1 \$a \$a)"],
      "branch 3 — substituting at index 0 removes a binding, so the trailing coref must shift _2 -> _1"),
 
     ("and/sizes: fixed literal MATCHES the reduced value",

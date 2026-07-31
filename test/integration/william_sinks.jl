@@ -53,7 +53,7 @@ using MORK, Test
         # VarRef. (`_N` IS legitimate elsewhere — e.g. conformance g7_au_repeat emits `(f $a $b $a)`.)
         # This expectation was hard-coded in 4f57120, the commit that first made the sink fire —
         # it was never green, so this is not an engine regression.
-        @test occursin("(likes \$ pizza)", res)
+        @test occursin("(likes \$a pizza)", res)   # upstream's serialize2 naming (was `(likes $ pizza)`)
     end
 
     # ── HeadSink: top-k by lexicographic order ────────────────────────

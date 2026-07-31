@@ -285,16 +285,65 @@ end
 # =====================================================================
 
 """
+    Breadcrumb
+
+upstream `Breadcrumb` (lib.rs:83-87) — one frame of `ExprZipper.trace`: where the Arity node that
+opened this level sits, its arity, and how many of its children have been consumed.
+
+IMMUTABLE here, where upstream's derives `Copy` and is mutated through `&mut`. That is not a
+stylistic choice: `next_descendant` snapshots the trace with `self.trace.clone()` and restores it on
+failure, which is a genuine deep copy only because Breadcrumb is `Copy`. With a Julia
+`mutable struct`, `copy(trace)` would share frames with the live trace and the restore would
+silently restore nothing — a defect that no type error would catch.
+
+`parent` is a 1-BASED loc, like every other loc in this port; upstream's is 0-based.
+"""
+struct Breadcrumb
+    parent::UInt32
+    arity::UInt8
+    seen::UInt8
+end
+
+"""
     ExprZipper
 
 Cursor for traversing a flat byte-encoded expression.
 Mirrors `ExprZipper` in mork_expr.
+
+`trace` is upstream's breadcrumb stack (lib.rs:1225). It is what makes `ez_gnext!` / `ez_parent!` /
+`ez_next_descendant!` able to tell "this expression is finished" from "the buffer ran out" — see
+the note on `ez_next!`, which is our own simpler walker and deliberately does NOT maintain it.
 """
 mutable struct ExprZipper
     root::Expr
     loc::Int       # current byte offset (1-based)
+    # LAZILY MATERIALISED — `nothing` until a trace-based function needs it. Building it eagerly in
+    # the constructor cost a Vector allocation on EVERY zipper, including the output zippers and
+    # ez_next! walks that never look at it, and that showed up as a measured +2.7% on the
+    # `space_metta_calculus!` per-step allocation budget (test/alloc_budget.jl C2: 92465 vs a 90000
+    # ceiling). Laziness changes no semantics: the trace describes the position it was built at, so
+    # a zipper advanced by ez_next! has a root-relative trace either way — see the note above.
+    trace::Union{Nothing, Vector{Breadcrumb}}
 end
 
+# upstream `ExprZipper::new` (lib.rs:1229-1243): a leaf root gets an EMPTY trace, so `next()` on a
+# bare symbol or variable is false immediately; an Arity root gets one frame.
+function _ez_initial_trace(e::Expr)::Vector{Breadcrumb}
+    isempty(e.buf) && return Breadcrumb[]
+    t = maybe_byte_item(e.buf[1])
+    t isa ExprArity ? [Breadcrumb(UInt32(1), t.arity, UInt8(0))] : Breadcrumb[]
+end
+
+ExprZipper(e::Expr, loc::Int) = ExprZipper(e, loc, nothing)
+
+"""Materialise and return the breadcrumb trace, building it from the root on first use."""
+function _ez_trace!(z::ExprZipper)::Vector{Breadcrumb}
+    t = z.trace
+    t === nothing || return t
+    nt = _ez_initial_trace(z.root)
+    z.trace = nt
+    nt
+end
 ExprZipper(e::Expr) = ExprZipper(e, 1)
 ExprZipper(bytes::Vector{UInt8}) = ExprZipper(Expr(bytes), 1)
 
@@ -321,6 +370,160 @@ end
 
 """Return the span of the sub-expression at the current position."""
 ez_span(z::ExprZipper) = expr_span(z.root, z.loc)
+
+# =====================================================================
+# Breadcrumb traversal — upstream ExprZipper::gnext / next_skip / parent / next_descendant
+# =====================================================================
+#
+# ⚠️ RELATIONSHIP TO `ez_next!`, stated precisely because getting it wrong is silent:
+#
+# `ez_next!` is OURS, not upstream's. Upstream has one traversal, `next() = gnext(0)`, which knows the
+# expression is finished when the TRACE empties. `ez_next!` instead stops when the BUFFER runs out.
+# For a zipper over exactly one complete expression the two visit the same positions in the same
+# order and stop together (pinned by a test). They part when the buffer holds MORE than the
+# expression — which is exactly what `ez_subexpr` returns, since it carries the whole remaining tail:
+# there `ez_next!` walks on into the following siblings and `ez_gnext!` stops at the end of the
+# sub-expression. `ez_gnext!` is the correct one.
+#
+# `ez_next!` does NOT maintain `trace`. So do not advance with `ez_next!` and then ask `ez_parent!`
+# where you are — the trace will describe a position you no longer occupy. Pick one family per walk.
+
+"""
+    ez_gnext!(z, offset=0) → Bool
+
+upstream `ExprZipper::gnext` (lib.rs:1325-1352); `ez_gnext!(z)` is upstream's `next()` (lib.rs:1321).
+
+Consumes one child of the innermost open Arity node. When that node's children are exhausted the
+frame is popped and the search continues in the parent — so `false` means "the whole expression is
+finished", not "the buffer ended".
+
+`offset` bounds how far down the stack the search may pop: upstream slices `trace[offset..]`, so an
+`offset` at or beyond the stack depth yields `None` -> false. Note upstream's recursive call is
+`self.next()`, i.e. `gnext(0)` — the offset is NOT carried into the recursion, and that is faithful
+here.
+"""
+function ez_gnext!(z::ExprZipper, offset::Int=0)::Bool
+    tr = _ez_trace!(z)
+    length(tr) <= offset && return false
+    bc = tr[end]
+    if bc.seen < bc.arity
+        tr[end] = Breadcrumb(bc.parent, bc.arity, bc.seen + UInt8(0x01))
+        t = byte_item(z.root.buf[z.loc])
+        z.loc += t isa ExprSymbol ? Int(t.size) + 1 : 1
+        # upstream reads `self.tag()` here unconditionally — a raw pointer read that runs off the end
+        # for a TRUNCATED expression. Guarded: a well-formed expression never reaches past the buffer.
+        if z.loc <= length(z.root.buf)
+            nt = maybe_byte_item(z.root.buf[z.loc])
+            nt isa ExprArity && push!(tr, Breadcrumb(UInt32(z.loc), nt.arity, UInt8(0)))
+        end
+        return true
+    else
+        pop!(tr)
+        return ez_gnext!(z, 0)
+    end
+end
+
+"""
+    ez_next_skip!(z) → Bool
+
+upstream `ExprZipper::next_skip` (lib.rs:1354-1403) — like `ez_gnext!` but steps OVER a sub-expression
+instead of into it: an Arity node advances by its whole span, and no frame is pushed. The result is a
+walk of one level's children.
+
+⚠️ THIS IS UNFINISHED UPSTREAM WORK, ported for completeness rather than for use. Its only reference
+in the entire upstream tree is its own recursive self-call (lib.rs:1399) — no caller, no test. It
+still carries two live `println!` calls, three commented-out blocks and an unused binding. The prints
+are debug noise, not behaviour, and are not reproduced.
+
+Its behaviour FROM THE ROOT is degenerate and faithfully preserved: the tag at the root of an Arity
+expression is that whole expression, so the first call advances past ALL of it and returns true.
+Meaningful use is after descending, where it then walks one level's siblings.
+
+Upstream reads the tag at the resulting position on the next call, which for that root case is past
+the end of the allocation. We return false instead of reading out of bounds; upstream's behaviour
+there is undefined, so there is nothing faithful to preserve.
+"""
+function ez_next_skip!(z::ExprZipper)::Bool
+    tr = _ez_trace!(z)
+    isempty(tr) && return false
+    z.loc > length(z.root.buf) && return false
+    bc = tr[end]
+    if bc.seen < bc.arity
+        tr[end] = Breadcrumb(bc.parent, bc.arity, bc.seen + UInt8(0x01))
+        t = byte_item(z.root.buf[z.loc])
+        z.loc += t isa ExprSymbol ? Int(t.size) + 1 :
+                 t isa ExprArity  ? length(expr_span(z.root, z.loc)) : 1
+        return true
+    else
+        pop!(tr)
+        return ez_next_skip!(z)
+    end
+end
+
+"""
+    ez_parent!(z) → Bool
+
+upstream `ExprZipper::parent` (lib.rs:1405-1410) — move to the Arity node that opened the current
+level and pop its frame. `false` when already at the root.
+"""
+function ez_parent!(z::ExprZipper)::Bool
+    tr = _ez_trace!(z)
+    isempty(tr) && return false
+    z.loc = Int(tr[end].parent)
+    pop!(tr)
+    true
+end
+
+"""
+    ez_next_child!(z) → Bool
+
+upstream `ExprZipper::next_child` (lib.rs:1421-1423) — `next_descendant(0, 0)`.
+"""
+ez_next_child!(z::ExprZipper)::Bool = ez_next_descendant!(z, 0, 0)
+
+"""
+    ez_next_descendant!(z, to, offset) → Bool
+
+upstream `ExprZipper::next_descendant` (lib.rs:1425-1454) — advance with `ez_gnext!` until landing on
+a position whose parent is `base`, where `base` is selected by `to`:
+
+    to < 0  : the frame `to` from the TOP of the stack        (upstream `trace[len + to]`)
+    to > 0  : the frame at depth `to`                          (upstream `trace[to - 1]`)
+    to == 0 : the ROOT                                         (upstream's literal `0`)
+
+On exhaustion the trace is RESTORED to its entry value and `false` returned, so a failed search
+leaves the zipper's stack — though not its `loc` — as it was. That restore is only sound because
+`Breadcrumb` is immutable here; see its docstring.
+
+Index translation: upstream's `l = trace.len() - 1 - offset` is a 0-based index, so ours is
+`length(trace) - offset`, and upstream's `trace[l - 1]` is ours at one less again. Upstream's guard
+`l > 0` becomes `li > 1`.
+"""
+function ez_next_descendant!(z::ExprZipper, to::Int, offset::Int)::Bool
+    tr = _ez_trace!(z)
+    base = if to < 0
+        tr[length(tr) + to + 1].parent              # +1: upstream's index is 0-based
+    elseif to > 0
+        tr[to].parent                               # upstream trace[to-1], 0-based
+    else
+        UInt32(1)                                   # upstream's literal 0 = the root loc; ours is 1
+    end
+    initial = copy(tr)
+    while true
+        if !ez_gnext!(z, 0)
+            z.trace = initial
+            return false
+        end
+        tr = _ez_trace!(z)
+        li = length(tr) - offset
+        t = byte_item(z.root.buf[z.loc])
+        if t isa ExprArity
+            li > 1 && tr[li - 1].parent == base && return true
+        else
+            li >= 1 && tr[li].parent == base && return true
+        end
+    end
+end
 
 """
     ez_tag_str(z) → String
@@ -500,6 +703,118 @@ function expr_serialize(bytes::AbstractVector{UInt8})::String
 end
 
 expr_serialize(e::Expr) = expr_serialize(e.buf)
+
+"""
+    EXPR_VARNAMES
+
+upstream `Expr::VARNAMES` (lib.rs:897) — the 64 names variables are printed under: `\$a`..`\$j` for
+indices 0-9, then `\$x10`..`\$x63`. Sixty-four because that is the Rule-of-64 ceiling on VarRef.
+"""
+const EXPR_VARNAMES = String[i < 10 ? "\$" * ('a' + i) : "\$x$(i)" for i in 0:63]
+
+"""
+    expr_varname(i, intro) → String
+
+upstream's default `map_variable` (`|i, intro| Expr::VARNAMES[i as usize]`, space.rs:913/960). Note
+it IGNORES `intro`: a binder and a back-reference to it print the SAME name, which is what makes the
+output re-readable.
+"""
+expr_varname(i::Integer, _intro::Bool)::String = EXPR_VARNAMES[Int(i) + 1]
+
+"""
+    expr_serialize2(bytes; map_symbol=nothing, map_variable=expr_varname) → String
+
+upstream `Expr::serialize2` (lib.rs:900-904) — the serializer used by BOTH of upstream's dump paths
+(`dump_all_sexpr` space.rs:903, and the query dump at :952).
+
+It differs from [`expr_serialize`] in one respect that matters a great deal: variables are rendered
+through `map_variable` under a NAME rather than as the raw encoding. Upstream passes VARNAMES, so a
+binder and every back-reference to it share one name:
+
+    encoding        expr_serialize (upstream `serialize`)   expr_serialize2 (upstream `serialize2`)
+    [2] pat \$       (pat \$)                                 (pat \$a)
+    [3] two \$ \$     (two \$ \$)                               (two \$a \$b)
+    [3] twice \$ _1  (twice \$ _1)                            (twice \$a \$a)
+
+Both forms round-trip through our own parser — CHECKED, not assumed: dumping `(twice \$y \$y)` and
+re-reading it reproduces the identical encoding under either serializer, because our s-expression
+parser accepts `_N` as a back-reference and a repeated variable NAME also encodes as binder +
+back-reference. So the reason to prefer this one is parity with upstream's actual dump output, not
+data loss in ours.
+
+Our conformance harness already knew about the difference and canonicalises it away: it maps
+upstream's `\$a`/`\$b` and our `\$`/`_N` onto `V0`,`V1`,… by first occurrence
+(`test/conformance/run_conformance.jl:30`). Using `serialize2` in the dump paths is what makes that
+normalisation unnecessary for variables rather than load-bearing.
+
+`map_symbol=nothing` means "write the symbol's bytes verbatim", which is upstream's non-interning
+path and is required for byte-exactness; see the long note in [`expr_serialize`] about the escaping
+that used to corrupt round-trips here.
+"""
+function expr_serialize2(bytes::AbstractVector{UInt8};
+                         map_symbol = nothing,
+                         map_variable = expr_varname)::String
+    io = IOBuffer()
+    stack = Int[]
+    transient = false
+    n = 0                     # upstream SerializerTraversal2.n — how many binders have been printed
+    i = 1
+    while i <= length(bytes)
+        tag = byte_item(bytes[i])
+
+        if tag isa ExprArity
+            transient && write(io, ' ')
+            write(io, '(')
+            transient = false
+            push!(stack, Int(tag.arity))
+            i += 1
+        elseif tag isa ExprSymbol
+            transient && write(io, ' ')
+            m = Int(tag.size)
+            i += 1
+            sym = view(bytes, i:min(i + m - 1, length(bytes)))
+            if map_symbol === nothing
+                for b in sym
+                    write(io, b)
+                end
+            else
+                write(io, map_symbol(sym))
+            end
+            i += m
+            transient = true
+        elseif tag isa ExprNewVar
+            transient && write(io, ' ')
+            write(io, map_variable(UInt8(n), true))
+            n += 1
+            i += 1
+            transient = true
+        elseif tag isa ExprVarRef
+            transient && write(io, ' ')
+            write(io, map_variable(tag.idx, false))
+            i += 1
+            transient = true
+        else
+            i += 1
+        end
+
+        while !isempty(stack)
+            stack[end] -= 1
+            if stack[end] < 0
+                pop!(stack)
+                write(io, ')')
+                transient = true
+            else
+                break
+            end
+        end
+    end
+    for _ in stack
+        write(io, ')')
+    end
+    String(take!(io))
+end
+
+expr_serialize2(e::Expr; kwargs...) = expr_serialize2(e.buf; kwargs...)
 
 # =====================================================================
 # ExprEnv — expression with unification scope
@@ -728,7 +1043,9 @@ end
 export ExprTag, ExprNewVar, ExprVarRef, ExprSymbol, ExprArity
 export item_byte, byte_item, _derive_prefix
 export Expr, expr_tag_at, expr_span, expr_serialize
+export expr_serialize2, expr_varname, EXPR_VARNAMES
 export ExprZipper, ez_tag, ez_item, ez_next!, ez_span, ez_symbol
+export Breadcrumb, ez_gnext!, ez_next_skip!, ez_parent!, ez_next_child!, ez_next_descendant!
 export ez_ensure!, ez_write_new_var!, ez_write_var_ref!, ez_write_arity!
 export ez_patch_arity!, ez_write_symbol!, ez_write_move!, ez_finish_span
 export ExprEnv, ExprVar, ee_subsexpr, ee_var_opt, ee_offset

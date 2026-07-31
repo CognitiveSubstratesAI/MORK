@@ -237,7 +237,11 @@ function space_dump_all_sexpr(s::Space, io::IO)::Int
     i = 0
     while zipper_to_next_val!(rz)
         path = collect(zipper_path(rz))
-        println(io, expr_serialize(path))
+        # upstream dump_all_sexpr uses serialize2 (space.rs:903) with VARNAMES, so variables print
+        # as `\$a`/`\$b` and a binder shares its name with every back-reference to it. Ours printed
+        # `\$`/`_N` (plain `serialize`) until 2026-07-31 — verified against the release binary:
+        # `(twice \$y \$y)` dumps as `(twice \$a \$a)` upstream and printed `(twice \$ _1)` here.
+        println(io, expr_serialize2(path))
         i += 1
     end
     i
@@ -2334,7 +2338,7 @@ function space_dump_sexpr(s::Space, pattern::MORK.Expr, template::MORK.Expr, io:
             expr_apply(UInt8(0), UInt8(0), UInt8(0), ez_tpl, bindings, oz,
                 Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
             result_bytes = oz.root.buf[1:(oz.loc - 1)]
-            println(io, expr_serialize(result_bytes))
+            println(io, expr_serialize2(result_bytes))   # upstream dump_sexpr, space.rs:952
             count[] += 1
             true
         end

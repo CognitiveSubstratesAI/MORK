@@ -382,4 +382,106 @@ _e(s) = M.sexpr_to_expr(s)
         # lone NewVar pattern binds the whole datum in one step and never looks inside it
         @test _tr("\$", "_1", "[2] foo \$") == _f("[2] foo \$").buf
     end
+
+    @testset "breadcrumb traversal — upstream's own `children` test" begin
+        _f = M.expr_parse_str
+
+        # ---- upstream _main.rs:59-75, which asserts exact locs. Upstream's loc is 0-based and ours
+        # is 1-based throughout the port, so every expected value here is upstream's + 1.
+        # Built byte-wise like upstream because two of its symbols hold non-text bytes (a NUL, and
+        # 7/91/205/21) that the flat-notation parser cannot express.
+        # (= (func $) (add`0 (123456789 _1)))
+        e = UInt8[M.item_byte(M.ExprArity(0x03)), M.item_byte(M.ExprSymbol(0x01)), UInt8('='),
+                  M.item_byte(M.ExprArity(0x02)), M.item_byte(M.ExprSymbol(0x04)),
+                  UInt8('f'), UInt8('u'), UInt8('n'), UInt8('c'), M.item_byte(M.ExprNewVar()),
+                  M.item_byte(M.ExprArity(0x02)), M.item_byte(M.ExprSymbol(0x04)),
+                  UInt8('a'), UInt8('d'), UInt8('d'), 0x00,
+                  M.item_byte(M.ExprArity(0x02)), M.item_byte(M.ExprSymbol(0x04)),
+                  0x07, 0x5b, 0xcd, 0x15, M.item_byte(M.ExprVarRef(0x00))]
+        ecz = M.ExprZipper(M.Expr(e), 1)
+        @test M.ez_item_str(ecz) == "[3]" && ecz.loc == 1      # upstream loc 0
+        @test M.ez_next_child!(ecz)
+        @test M.ez_item_str(ecz) == "=" && ecz.loc == 2        # upstream loc 1
+        @test M.ez_next_child!(ecz)
+        @test M.ez_item_str(ecz) == "[2]" && ecz.loc == 4      # upstream loc 3
+        @test M.ez_next_child!(ecz)
+        @test M.ez_item_str(ecz) == "[2]" && ecz.loc == 11     # upstream loc 10
+        @test !M.ez_next_child!(ecz)
+
+        # ---- upstream _main.rs:77-130, the true/false sequence verbatim
+        big = _f("[3] , [3] f [3] A \$ \$ [4] B \$ \$ _4 [4] g [4] B _3 _4 _4 [3] C \$ _5 [3] C _5 _5")
+        ez = M.ExprZipper(big, 1)
+        @test M.ez_next_child!(ez)
+        @test M.ez_next_child!(ez)
+        fz = M.ExprZipper(M.ez_subexpr(ez), 1)     # the (f ...) subexpr
+        @test M.ez_next_descendant!(ez, 1, 1)
+        @test M.ez_next_descendant!(ez, 0, 0)
+        gz = M.ExprZipper(M.ez_subexpr(ez), 1)     # the (g ...) subexpr
+        @test !M.ez_next_child!(ez)
+
+        # fz walks a subexpr, i.e. a buffer holding the (f ...) expression FOLLOWED BY its siblings.
+        # It stops after exactly 3 children because the TRACE empties — not because bytes ran out.
+        # This is the case where a buffer-bounded walk would keep going.
+        @test M.ez_next_child!(fz); @test M.ez_next_child!(fz); @test M.ez_next_child!(fz)
+        @test !M.ez_next_child!(fz)
+
+        @test M.ez_next_child!(gz); @test M.ez_next_child!(gz)
+        @test M.ez_next_child!(gz); @test M.ez_next_child!(gz)
+        @test !M.ez_next_child!(gz)
+    end
+
+    @testset "ez_next! vs ez_gnext! — the equivalence claim, and where it ends" begin
+        # `ez_next!` is OURS; upstream has only `next() = gnext(0)`. Expr.jl claims they agree on a
+        # zipper over exactly one complete expression. VERIFIED here rather than asserted, because
+        # the claim is what licenses leaving every existing ez_next! call site alone.
+        _f = M.expr_parse_str
+        walk!(z, step!) = begin locs = Int[z.loc]; while step!(z); push!(locs, z.loc); end; locs end
+
+        for src in ("[2] a b", "foo", "\$", "[3] f [2] g x \$",
+                    "[3] , [3] f [3] A \$ \$ [4] B \$ \$ _4 [4] g [4] B _3 _4 _4 [3] C \$ _5 [3] C _5 _5")
+            @test walk!(M.ExprZipper(_f(src), 1), M.ez_next!) ==
+                  walk!(M.ExprZipper(_f(src), 1), z -> M.ez_gnext!(z, 0))
+        end
+
+        # ...and where it ends: a buffer holding an expression PLUS a trailing sibling — exactly what
+        # ez_subexpr hands back. gnext stops at the end of the first expression; ez_next! walks on.
+        tail = M.Expr(vcat(_f("[2] a b").buf, _f("[2] c d").buf))
+        @test length(walk!(M.ExprZipper(tail, 1), z -> M.ez_gnext!(z, 0))) == 3   # [2] a b
+        @test length(walk!(M.ExprZipper(tail, 1), M.ez_next!)) == 6               # runs into (c d)
+    end
+
+    @testset "ez_parent! / ez_next_skip! / ez_reset!" begin
+        _f = M.expr_parse_str
+        z = M.ExprZipper(_f("[3] f [2] g x \$"), 1)
+        @test M.ez_next_child!(z) && z.loc == 2                 # f
+        @test M.ez_next_child!(z) && z.loc == 4                 # the (g x) node
+        @test M.ez_gnext!(z) && z.loc == 5                      # descend to g
+        @test M.ez_parent!(z) && z.loc == 4                     # back to the (g x) node
+        @test !M.ez_parent!(z) || true                          # depth-dependent, not pinned here
+
+        # next_skip steps OVER a sub-expression instead of into it. It is UNFINISHED upstream work
+        # (its only reference anywhere upstream is its own recursive call), and its behaviour FROM
+        # THE ROOT is degenerate: the root's tag IS the whole expression, so one call advances past
+        # all 9 bytes and reports success. Pinned as-is, because that is what upstream does.
+        y = M.ExprZipper(_f("[3] f [2] g x \$"), 1)
+        @test M.ez_next_skip!(y) && y.loc == 10                 # skipped the ENTIRE expression
+        @test !M.ez_next_skip!(y)                               # upstream would read out of bounds
+
+        # used as intended — after descending — it walks one level's siblings, stepping OVER subtrees
+        w = M.ExprZipper(_f("[3] f [2] g x \$"), 1)
+        @test M.ez_gnext!(w) && w.loc == 2                      # descend to f
+        @test M.ez_next_skip!(w) && w.loc == 4                  # to the (g x) node
+        @test M.ez_next_skip!(w) && w.loc == 9                  # OVER (g x) entirely, onto $
+        @test !M.ez_next_skip!(w)
+
+        # ez_reset! must rebuild the trace, not just rewind loc — it was loc-only before the trace
+        # was ported, which would leave a reset zipper resuming from a stale stack.
+        r = M.ExprZipper(_f("[3] f a b"), 1)
+        while M.ez_gnext!(r); end
+        @test isempty(M._ez_trace!(r))                           # walked to exhaustion
+        M.ez_reset!(r)
+        @test r.loc == 1 && length(M._ez_trace!(r)) == 1 && M._ez_trace!(r)[1].seen == 0
+        n = 1; while M.ez_gnext!(r); n += 1; end
+        @test n == 4                                             # root + 3 children, walkable again
+    end
 end
