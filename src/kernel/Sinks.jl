@@ -996,49 +996,86 @@ PureSink(e::MORK.Expr) = PureSink(e, false, eval_scope_sharing(PURE_SCOPE))
 """
     _expr_rebase_varrefs(buf, from, base) -> Vector{UInt8}
 
-Copy the expression starting at `buf[from]`, reducing every `VarRef` index by `base`.
+Copy the expression at `buf[from]`, reducing every `VarRef` index by `base`, so the result is
+self-contained: its references count against its OWN binders rather than an enclosing expression's.
 
-FIXES UPSTREAM #135 — quotation losing variable coreference. A quoted `(x x)` inside a `pure` formula
-came out as two UNRELATED variables where one was written.
+# Why this exists — upstream #135
 
-It is a SCOPE MISMATCH, not a corruption: nothing rewrites the bytes. `ee_args!` threads the de Bruijn
-base across the `(pure <tpl> <pat> <call>)` operands (`env.v + new_var_count`, ExprAlg.jl:368), so the
-CALL's VarRefs are relative to however many binders precede it. `PureSink` then evaluated that call as
-a BARE SLICE, where the same bytes mean something else: the first NewVar is now binder 0, so a
-`VarRef(1)` written against base 1 points one PAST it and materialises a second variable that appears
-nowhere in the input.
+A quoted `(x x)` inside a `pure` formula came out as two UNRELATED variables where one was written.
 
-Measured on the issue's own program, the operands carry v = 0, 0, 1, 1 — the call's base is 1, exactly
-the observed off-by-one. So the base is not something to compute: `ee_args!` already computed it and
-the sink discarded it. This restores it, which is why the fix is a re-base and not a rewrite.
+It is a SCOPE MISMATCH, not a corruption: nothing rewrites the bytes, they are read in the wrong
+frame. `ee_args!` threads the de Bruijn base across the `(pure <tpl> <pat> <call>)` operands
+(`env.v + new_var_count`, ExprAlg.jl:368), so the CALL's `VarRef`s are relative to however many
+binders precede it. Measured on the issue's own program the operands carry `v = 0, 0, 1, 1` — base 1
+for the call. `PureSink` then evaluated that call as a BARE SLICE, where the same bytes mean
+something else: the first `NewVar` is now binder 0, so a `VarRef(1)` written against base 1 points
+one PAST it and materialises a variable appearing nowhere in the input.
 
-DELIBERATE DEVIATION — upstream #135 is OPEN and the release binary still exhibits it. Justified under
-the `test/conformance/UPSTREAM_BUGS.md` rule that reproducing silent corruption is worse than
-deviating. Shaped to CONVERGE rather than conflict: it honours the base upstream's own `args` (and PR
-#137's extracted `ExprEnv::subterms`) already thread, which is what any upstream fix must also do.
-Reconcile when #135 or #137 lands.
+The base was therefore never missing — `ee_args!` had already computed it and the sink discarded it.
+That is why this is a re-base and not a rewrite, and why the fix is expected to CONVERGE with
+upstream's: any correct fix must honour the same value. (PR #137 extracts exactly this threading as
+`ExprEnv::subterms`.)
 
-A reference below `base` points at a binder OUTSIDE the call, unresolvable standalone, so it raises
-rather than silently aliasing onto the wrong variable.
+# The consequence that made it worth deviating: `hash_expr` was not content-addressed
+
+Reachable without mentioning quoting at all. Hash ONE expression from two templates differing only in
+how many binders precede the call:
+
+    1 binder before the call   ->  bssGabbteWo      upstream
+    2 binders before the call  ->  0Z2xrn_VwuU      upstream, SAME expression
+    either                     ->  lzt106T12AQ      ours, after this fix
+
+A digest that changes with syntactic position cannot content-address anything, which is the op's
+whole purpose. It hides well: a variable-free expression has no `VarRef` to mis-read, so it hashes
+identically on both sides and the defect only appears once an expression contains a back-reference.
+
+# Status: DELIBERATE DEVIATION
+
+Upstream #135 is OPEN and its binary still exhibits this. Deviating is the narrow exception
+`test/conformance/UPSTREAM_BUGS.md` reserves for silent corruption.
+
+⚠️ The deviation is WIDER than #135's own symptom, and that is recorded where it bites:
+`test/integration/sink_pure_advanced.jl`'s byte-parity assertion now differs from upstream's
+`main.rs:1201-1225` for the expression containing a back-reference — the variable-free one still
+matches exactly. Reconcile when #135 or PR #137 lands.
+
+See `test/integration/upstream_issues.jl` for the three shapes this fixes, two of which were
+PREDICTED from the diagnosis and confirmed against the release binary before the fix was written.
 """
 function _expr_rebase_varrefs(buf::AbstractVector{UInt8}, from::Int, base::Int)::Vector{UInt8}
-    stop = _expr_end_offset(collect(UInt8, buf), from) - 1
+    # Only the call's OWN span is copied — `_expr_end_offset` gives its exclusive end, so a formula
+    # sitting mid-buffer does not drag its trailing siblings along. (It takes an AbstractVector
+    # precisely so this needs no `collect`: the sink hands us `formula_ee.base.buf`, and copying the
+    # whole buffer per evaluation on this path would cost more than the re-base itself.)
+    stop = _expr_end_offset(buf, from) - 1
     out = UInt8[]
+    sizehint!(out, stop - from + 1)
     i = from
     @inbounds while i <= stop
         t = byte_item(buf[i])
         if t isa ExprVarRef
+            # THE ONLY ITEM THAT MOVES. A back-reference is an index into the binder sequence, so
+            # dropping `base` enclosing binders means every reference shifts down by `base`.
             idx = Int(t.idx)
+            # Below `base` the reference names a binder OUTSIDE this call — the pattern's or the
+            # template's. Standalone evaluation cannot resolve that, and silently clamping would
+            # alias it onto an unrelated variable, which is the very failure this function exists to
+            # remove. Raise instead; the sink treats EvalError as "skip this atom".
             idx >= base || throw(EvalError(
-                "pure: variable reference _$(idx + 1) points outside the call expression \
-(de Bruijn base $base) and cannot be resolved standalone"))
+                "pure: variable reference _$(idx + 1) names a binder outside the call expression \
+(de Bruijn base $base); it cannot be resolved when the call is evaluated on its own"))
             push!(out, item_byte(ExprVarRef(UInt8(idx - base))))
             i += 1
         elseif t isa ExprSymbol
+            # Payload bytes are DATA, not tags. They must be copied wholesale and skipped over —
+            # scanning them would decode arbitrary bytes as VarRefs and corrupt the symbol.
             n = Int(t.size)
             append!(out, @view buf[i:min(i + n, stop)])
             i += n + 1
-        else                      # NewVar / Arity — copied verbatim
+        else
+            # NewVar and Arity are copied VERBATIM, and NewVar is the interesting one: a binder is a
+            # binder in any scope. Re-basing it too would renumber the very introductions the
+            # references are counted against, reintroducing the bug in mirror image.
             push!(out, buf[i])
             i += 1
         end
@@ -1052,7 +1089,7 @@ end
 Return the offset just past the expression starting at `off` (exclusive end).
 """
 
-function _expr_end_offset(buf::Vector{UInt8}, off::Int)::Int
+function _expr_end_offset(buf::AbstractVector{UInt8}, off::Int)::Int
     off > length(buf) && return off
     tag = byte_item(buf[off])
     if tag isa ExprSymbol
@@ -1115,9 +1152,14 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
         # Only EvalError is caught. Anything else is the analogue of an upstream PANIC and is left to
         # propagate rather than silently dropping an atom — silent skips are how a defect population
         # stays invisible.
-        # Re-base the call's VarRefs onto its OWN scope before evaluating it standalone — see
-        # `_expr_rebase_varrefs`. `formula_ee.v` is the base `ee_args!` already threaded; without
-        # this, a back-reference inside the call resolves against the wrong binder (upstream #135).
+        # ── upstream #135: give the call its OWN variable scope before evaluating it ──
+        # `scope_eval!` reads the call as a standalone expression, so its `VarRef`s must be counted
+        # against the binders INSIDE it. `formula_ee.v` is that base and `ee_args!` already computed
+        # it (ExprAlg.jl:368) — this restores what the sink used to throw away. Full reasoning, and
+        # the `hash_expr` content-addressing consequence, on `_expr_rebase_varrefs`.
+        #
+        # base 0 is the overwhelmingly common case (no binder precedes the call), and the re-base
+        # would be an identity copy — so take the original buffer and skip the allocation entirely.
         fbase = Int(formula_ee.v)
         formula_src = fbase == 0 ? ExprSource(formula_buf, formula_start) :
                       ExprSource(_expr_rebase_varrefs(formula_buf, formula_start, fbase), 1)
