@@ -314,8 +314,16 @@ function sink_finalize!(s::HeadSink, btm::SinkBtm)::Bool
     wz = write_zipper(btm)
     # wz_join_into! takes an AbstractNodeRef, not a TrieNodeODRc — passing the bare
     # root threw MethodError. wz_join_map_into! is the map-level join API: it reads
-    # map.root itself and is COW-safe (copy()s on identity arms). Mirrors Rust
-    # HeadSink finalize `wz.join_into(&self.head.read_zipper())` (sinks.rs:426).
+    # map.root itself. Mirrors Rust HeadSink finalize
+    # `wz.join_into(&self.head.read_zipper())` (sinks.rs:426).
+    #
+    # ⚠️ CORRECTED 2026-08-01: this comment used to claim wz_join_map_into! "is COW-safe (copy()s on
+    # identity arms)". IT IS NOT — it CONSUMES `map`, mutating it, faithfully to upstream's
+    # by-value `join_map_into(&mut self, map: PathMap<V,A>)` (write_zipper.rs:1680). Measured: the
+    # source gains keys from the target. Safe HERE only because `sink_finalize!` runs once per sink
+    # (Space.jl:1877/1897) and `s.head` is discarded after — NOT because the call is non-mutating.
+    # If this sink ever finalizes twice, or `s.head` is read afterwards, it will be reading a
+    # polluted map. See the contract on wz_join_map_into! and PathMap/test/test_join_consumes_source.jl.
     status = wz_join_map_into!(wz, s.head)
     status != ALG_STATUS_IDENTITY
 end
