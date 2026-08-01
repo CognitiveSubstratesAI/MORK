@@ -226,10 +226,22 @@ const _MORK_TS = @testset "MORK" begin
             @test r isa AlgResElement && r.value == UInt32(7)
         end
 
-        @testset "Lattice on Bool (pjoin=or, pmeet=and)" begin
-            # pjoin
+        @testset "Lattice on Bool (1:1 with upstream ring.rs:881-905)" begin
+            # ⚠️ UPDATED 2026-08-01 with PathMap `de5a5b2`. These used to pin a DEVIATION recorded
+            # as "proper &/| for Bool", on the grounds that upstream's Bool impl was a
+            # `//GOAT trash` placeholder like its integer impls. It is not — those tags sit on
+            # `usize`/`u64`/`u32`/`u16`, and upstream's Bool section opens with a design NOTE
+            # explaining why bool DOES get a real impl. The deviation was withdrawn.
+            #
+            # Two things changed, and BOTH are asserted here because neither shows up in the
+            # boolean results: the MASK WIDTH for equal operands (was SELF|COUNTER, upstream says
+            # SELF alone — and the width is observable through `rec_mask & val_mask`), and
+            # `psubtract(false, true)`, which upstream KEEPS as Identity(SELF) where we returned
+            # None and deleted the entry.
+            #
+            # pjoin — `if !*self && *other { Identity(COUNTER) } else { Identity(SELF) }`
             r = pjoin(false, false)
-            @test r isa AlgResIdentity && r.mask == (SELF_IDENT | COUNTER_IDENT)
+            @test r isa AlgResIdentity && r.mask == SELF_IDENT
 
             r = pjoin(true, false)
             @test r isa AlgResIdentity && r.mask == SELF_IDENT
@@ -237,16 +249,20 @@ const _MORK_TS = @testset "MORK" begin
             r = pjoin(false, true)
             @test r isa AlgResIdentity && r.mask == COUNTER_IDENT
 
-            # pmeet
+            r = pjoin(true, true)
+            @test r isa AlgResIdentity && r.mask == SELF_IDENT   # NOT SELF|COUNTER
+
+            # pmeet — `if *self && !*other { Identity(COUNTER) } else { Identity(SELF) }`
             r = pmeet(true, true)
-            @test r isa AlgResIdentity && r.mask == (SELF_IDENT | COUNTER_IDENT)
+            @test r isa AlgResIdentity && r.mask == SELF_IDENT   # NOT SELF|COUNTER
 
             r = pmeet(true, false)
             @test r isa AlgResIdentity && r.mask == COUNTER_IDENT  # result = false = other
 
-            # psubtract
+            # psubtract — `if *self == *other { None } else { Identity(SELF) }`
             @test psubtract(false, false) isa AlgResNone
-            @test psubtract(false, true) isa AlgResNone
+            r = psubtract(false, true)
+            @test r isa AlgResIdentity && r.mask == SELF_IDENT   # was None: the entry was DELETED
             @test psubtract(true, true) isa AlgResNone
             r = psubtract(true, false)
             @test r isa AlgResIdentity && r.mask == SELF_IDENT
@@ -4745,6 +4761,13 @@ const _MORK_TS = @testset "MORK" begin
     # inconsistency: load_jsonl writes the 8-byte line index UNTAGGED, so its path parses as an
     # expression only 9 bytes long with the document outside the span; jsonl_to_paths tags it.
     include("test_json_to_paths.jl")
+
+    # ── MorkL: Identity is an OPERAND, not emptiness (2026-08-01) ────────────
+    # `_binary_space_op!` mapped every non-Element AlgebraicResult to a fresh EMPTY PathMap, so any
+    # op whose answer equalled an input returned an empty space. 4 of 5 shapes were wrong. Every
+    # existing MorkL test used operands whose result DIFFERS from both inputs — the one case the
+    # old code got right.
+    include("test_morkl_algebra_identity.jl")
 
     # ── consume::<T> operand width (2026-07-31) ──────────────────────────────
     # The arms' operand check is EXACT. We accepted over-long operands and emitted a result the

@@ -230,9 +230,43 @@ function _descend_leading!(rz::ReadZipperCore, prefix_first_byte::UInt8)
     end
 end
 
-# Binary space op helper
-function _alg_to_pathmap(r, default::PathMap{UnitVal})::PathMap{UnitVal}
-    r isa AlgResElement ? r.value : default
+# Binary space op helper.
+#
+# 🔴 `Identity` MEANS "THE ANSWER IS ONE OF THE OPERANDS", NOT "THERE IS NO ANSWER".
+# This used to be `r isa AlgResElement ? r.value : default` with `default = PathMap{UnitVal}()`, so
+# EVERY Identity result produced an EMPTY SPACE. Measured before the fix — 4 of 5 shapes wrong:
+#
+#     a={a,b} - b={c,d}  (disjoint, so a-b == a)   -> []   should be [a,b]
+#     a={a,b} | b={a}    (subset,   so a|b == a)   -> []   should be [a,b]
+#     a={a,b} & b={a,b}  (equal,    so a&b == a)   -> []   should be [a,b]
+#     a={a,b} restrict {a,b,c}                     -> []   should be [a,b]
+#     a={a,b} - b={b}    (Element — the control)   -> [a]  correct
+#
+# The mask says WHICH operand: SELF_IDENT -> the first, COUNTER_IDENT -> the second (ring.rs:12-21).
+# For non-commutative ops the contract forbids bits beyond SELF_IDENT, so subtract/restrict can only
+# ever mean the first operand — checking the bit is still correct there, just never false.
+#
+# HOW IT GOT HERE, because the mistake is a reasonable one. The ML-1 audit (2026-06-04) dropped a
+# `deepcopy(space_reg[arg0+1])` on the correct grounds that these ops are non-mutating, so copying
+# the input was an O(space) waste fighting the COW design. But that copy was load-bearing for a
+# second reason nobody was tracking: it WAS upstream's accumulator. Upstream's shape is
+#     let out = space_reg[arg_0].clone();  out.$OP(&space_reg[arg_1]);  space_reg[pc] = out;
+# (server branch 2d6730b, experiments/morkl_interpreter/src/lib.rs:306-311) — mutate a clone of the
+# first operand, so "Identity" needs no handling at all. Remove the clone and Identity suddenly has
+# nowhere to fall back to; the code fell back to empty. Right about the cost, wrong about the
+# invariant the copy was carrying.
+#
+# ⚠️ NOT A PORTED BUG — upstream has a DIFFERENT one here, and ours is not it. `join`/`meet`/
+# `subtract`/`restrict` on the map are `&self -> Self` (trie_map.rs:523-559), so upstream's
+# `out.$OP(&...)` DISCARDS the result and stores the untouched clone: every binary space op there is
+# a no-op returning `arg_0`. The two are complementary — upstream is right exactly where we were
+# wrong (Identity) and wrong where we were right (Element). Do not "restore parity" with it.
+# It survives upstream because `experiments/morkl_interpreter/` is absent from the workspace
+# `members` list (Cargo.toml:3-15), so it is never built.
+function _alg_result_to_space(r, a::PathMap{UnitVal}, b::PathMap{UnitVal})::PathMap{UnitVal}
+    r isa AlgResElement && return r.value
+    r isa AlgResNone && return PathMap{UnitVal}()
+    (r.mask & SELF_IDENT) != 0 ? a : b
 end
 
 function _binary_space_op!(space_reg::Vector{PathMap{UnitVal}}, pc::Int,
@@ -257,7 +291,7 @@ function _binary_space_op!(space_reg::Vector{PathMap{UnitVal}}, pc::Int,
     else
         prestrict(a, b)
     end
-    space_reg[pc + 1] = _alg_to_pathmap(result, PathMap{UnitVal}())
+    space_reg[pc + 1] = _alg_result_to_space(result, a, b)
 end
 
 # =====================================================================
@@ -550,10 +584,14 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                     sr = pop!(sub_stack)
                     # Union result into parent
                     result = space_reg[pc_ref[]]
-                    space_reg[Int(sr.previous_program_counter) + 1] = _alg_to_pathmap(
-                        pjoin(space_reg[Int(sr.previous_program_counter) + 1], result),
-                        result
-                    )
+                    # Same Identity trap as `_binary_space_op!`. The old default here was `result`,
+                    # which is wrong for Identity(SELF_IDENT) — that says the join equals the PARENT,
+                    # i.e. `result` was already contained in it, so writing `result` back drops
+                    # everything the parent had beyond it.
+                    parent_reg = Int(sr.previous_program_counter) + 1
+                    parent = space_reg[parent_reg]
+                    space_reg[parent_reg] =
+                        _alg_result_to_space(pjoin(parent, result), parent, result)
 
                     # Advance iterator
                     if _is_length_byte(sr.prefix_first_byte) && sr.prefix_first_byte > 0 &&
