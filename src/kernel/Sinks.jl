@@ -317,13 +317,15 @@ function sink_finalize!(s::HeadSink, btm::SinkBtm)::Bool
     # map.root itself. Mirrors Rust HeadSink finalize
     # `wz.join_into(&self.head.read_zipper())` (sinks.rs:426).
     #
-    # ⚠️ CORRECTED 2026-08-01: this comment used to claim wz_join_map_into! "is COW-safe (copy()s on
-    # identity arms)". IT IS NOT — it CONSUMES `map`, mutating it, faithfully to upstream's
-    # by-value `join_map_into(&mut self, map: PathMap<V,A>)` (write_zipper.rs:1680). Measured: the
-    # source gains keys from the target. Safe HERE only because `sink_finalize!` runs once per sink
-    # (Space.jl:1877/1897) and `s.head` is discarded after — NOT because the call is non-mutating.
-    # If this sink ever finalizes twice, or `s.head` is read afterwards, it will be reading a
-    # polluted map. See the contract on wz_join_map_into! and PathMap/test/test_join_consumes_source.jl.
+    # ⚠️ THIS COMMENT HAS BEEN WRONG TWICE — the second correction is the one that stuck.
+    #   v1 claimed wz_join_map_into! "is COW-safe (copy()s on identity arms)". False at the time.
+    #   v2 (2026-08-01, earlier) claimed it CONSUMES `map` by design, faithfully to upstream's
+    #      by-value `join_map_into(&mut self, map: PathMap<V,A>)`, and warned that `s.head` was safe
+    #      here only because the sink finalizes once. Also false: the mutation was a PathMap DEFECT,
+    #      not a contract. `LineListNode::join_into_dyn!` merged into its right-hand operand where
+    #      upstream clones it (line_list_node.rs:2515-2532). Fixed; fuzz ratchet 31 → 30 (case 00324).
+    # `s.head` now survives the join intact, so neither a second finalize nor a later read of
+    # `s.head` can see a polluted map. Pinned in PathMap/test/test_join_preserves_source.jl.
     status = wz_join_map_into!(wz, s.head)
     status != ALG_STATUS_IDENTITY
 end
