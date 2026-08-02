@@ -69,8 +69,10 @@ sinks/g4_tostring
 sinks/g4_tuple
 sinks/g5_head_bare
 sinks/g5_head_basic
+sinks/g5_head_descending
 sinks/g5_head_dup_fill
 sinks/g5_head_leadzero
+sinks/g5_head_order
 sinks/g5_tail_ascending
 sinks/g5_tail_basic
 sinks/g5_tail_order

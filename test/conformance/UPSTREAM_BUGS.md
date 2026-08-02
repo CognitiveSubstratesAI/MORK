@@ -271,6 +271,76 @@ for it.
 
 ---
 
+## 10. `remove_val_at!` call sites omit `prune` — upstream's `.remove()` ALWAYS prunes (1 FIXED, 5 OPEN)
+
+**Ours, and neither PathMap nor our sink logic was at fault** — the CALL was.
+
+Upstream has two removal entry points and only one of them appears at a call site:
+
+```rust
+// trie_map.rs:373-375   explicit, caller chooses
+pub fn remove_val_at<K>(&mut self, path: K, prune: bool) -> Option<V> { … zipper.remove_val(prune) }
+
+// trie_map.rs:379-381   the collection-style ALIAS — this is what call sites use
+pub fn remove<K>(&mut self, path: K) -> Option<V> { self.remove_val_at(path, true) }
+```
+
+Our `remove_val_at!` mirrors the explicit form faithfully, defaulting `prune=false` (an ergonomic
+Julia default; Rust has no default args). **We never added the `remove` alias**, so every ported call
+site silently took `prune=false` where upstream prunes.
+
+### Why that is a wrong ANSWER, not just a shape difference
+
+`zipper_descend_last_path!` walks STRUCTURE, not values — upstream: *"the last path reachable by
+descent … equivalent to `descend_last_byte` in a loop"* (`zipper.rs:633-640`). An unpruned removal
+leaves the path in the trie with no value, so a later descent RE-FINDS THE REMOVED KEY.
+
+In `HeadSink` that froze the eviction boundary at the first evicted key. Measured by driving the sink
+by hand over `e d c b a` with `(head 2 …)`:
+
+```
+d: count=2 top=e kept=de     correct
+c: count=2 top=e kept=cd     evicted e, but top STILL 'e'   <- should be 'd'
+b: count=2 top=e kept=bcd    removes 'e' again — already gone — no-op
+a: count=2 top=e kept=abcd
+```
+
+Minimal PathMap-level reproducer (PathMap is behaving correctly here):
+
+```julia
+m = PathMap{UnitVal}(); for c in "cde"; set_val_at!(m, [0xC1, UInt8(c)], UNIT_VAL) end
+remove_val_at!(m, [0xC1, UInt8('e')])          # no prune -> dangling path left
+# iteration says {c,d}, but:
+zipper_descend_last_path!(read_zipper(m))      # -> "\xC1e"  — the REMOVED key
+```
+
+✅ **FIXED at `Sinks.jl` HeadSink eviction** (`remove_val_at!(s.head, s.top, true)`), matching
+`sinks.rs:399` `self.extrema.remove(&self.extremum[..])`.
+
+| | before | after |
+|---|---|---|
+| conformance | 251/285 | **253/285** |
+| newly passing | — | `sinks/g5_head_order`, `sinks/g5_head_descending` |
+| regressions | — | **0** |
+
+### ⚠️ OPEN — five sibling call sites, deliberately NOT swept
+
+`Space.jl:217`, `Space.jl:2220`, `Space.jl:2497`, `Space.jl:2745`, `Sinks.jl:216` all omit the flag,
+while every upstream PathMap removal is `.remove()` = prune. They are NOT changed yet because:
+
+1. each needs its own mapping to a Rust counterpart first — `.remove()` vs an explicit
+   `remove_val_at(_, false)` is a real distinction and must be read, not assumed; and
+2. `prune=true` has a RECORDED interaction with COW sharing (PathMap KI-1: it can desynchronise
+   `ProductZipper`'s value flag), so a blanket sweep could trade one silent defect for another.
+
+Change and MEASURE one at a time against the 285-probe corpus. Do not sed them.
+
+**Also corrected while here:** the fill-branch comment in `Sinks.jl` claimed upstream's branch is
+"SHARED and tracks the max for BOTH" and that we deviated to fix tail. Upstream branches on `head`
+(`sinks.rs:411-413`) exactly as we do. There was never a deviation; the claim is deleted.
+
+---
+
 ## Reporting these upstream
 
 None of these has been filed with `trueagi-io/MORK`. Each entry above has the reproducer and the

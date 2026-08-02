@@ -232,10 +232,32 @@ Mirrors `HeadSink` in sinks.rs.
 """
 # Upstream: collects paths into an internal PathMap (not Vector).
 # `top` is the eviction boundary; `is_head` selects head vs tail (mirrors upstream
-# HeadTailSink<const head: bool>, sinks.rs): head keeps the N lexicographically
+# HeadTailSink<const head: bool>, sinks.rs:374-431): head keeps the N lexicographically
 # SMALLEST paths (Unix `head`, boundary = max kept), tail keeps the N LARGEST
 # (`tail`, boundary = min kept).
 # finalize uses wz_join_into! (one trie-level merge instead of N individual inserts).
+#
+# ── STATUS (2026-08-02) ───────────────────────────────────────────────────────────────────────
+# PORT: 1:1 with upstream. Capacity branch, fill branch and finalize were each re-read against
+# sinks.rs:374-431 and match; the `skip`/`max` parse matches `HeadTailSink::new`.
+#
+# FIXED here: the eviction removal omitted `prune=true`, so `s.top` never advanced past the FIRST
+# eviction and `(head 2 …)` kept N-1 paths instead of 2 (`g5_head_order` 3-of-4, `g5_head_descending`
+# 4-of-5). Cause was NOT in this file's logic and NOT in PathMap — both are faithful. It was the
+# CALL: upstream uses the `remove` alias, which is `remove_val_at(path, TRUE)`; ours defaults the
+# flag to false. See the comment at the removal site.
+#
+# ⚠️ OPEN, SAME CLASS, NOT SWEPT: five other `remove_val_at!` call sites in MORK also omit the flag
+# (`Space.jl:217,2220,2497,2745`, `Sinks.jl:216`), while EVERY upstream PathMap removal is `.remove()`
+# = prune. They are NOT changed here because each needs its own upstream mapping first — and because
+# `prune=true` has a recorded interaction with COW sharing (PathMap KI-1: it can desynchronise
+# ProductZipper's value flag). Map each site to its Rust counterpart, then change and MEASURE one at
+# a time against the 285-probe corpus.
+#
+# NOTE for anyone reading `zipper_descend_last_path!` below: it walks STRUCTURE, not values.
+# Upstream documents it as "the last path reachable by descent … equivalent to descend_last_byte in
+# a loop" (zipper.rs:633-640). It will happily land on a pruned-but-not-removed path, which is
+# exactly how the bug above stayed invisible.
 mutable struct HeadSink <: AbstractSink
     expr::MORK.Expr
     is_head::Bool           # true = head (keep N smallest); false = tail (keep N largest)
@@ -282,7 +304,16 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
             return nothing  # doesn't displace
         end
         set_val_at!(s.head, mpath, UNIT_VAL)
-        remove_val_at!(s.head, s.top)
+        # PRUNE=TRUE IS LOAD-BEARING, and it is what upstream does. `sinks.rs:399` calls
+        # `self.extrema.remove(&self.extremum[..])`, and upstream's `remove` is the collection-style
+        # ALIAS `remove_val_at(path, true)` (trie_map.rs:379-381) — it prunes the dangling path.
+        # Our `remove_val_at!` defaults `prune=false` (an ergonomic Julia default; Rust has no
+        # default args), so omitting it left the removed key's path in the trie with no value.
+        # `zipper_descend_last_path!` below walks STRUCTURE, not values — upstream documents it as
+        # "the last path reachable by descent … equivalent to descend_last_byte in a loop" — so it
+        # then re-found the just-removed key and `s.top` never advanced past the first eviction.
+        # Every later removal targeted a key already gone, and the set grew to N-1 instead of max.
+        remove_val_at!(s.head, s.top, true)
         # recompute the boundary from the kept set: head → last/max path,
         # tail → first/min value (upstream: descend_last_path vs to_next_val).
         rz = read_zipper(s.head)
@@ -295,13 +326,19 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
     else
         if set_val_at!(s.head, mpath, UNIT_VAL) === nothing  # newly inserted
             s.count += 1
-            # Track the eviction boundary while filling: head keeps it at the MAX
-            # inserted, tail at the MIN. NB upstream's fill branch is shared and
-            # tracks the max for BOTH — fine for head, but leaves tail's boundary
-            # stale at the fill→capacity transition (wrong eviction for max≥2). We
-            # split it here so tail is correct from the first capacity decision;
-            # head is byte-identical to before. (Verified by discriminating test;
-            # flag upstream sinks.rs HeadTailSink shared fill branch.)
+            # Track the eviction boundary while filling: head keeps it at the MAX inserted, tail at
+            # the MIN. This is 1:1 with upstream, sinks.rs:411-413:
+            #     let update = self.extremum.is_empty()
+            #         || if head { &self.extremum[..] < mpath } else { mpath < &self.extremum[..] };
+            # (`extremum < mpath` ≡ our `mpath > top`; `mpath < extremum` ≡ our `mpath < top`.)
+            #
+            # ⚠️ CORRECTED 2026-08-02 — this comment previously claimed "upstream's fill branch is
+            # SHARED and tracks the max for BOTH … we split it here so tail is correct", i.e. it
+            # advertised a DELIBERATE DEVIATION. That was a misreading: upstream's fill branch
+            # DOES branch on `head`, exactly as ours does. There is no deviation, there never was
+            # one, and the code below is a faithful port. The claim is removed rather than softened
+            # because a recorded-but-nonexistent deviation is worse than none — the next session
+            # would either defend it or "restore parity" that was never lost.
             if isempty(s.top) || (s.is_head ? (mpath > s.top) : (mpath < s.top))
                 s.top = copy(mpath)
             end
