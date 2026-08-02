@@ -591,8 +591,18 @@ end
 # with `total.to_string()` (sinks.rs:873/880/882). We match the width (wrapping, as Rust release does);
 # a value upstream would panic on (`from_str_radix` error — negative or overflowing) skips that entry
 # rather than taking the engine down.
-_sum_acc(running::UInt32, value::Vector{UInt8}) =
-    (v = tryparse(UInt32, String(copy(value))); v === nothing ? nothing : running + v)
+# Upstream is `u32::from_str_radix(str::from_utf8(&p[clen+1..]).unwrap(), 10)` (sinks.rs:880), and
+# Rust's `from_str_radix` ACCEPTS AN OPTIONAL LEADING '+'. Julia's `tryparse(UInt32, "+7")` returns
+# `nothing`, so `(fact a +7)` was silently dropped from the sum instead of contributing 7 — a WRONG
+# ANSWER, not a skip: `sinks/g2_sum_plusnum` summed to 1 where the binary says 8.
+# Strip one leading '+' and parse the remainder, which is exactly `from_str_radix`'s sign handling
+# for an unsigned type ('-' stays rejected — Rust rejects it for u32 too).
+function _sum_acc(running::UInt32, value::Vector{UInt8})
+    s = String(copy(value))
+    startswith(s, '+') && (s = s[2:end])          # "+" alone -> "" -> tryparse nothing, as upstream
+    v = tryparse(UInt32, s)
+    v === nothing ? nothing : running + v
+end
 
 function _sum_enc(total::UInt32)
     s = string(total)

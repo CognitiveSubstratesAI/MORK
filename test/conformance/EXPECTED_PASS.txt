@@ -29,6 +29,7 @@ sinks/g2_sum_lit_hit
 sinks/g2_sum_lit_miss
 sinks/g2_sum_lit_rootmarker
 sinks/g2_sum_overflow
+sinks/g2_sum_plusnum
 sinks/g2_sum_rebase
 sinks/g2_sum_var
 sinks/g2_sum_var_rootcontrol
