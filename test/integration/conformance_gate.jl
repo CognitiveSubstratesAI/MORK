@@ -1,11 +1,13 @@
 # conformance_gate.jl — the differential corpus as a REGRESSION GATE.
 #
-# 277 MM2 probes, each paired with the vendored output of the upstream `mork` release binary
-# (see test/conformance/run_conformance.jl for the full rationale and the rendering caveat).
+# 285 MM2 probes (156 sinks + 129 space), each paired with the vendored output of the upstream
+# `mork` release binary (see test/conformance/run_conformance.jl for the rationale and the
+# rendering caveat). The count is not fixed — probes get vendored; it was 277 on 2026-07-26.
 #
-# The gate is deliberately a RATCHET, not a demand for 277/277:
+# The gate is deliberately a RATCHET, not a demand for 285/285 — but it ratchets BOTH WAYS:
 #   * every probe listed in EXPECTED_PASS.txt must still match upstream  -> else FAIL (regression)
-#   * a probe outside the list that starts matching                      -> INFO, add it to the list
+#   * a probe outside the list that starts matching                      -> FAIL, harvest it
+#     (`julia --project=. tools/harvest_conformance.jl`)
 # So it stays green at today's conformance level and can only get tighter. The probes outside the
 # list are KNOWN divergences (root-doubling, HashSink's non-gxhash function, locvar back-ref scoping,
 # USink, chain4, FloatReduction grouping, some Pure op semantics) — each tracked in CODEMAP.
@@ -21,7 +23,7 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     baseline_path = joinpath(@__DIR__, "..", "conformance", "EXPECTED_PASS.txt")
     @test isfile(baseline_path)
 
-    # The corpus costs ~70s (277 probes) on a ~3min suite. `MORK_SKIP_CONFORMANCE=1` skips it for a
+    # The corpus costs ~70s (285 probes) on a ~3min suite. `MORK_SKIP_CONFORMANCE=1` skips it for a
     # tight local edit loop — but it is DEFAULT-ON and CI MUST NOT SET IT. This gate is the only thing
     # in the repo that would notice the 2026-07-25/26 fixes being reverted; skipping it by habit puts
     # them back at the mercy of a suite that already failed to catch them once.
@@ -47,9 +49,18 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     end
     @test isempty(regressed)
 
-    # (2) IMPROVEMENTS — informational, never a failure. Tighten the baseline when they appear.
+    # (2) RATCHET, OTHER SIDE — a probe that starts matching may not stay OUT of the baseline.
+    # This was `@info`-only until 2026-08-01, which made the recorded number a LAGGING indicator:
+    # a fix could raise real conformance while the baseline stood still, and nothing anywhere
+    # forced the two back together. Four CODEMAP rows drifted that way, one by ~2x (recorded
+    # 46/150, measured 27/156). An informational message does not maintain an invariant.
     improved = sort(collect(setdiff(passing, expected)))
-    isempty(improved) || @info(
-        "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
-        improved)
+    if !isempty(improved)
+        @error """
+               CONFORMANCE IMPROVED but NOT LOCKED IN — $(length(improved)) probe(s) now match \
+               upstream and are missing from EXPECTED_PASS.txt. This is good news that must be \
+               recorded, because an unharvested improvement lets the baseline drift below reality.
+               Harvest it:  julia --project=. tools/harvest_conformance.jl""" improved
+    end
+    @test isempty(improved)
 end
