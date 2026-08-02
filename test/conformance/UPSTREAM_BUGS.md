@@ -172,8 +172,21 @@ Permanently out of `EXPECTED_PASS.txt`: `sinks/g1_hash_eq_same`, `sinks/g1_hash_
 `test/unit_xxh3.jl` pins it against vectors generated from the `xxhash-rust 0.8.15` crate. Two
 different code paths; only `HashSink` carries the width deviation.
 
-**If the 8-byte choice is ever revisited**, widening to 16 would close these three probes for free.
-That is the whole cost/benefit — there is no other consequence recorded.
+⚠️ **DO NOT "fix" this by widening to 16.** An earlier version of this entry said widening would
+close the three probes "for free" — that was written without reading the reasons in `Sinks.jl:937-950`,
+and it is wrong. The decisive one:
+
+> Upstream itself does NOT keep those bytes stable: `PathMap/src/lib.rs:14-18` substitutes an entirely
+> different hand-rolled XOR/rotate hasher under `miri`/`riscv64`. Its hash values are a per-TARGET
+> artifact, not a portable contract.
+
+Byte-matching a value upstream does not guarantee across targets buys nothing. What the hash must be
+is CONSISTENT, which is all its real consumer needs — `ctl_model_checking.mm2:375-376` uses it as the
+EG least-fixpoint TERMINATION test, comparing hash(l+1) against hash(l) from the SAME engine.
+
+(One reason there IS now stale: it cites porting `gxhash` bit-exactly, but `3973455` established
+`cfg(gxhash)` is never defined in that workspace — upstream's live path is `xxh3_128`, which we have
+ported. The merkleization-traversal cost and the per-target argument above both stand.)
 
 ---
 
@@ -233,8 +246,28 @@ is why hashing a compound `($z)` yields no row while hashing a bare `$x` works.
 ⚠️ The three `s6` probes need BOTH this fix and the width deviation resolved to reach byte-exact;
 `g2_and_compound_value` needs only this one, so it is the honest single-probe test of the fix.
 
-**Not yet fixed** — `_redsink_parse_entry` is shared by And/Sum/Hash/Count, so relaxing the guard
-must be measured against the full 285-probe corpus, not just these four.
+✅ **FIXED 2026-08-02.** `_redsink_parse_entry` now hands back the payload from `j+1` when the tag is
+not a Symbol, so each `acc` reads the slot the way ITS upstream branch does: `_and_acc` takes
+`value[1]` (= `p[clen+1]`), `_sum_acc` parses the whole slice (= `p[clen+1..]`) and declines via
+`nothing` where upstream would `unwrap()`-panic.
+
+MEASURED against the full corpus, not the four probes that motivated it:
+
+| | before | after |
+|---|---|---|
+| conformance passing | 249/285 | **250/285** |
+| regressions | — | **0** |
+| MORK suite | 2960/2960 | 2960/2960 |
+
+`sinks/g2_and_compound_value` now matches the binary byte-for-byte and is in the baseline. The three
+`s6` probes now EMIT THE ROW they were silently dropping —
+`space/s6_hash_single` → `(H \xb9\x8d\xf2IUi\xb9\x06)` where it previously emitted nothing — and are
+therefore reduced to entry 7's digest-width deviation ALONE, which is deliberate and stays.
+(`s6_hash_multi` and `s6_io_hash` hash identically to each other, as consistent inputs should.)
+
+⚠️ The four probes could not have told you the guard was safe to relax — three of them still fail.
+`g2_and_compound_value` is the only one that isolates this fix, which is why it is the regression test
+for it.
 
 ---
 

@@ -460,12 +460,33 @@ function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
     source = Vector{UInt8}(p[i:(i + slen - 1)])
     j = i + slen
     j <= length(p) || return nothing
-    value = if symbol_value
-        tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
-        xsz = Int(tx.size); j + xsz <= length(p) || return nothing
-        Vector{UInt8}(p[(j + 1):(j + xsz)])
-    else
+    value = if !symbol_value
         Vector{UInt8}(p[j:end])                      # opaque to CountSink
+    else
+        tx = byte_item(p[j])
+        if tx isa ExprSymbol
+            xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+            Vector{UInt8}(p[(j + 1):(j + xsz)])
+        else
+            # UPSTREAM DOES NOT TYPE-CHECK THIS SLOT. `sinks.rs:771`/`:808` fold the RAW byte
+            # `total &= p[clen+1]`, and `:880` parses `&p[clen+1..]` — neither looks at the tag.
+            # For a COMPOUND value that byte is the arity-N expression's FIRST CHILD HEADER
+            # (`0xC1` = SymbolSize(1)), and upstream emits a result from it.
+            #
+            # We used to `return nothing` here, which discards the entry — and because the
+            # caller groups by `(result, source)`, dropping every entry of a group emitted
+            # NOTHING AT ALL: no error, no partial result. Four probes were silently empty
+            # (`sinks/g2_and_compound_value`, `space/s6_hash_{single,multi}`, `space/s6_io_hash`)
+            # and it was invisible for six days because their `.expected` fixtures were
+            # UTF-8-corrupt and unmatched for a different reason. See UPSTREAM_BUGS.md entry 9.
+            #
+            # Hand back the payload from `j+1` to the end so each `acc` reads it the way ITS
+            # upstream branch does: `_and_acc` takes `value[1]` (= `p[clen+1]`), `_sum_acc`
+            # parses the whole slice (= `p[clen+1..]`) and declines via `nothing` where upstream
+            # would `unwrap()`-panic, which is this file's standing policy for panic shapes.
+            j < length(p) || return nothing
+            Vector{UInt8}(p[(j + 1):end])
+        end
     end
     (Vector{UInt8}(rspan), source, value)
 end
