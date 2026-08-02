@@ -149,6 +149,95 @@ our `jsonl_to_paths` output spans the whole path while the `load_jsonl` shape st
 
 ---
 
+## 7. `HashSink` digest WIDTH — ours is 8 bytes, upstream's is 16 (DELIBERATE, ours-side)
+
+**Not an upstream defect and not a port gap — a recorded deviation of OURS**, filed here because
+three conformance probes can never match the binary while it stands, and a future session will
+otherwise re-open them as work.
+
+`HashSink` emits an 8-byte digest where upstream emits 16. The decision and its three reasons are in
+the code body at `src/kernel/Sinks.jl:937-950`. Semantics are UNAFFECTED — equal subtries still hash
+equal, distinct ones still differ:
+
+```
+sinks/g1_hash_eq_same   ours: (ha \xd2-\x9epG\xe2\x1d\xa5)                     (8 bytes)
+                    upstream: (ha /{\xda) \xf3\x84o\xd0\xfb\xd5\xd3x\x1cl(\x82) (16 bytes)
+                              -> (same) IS emitted on BOTH sides. Only the width differs.
+```
+
+Permanently out of `EXPECTED_PASS.txt`: `sinks/g1_hash_eq_same`, `sinks/g1_hash_eq_diff`,
+`sinks/g1_hash_varref`. Do NOT count these toward the port backlog.
+
+⚠️ **Distinguish this from `hash_expr`**, which IS byte-exact — `3973455` ported XXH3-128 and
+`test/unit_xxh3.jl` pins it against vectors generated from the `xxhash-rust 0.8.15` crate. Two
+different code paths; only `HashSink` carries the width deviation.
+
+**If the 8-byte choice is ever revisited**, widening to 16 would close these three probes for free.
+That is the whole cost/benefit — there is no other consequence recorded.
+
+---
+
+## 8. Corpus hygiene — 7 `.expected` fixtures were UTF-8 corrupt (FIXED 2026-08-02)
+
+Not a defect in anyone's code; recorded because it hid four real ones for six days.
+
+Seven vendored fixtures had every non-ASCII byte replaced by U+FFFD (`ef bf bd`) — captured through
+a lossy channel despite the warning at the top of this file. `g1_hash_eq_same.expected` held
+`efbfbd` six times where the digest bytes `da f3 84 d0 fb d5 d3 82` belong. **No implementation could
+ever have matched them**, so the probes read as "known divergences" and were never diagnosed.
+
+Regenerated from the upstream binary built at the vendored pin `5464713`, written to a FILE.
+Faithfulness was checked in the only direction that proves it: re-mangling each NEW file through a
+lossy decode reproduces the OLD file exactly, so the content is unchanged and only the byte
+corruption is gone.
+
+**What the repair exposed** — the corruption was masking, not causing, the failures. Conformance did
+not move (249 before, 249 after). Three probes are the width deviation above; the other four are a
+REAL silent-drop defect, invisible until the fixtures told the truth. See `_redsink_parse_entry`
+below.
+
+⚠️ **The sweep is the lesson.** Searching only the probes already suspected (the hash cluster) would
+have found 6. Sweeping ALL 285 found a 7th — `sinks/g2_and_compound_value`, not a hash probe at all,
+and the one carrying the clearest statement of the real defect.
+
+---
+
+## 9. `_redsink_parse_entry` rejects a non-Symbol value slot — SILENT DROP (OURS, OPEN)
+
+**Our defect, not upstream's.** One root cause, four failing probes.
+
+Upstream never inspects the value's tag. `kernel/src/sinks.rs:771` (and :808) is simply:
+
+```rust
+total &= p[clen+1];        // raw byte, no type check
+```
+
+For a compound value that byte is the arity-2 expression's FIRST CHILD HEADER (`0xC1` =
+`SymbolSize(1)`), and upstream folds it and emits a result. Ours (`src/kernel/Sinks.jl:464`):
+
+```julia
+tx = byte_item(p[j]); tx isa ExprSymbol || return nothing   # drops the WHOLE entry
+```
+
+`nothing` discards the entry, so the whole group is dropped and **nothing is emitted at all** — no
+error, no partial result. `HashSink` shares the path via `_redsink_finalize!` (`Sinks.jl:971`), which
+is why hashing a compound `($z)` yields no row while hashing a bare `$x` works.
+
+| probe | ours | upstream |
+|---|---|---|
+| `sinks/g2_and_compound_value` | `(m a 3) (m a 6)` | `(m a 3) (m a 6)` **`(r \xc1)`** |
+| `space/s6_hash_single` | `(p a)` | **`(H <16 bytes>)`** `(p a)` |
+| `space/s6_hash_multi` | `(p a) (p b)` | **`(H <16 bytes>)`** `(p a) (p b)` |
+| `space/s6_io_hash` | `(p a) (p b)` | **`(H <16 bytes>)`** `(p a) (p b)` |
+
+⚠️ The three `s6` probes need BOTH this fix and the width deviation resolved to reach byte-exact;
+`g2_and_compound_value` needs only this one, so it is the honest single-probe test of the fix.
+
+**Not yet fixed** — `_redsink_parse_entry` is shared by And/Sum/Hash/Count, so relaxing the guard
+must be measured against the full 285-probe corpus, not just these four.
+
+---
+
 ## Reporting these upstream
 
 None of these has been filed with `trueagi-io/MORK`. Each entry above has the reproducer and the
