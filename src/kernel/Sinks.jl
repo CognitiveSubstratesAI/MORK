@@ -282,7 +282,22 @@ function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
             return nothing  # doesn't displace
         end
         set_val_at!(s.head, mpath, UNIT_VAL)
-        remove_val_at!(s.head, s.top)
+        # PRUNE=TRUE, because that is what upstream's call resolves to. `sinks.rs:399` is
+        #     self.extrema.remove(&self.extremum[..]);
+        # and `remove` is PathMap's collection-style ALIAS, `trie_map.rs:379-381`:
+        #     pub fn remove<K>(&mut self, path: K) -> Option<V> { self.remove_val_at(path, true) }
+        # Our `remove_val_at!` defaults `prune=false` (WriteZipper.jl — an ergonomic Julia default;
+        # Rust has no default args), and we never ported the `remove` alias, so this call silently
+        # took the non-pruning path.
+        #
+        # Why that is a wrong ANSWER: `zipper_descend_last_path!` below walks STRUCTURE, not values
+        # — upstream documents it as "the last path reachable by descent … equivalent to
+        # descend_last_byte in a loop" (zipper.rs:633-640). An unpruned removal leaves the path in
+        # the trie with no value, so the descent RE-FINDS THE REMOVED KEY and `s.top` never advances
+        # past the first eviction. Every later removal then targets a key already gone, and the set
+        # grows to N-1 instead of `max`. Confirmed against the live binary: `(head 2 …)` over 5
+        # inputs kept 4 here and 2 upstream.
+        remove_val_at!(s.head, s.top, true)
         # recompute the boundary from the kept set: head → last/max path,
         # tail → first/min value (upstream: descend_last_path vs to_next_val).
         rz = read_zipper(s.head)
@@ -460,12 +475,31 @@ function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
     source = Vector{UInt8}(p[i:(i + slen - 1)])
     j = i + slen
     j <= length(p) || return nothing
-    value = if symbol_value
-        tx = byte_item(p[j]); tx isa ExprSymbol || return nothing
-        xsz = Int(tx.size); j + xsz <= length(p) || return nothing
-        Vector{UInt8}(p[(j + 1):(j + xsz)])
-    else
+    value = if !symbol_value
         Vector{UInt8}(p[j:end])                      # opaque to CountSink
+    else
+        tx = byte_item(p[j])
+        if tx isa ExprSymbol
+            xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+            Vector{UInt8}(p[(j + 1):(j + xsz)])
+        else
+            # UPSTREAM DOES NOT TYPE-CHECK THIS SLOT. `sinks.rs:771` (and :808) is literally
+            #     total &= p[clen+1];
+            # a RAW BYTE with no tag inspection. For a COMPOUND value that byte is the arity-N
+            # expression's FIRST CHILD HEADER (0xC1 = SymbolSize(1)), and upstream emits from it.
+            #
+            # Returning `nothing` here discarded the ENTRY, and since the caller groups by
+            # (result, source), losing every entry of a group emitted NOTHING AT ALL — no error,
+            # no partial result. Verified against the live binary: `sinks/g2_and_compound_value`
+            # yields `(m a 3) (m a 6) (r \xc1)` upstream and dropped `(r \xc1)` here.
+            #
+            # Hand back the payload from j+1 so each `acc` reads it the way ITS upstream branch
+            # does: `_and_acc` takes value[1] (= p[clen+1]); `_sum_acc` parses the whole slice
+            # (= p[clen+1..], sinks.rs:880) and declines via `nothing` where upstream would
+            # `unwrap()`-panic — this file's standing policy for panic shapes.
+            j < length(p) || return nothing
+            Vector{UInt8}(p[(j + 1):end])
+        end
     end
     (Vector{UInt8}(rspan), source, value)
 end
@@ -480,31 +514,50 @@ spliced in by branch 3 and the thing compared against the literal in branch 1.
 """
 function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc, enc)::Bool where {T}
     GK = Tuple{Vector{UInt8}, Vector{UInt8}}         # (result, source) — upstream's traversal "context"
-    groups = Dict{GK, T}()
-    order = GK[]                                     # deterministic emit order (Dict iteration is not)
+    groups = Dict{GK, T}()                           # FOLDED total — ABSENT if no value ever folded
+    order = GK[]                                     # EXISTENCE + deterministic order (Dict iteration is not)
+    exists = Set{GK}()                               # membership test for `order`, O(1) not O(n)
     rz = read_zipper(unique)
     while zipper_to_next_val!(rz)
         parsed = _redsink_parse_entry(collect(zipper_path(rz)))
         parsed === nothing && continue
         (rbytes, source, value) = parsed
         key = (rbytes, source)
-        seen = haskey(groups, key)
-        folded = acc(seen ? groups[key] : init, value)
+        # EXISTENCE IS RECORDED BEFORE FOLDING, and that separation is the whole point.
+        # Upstream's branch 2 (the NewVar "ignored guard") reads NO VALUES — sinks.rs:900-907:
+        #     if prz.descend_to_existing_byte(item_byte(Tag::NewVar)) {
+        #         let ignored = &prz.path()[..prz.path().len()-1];
+        #         wz.move_to_path(ignored); wz.set_val(()); changed |= true;
+        #     }
+        # Pure EXISTENCE of a NewVar-source path. Branches 1 and 3 by contrast both
+        # `u32::from_str_radix(..).unwrap()` (sinks.rs:880, :917) and PANIC on a non-numeric value.
+        #
+        # Pushing the key only after a SUCCESSFUL fold meant a context whose values are ALL
+        # unparseable never existed, so branch 2 could not fire. Confirmed against the live binary:
+        # `sinks/g2_sum_ignored_nonnum` emits `(seen)` upstream and emitted nothing here.
+        if !(key in exists)
+            push!(exists, key); push!(order, key)
+        end
+        folded = acc(haskey(groups, key) ? groups[key] : init, value)
         folded === nothing && continue
-        seen || push!(order, key)
         groups[key] = folded
     end
 
     changed = false
     for key in order
         (rbytes, source) = key
-        total = groups[key]
         t = byte_item(source[1])
         # `enc` may decline (return nothing) when the reduction cannot be represented as a symbol —
         # see `_freduce_enc`, where a float can render wider than the Rule-of-64 payload limit.
-        encoded = t isa ExprNewVar ? nothing : enc(total)
+        # A group with NO folded total reaches `enc` only via branches 1/3, which decline below.
+        encoded = (t isa ExprNewVar || !haskey(groups, key)) ? nothing : enc(groups[key])
         out = if t isa ExprNewVar
-            rbytes                                   # branch 2 — ignored guard (value discarded)
+            rbytes                                   # branch 2 — ignored guard, NO value read (sinks.rs:900)
+        elseif !haskey(groups, key)
+            # Branches 1 and 3 need a total and NOTHING folded. Upstream reaches
+            # `from_str_radix(..).unwrap()` here (sinks.rs:880/:917) and PANICS; this file's standing
+            # policy is to skip the group rather than abort the engine. Only branch 2 survives this.
+            nothing
         elseif encoded === nothing
             nothing
         elseif t isa ExprVarRef
@@ -570,8 +623,23 @@ end
 # with `total.to_string()` (sinks.rs:873/880/882). We match the width (wrapping, as Rust release does);
 # a value upstream would panic on (`from_str_radix` error — negative or overflowing) skips that entry
 # rather than taking the engine down.
-_sum_acc(running::UInt32, value::Vector{UInt8}) =
-    (v = tryparse(UInt32, String(copy(value))); v === nothing ? nothing : running + v)
+# Upstream is `u32::from_str_radix(str::from_utf8(&p[clen+1..]).unwrap(), 10)` (sinks.rs:880), and
+# Rust's `from_str_radix` ACCEPTS AN OPTIONAL LEADING '+'. Julia's `tryparse(UInt32, "+7")` returns
+# `nothing`, so the term was silently dropped from the sum rather than contributing 7.
+#
+# That is a WRONG ANSWER, not a skip, and it was confirmed against the live binary through the
+# public API (no test harness involved): `(fact a +7) (fact b 1)` gives `(total 8)` upstream and
+# gave `(total 1)` here.
+#
+# Strip one leading '+' and parse the remainder — exactly `from_str_radix`'s sign handling for an
+# unsigned type. '-' stays rejected, as Rust rejects it for u32. "+" alone becomes "" and still
+# declines, matching upstream's error path.
+function _sum_acc(running::UInt32, value::Vector{UInt8})
+    s = String(copy(value))
+    startswith(s, '+') && (s = s[2:end])
+    v = tryparse(UInt32, s)
+    v === nothing ? nothing : running + v
+end
 
 function _sum_enc(total::UInt32)
     s = string(total)

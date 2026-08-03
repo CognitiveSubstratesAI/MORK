@@ -22,12 +22,14 @@ sinks/g2_sum_dup
 sinks/g2_sum_group
 sinks/g2_sum_ignored
 sinks/g2_sum_ignored_emptyroot
+sinks/g2_sum_ignored_nonnum
 sinks/g2_sum_ignored_rootmarker
 sinks/g2_sum_lit_emptyroot
 sinks/g2_sum_lit_hit
 sinks/g2_sum_lit_miss
 sinks/g2_sum_lit_rootmarker
 sinks/g2_sum_overflow
+sinks/g2_sum_plusnum
 sinks/g2_sum_rebase
 sinks/g2_sum_var
 sinks/g2_sum_var_rootcontrol
@@ -67,8 +69,10 @@ sinks/g4_tostring
 sinks/g4_tuple
 sinks/g5_head_bare
 sinks/g5_head_basic
+sinks/g5_head_descending
 sinks/g5_head_dup_fill
 sinks/g5_head_leadzero
+sinks/g5_head_order
 sinks/g5_tail_ascending
 sinks/g5_tail_basic
 sinks/g5_tail_order
