@@ -8,6 +8,7 @@ sinks/g1_count_varref_k1
 sinks/g1_hash_ctl_eg_fixpoint
 sinks/g1_hash_fixed_nomatch
 sinks/g1_hash_newvar
+sinks/g2_and_compound_value
 sinks/g2_and_dup
 sinks/g2_and_group
 sinks/g2_and_ignored
