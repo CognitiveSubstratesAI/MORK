@@ -898,9 +898,19 @@ function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
         s.buf = copy(expr_bytes)
     else
         acc = s.buf::Vector{UInt8}
+        # THE TWO OPERANDS NEED SEPARATE VARIABLE SCOPES. Both used to be built at var base 0, so
+        # the accumulator's variables and the incoming atom's variables were THE SAME VARIABLES.
+        # Measured: `(f $x b)` and `(f a $y)` both encode their variable as NewVar(0), so unifying
+        # position 2 bound var0 -> a and position 3 then compared "b" against that binding and
+        # reported a CONFLICT. The sink set `s.conflict` and emitted nothing, where upstream emits
+        # the MGU `(f a b)`.
+        #
+        # Upstream keeps the operands distinct through `unifies_reuse_state`, which threads its own
+        # ExprEnv/stack/assignment state per side (sinks.rs:220-227). Here that means offsetting the
+        # incoming atom's variable base past however many the accumulator introduces, recomputed
+        # each call because the accumulator changes as it absorbs matches.
         pairs = Tuple{ExprEnv, ExprEnv}[
-            (ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(acc)),
-            ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(expr_bytes)))
+            (ExprEnv(0, MORK.Expr(acc)), ExprEnv(1, MORK.Expr(expr_bytes)))
         ]
         result = expr_unify(pairs)
         if result isa UnificationFailure
@@ -912,7 +922,26 @@ function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
         out = sizehint!(Vector{UInt8}(), max(length(acc) * 2, 64))
         resize!(out, max(length(acc) * 2, 64))
         oz = ExprZipper(MORK.Expr(out))
-        expr_apply(ez, result, oz)
+        # CYCLE-SAFE APPLY — `expr_unify` is the FUNCTION, and upstream states plainly that it
+        # "does not do full occurs check"; the cycle-safe entry point is `expr_unify_method`, which
+        # unifies, applies, and THEN fails if `apply` recorded any cyclic variable. This sink used
+        # the bare function and a 3-arg apply, so it had no occurs check at all.
+        #
+        # That was INVISIBLE until the scoping above was fixed. Both operands used to be built at
+        # variable base 0, so the accumulator's vars and the incoming atom's vars were the same
+        # variables — `(f $x b)` vs `(f a $y)` bound var0 to `a` and then compared `b` against it,
+        # reporting a spurious CONFLICT. That false conflict also swallowed the genuine occurs case:
+        # `(f $x $x)` vs `(f (g $y) $y)` needs `$y := (g $y)` and must fail, and it "failed" for the
+        # wrong reason. Scoping the operands correctly (`ExprEnv(0,·)` / `ExprEnv(1,·)`, the same
+        # idiom `expr_unify_method` uses) removed the false conflict and exposed the missing check —
+        # measured: the corpus gained g7_u_crossvars/g7_u_three/s6_usink_mgu and REGRESSED
+        # g7_u_occurs, which began emitting `(f (g $a) (g $a))` where the binary emits nothing.
+        cycled = Dict{ExprVar, UInt8}()
+        expr_apply(UInt8(0), UInt8(0), UInt8(0), ez, result, oz, cycled, ExprVar[], ExprVar[])
+        if !isempty(cycled)
+            s.conflict = true
+            return nothing
+        end
         s.buf = out[1:(oz.loc - 1)]
     end
 end

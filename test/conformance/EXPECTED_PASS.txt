@@ -126,12 +126,14 @@ sinks/g7_au_symsize
 sinks/g7_au_three
 sinks/g7_au_var_atom
 sinks/g7_au_zeromatch
+sinks/g7_u_crossvars
 sinks/g7_u_ground_conflict
 sinks/g7_u_ground_same
 sinks/g7_u_keepvar
 sinks/g7_u_nested_tpl
 sinks/g7_u_occurs
 sinks/g7_u_single
+sinks/g7_u_three
 sinks/g7_u_varvar
 sinks/g7_u_zeromatch
 sinks/g8_act_accum
@@ -255,6 +257,7 @@ space/s6_pure_multi
 space/s6_pure_shared_key
 space/s6_pure_single
 space/s6_usink_conflict
+space/s6_usink_mgu
 space/s6_usink_single
 space/s7_errhalt_patfunctor2
 space/s7_errhalt_tplsym
