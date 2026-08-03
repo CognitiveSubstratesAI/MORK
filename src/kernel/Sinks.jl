@@ -54,6 +54,9 @@ function sink_finalize! end
 # PrefixBtm — byte-region scoping wrapper for prefixed multi-space exec
 # =====================================================================
 #
+# ⚠️ INVENTORIED: `test/conformance/ADAPTATIONS.md` entry 2 (this struct) and entry 1 (the
+# absolute-path sink model below). Read that FIRST before concluding the sink layer is
+# unfinished — it is deliberately different in MECHANISM and equivalent in RESULT.
 # PRIMUS-original (the byte-prefix multi-space model is not upstream — upstream
 # scopes exec by thread-id).  Sinks write/read the destination map `btm` via
 # absolute paths (PRIMUS's intentional direct-`s.btm` adaptation of upstream's

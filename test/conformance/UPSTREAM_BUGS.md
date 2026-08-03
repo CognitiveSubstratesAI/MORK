@@ -1,5 +1,9 @@
 # Upstream defects found while porting — WRONG ANSWERS, not crashes
 
+> **Looking for where WE differ from a CORRECT upstream?** That is the other category and it
+> lives in `ADAPTATIONS.md` (same directory) — the absolute-path sink model, `PrefixBtm`, the
+> chain-projection pushdown, `MorkL`. This file is only for cases where upstream is WRONG.
+
 `upstream_panics/` records the 49 programs where `mork run` **aborts**: no output, so nothing to
 compare against. This file is the other category — upstream **runs, returns, and is wrong**. Each
 entry was suspected by reading and then **settled by execution**, and each says what our port does
