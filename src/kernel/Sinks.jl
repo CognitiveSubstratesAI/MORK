@@ -571,14 +571,15 @@ function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
 end
 
 """
-    _redsink_finalize!(unique, btm, init, acc, enc) → Bool
+    _redsink_finalize!(unique, btm, init, acc, enc, root=UInt8[]) → Bool
 
 Generic finalize for the accumulating reduction sinks. `acc(running, value_payload)` folds one entry
 (returning `nothing` to SKIP an entry upstream would have panicked on, e.g. an unparseable number);
 `enc(total)` renders the reduction as a complete symbol node (tag + payload), which is both the value
 spliced in by branch 3 and the thing compared against the literal in branch 1.
 """
-function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc, enc)::Bool where {T}
+function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc, enc,
+        root::Vector{UInt8} = UInt8[])::Bool where {T}
     GK = Tuple{Vector{UInt8}, Vector{UInt8}}         # (result, source) — upstream's traversal "context"
     groups = Dict{GK, T}()                           # FOLDED total — ABSENT if no value ever folded
     order = GK[]                                     # EXISTENCE + deterministic order (Dict iteration is not)
@@ -635,6 +636,29 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
                 _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, encoded) : nothing
         else                                         # branch 1 — SIZES fixed literal
             encoded == source ? rbytes : nothing
+        end
+        # ── ROOT-DOUBLING (upstream branches 1 and 2 do NOT strip the write root) ──────────
+        # Upstream hands each sink a WriteZipper rooted at `request()` and grafts the collected
+        # input AT that root, then reads it from the EMPTY path. Branch 3 strips the root back off
+        # (`&buffer[wz.root_prefix_path().len()..]`, sinks.rs:930) — branches 1 and 2 do not, so
+        # their output lands at root ++ root ++ tail and THE ROOT APPEARS TWICE.
+        #
+        # THE GUARD IS THE WHOLE POINT. A previous attempt prepended the root unconditionally in
+        # these two branches and was MEASURED to fix 11 probes and BREAK 16 (corpus 237->232).
+        # The root is the sink expression's ground prefix up to its FIRST VARIABLE, so:
+        #
+        #   * variable INSIDE the result — `(and (ok $z) 2 $i)` — root `(ok` is a PROPER PREFIX of
+        #     the result `(ok $a)`, and upstream emits `(ok (ok $a))`.
+        #   * result fully GROUND — `(sum (correct) 6 $x)` — the first variable sits in the SOURCE
+        #     slot, so root `(correct) 6` runs PAST the result. Upstream emits plain `(correct)`,
+        #     and prepending there is what broke those 16.
+        #
+        # Verified byte-exactly against the live binary on all 12 doubling probes: peeling our own
+        # atom off the binary's atom yields exactly `sink_request(sink)` every time, and in every
+        # one the root is a proper prefix of the result.
+        if out !== nothing && !isempty(root) && !(t isa ExprVarRef) &&
+           length(root) < length(out) && view(out, 1:length(root)) == root
+            out = vcat(root, out)
         end
         out === nothing && continue
         old = get_val_at(btm, out)
@@ -713,7 +737,7 @@ function _sum_enc(total::UInt32)
 end
 
 sink_finalize!(s::SumSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, UInt32(0), _sum_acc, _sum_enc)
+    _redsink_finalize!(s.unique, btm, UInt32(0), _sum_acc, _sum_enc, sink_request(s))
 
 # =====================================================================
 # AndSink — [4] and <result_sym> <source_sym> <expr>: logical AND
@@ -756,7 +780,7 @@ _and_acc(running::UInt8, value::Vector{UInt8}) = isempty(value) ? running : runn
 _and_enc(total::UInt8) = UInt8[item_byte(ExprSymbol(0x01)), total]
 
 sink_finalize!(s::AndSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, 0xff, _and_acc, _and_enc)
+    _redsink_finalize!(s.unique, btm, 0xff, _and_acc, _and_enc, sink_request(s))
 
 # =====================================================================
 # External-dep stubs — require wasmtime / Z3 (skip)
@@ -1102,7 +1126,7 @@ _hash_enc(total::UInt64) =
     vcat(item_byte(ExprSymbol(UInt8(8))), collect(reinterpret(UInt8, [hton(total)])))
 
 sink_finalize!(s::HashSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, UInt64(0xa9e17c4d3f8b21c5), _hash_acc, _hash_enc)
+    _redsink_finalize!(s.unique, btm, UInt64(0xa9e17c4d3f8b21c5), _hash_acc, _hash_enc, sink_request(s))
 
 # =====================================================================
 # PureSink — port of PureSink in sinks.rs
@@ -1504,7 +1528,7 @@ function _freduce_enc(total::Float64)
 end
 
 sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, _freduce_init(s.op), _freduce_acc(s.op), _freduce_enc)
+    _redsink_finalize!(s.unique, btm, _freduce_init(s.op), _freduce_acc(s.op), _freduce_enc, sink_request(s))
 
 # =====================================================================
 # ASink — dispatch union
