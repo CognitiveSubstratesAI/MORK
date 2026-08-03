@@ -1358,6 +1358,18 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
     end
     out === nothing && return nothing
 
+    # ROOT-DOUBLING — same rule and guard as `_redsink_finalize!` (see the derivation there).
+    # PureSink writes PER MATCH rather than in finalize, so it needs its own copy. The NewVar
+    # "ignored guard" branch does not strip the write root, exactly as branches 1/2 of the
+    # reduction sinks do not; the VarRef branch does (upstream `&buffer[root_prefix_path().len()..]`).
+    # Guard: prepend only when the root is a PROPER PREFIX of the output, i.e. when the sink
+    # expression's first variable sits inside the template.
+    root = sink_request(s)
+    if !isempty(root) && !(src_tag isa ExprVarRef) &&
+       length(root) < length(out) && view(out, 1:length(root)) == root
+        out = vcat(root, out)
+    end
+
     old = get_val_at(btm, out)
     set_val_at!(btm, out, UNIT_VAL)
     old === nothing && (s.changed = true)
