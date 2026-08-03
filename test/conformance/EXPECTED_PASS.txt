@@ -210,6 +210,8 @@ space/s4_osink_rootremove
 space/s4_readback
 space/s5_chain3_proj
 space/s5_chain4_ctrl
+space/s5_chain4_ground
+space/s5_chain4_proj
 space/s5_cow_meta
 space/s5_cow_selffeed
 space/s5_cow_selffeed_i

@@ -904,6 +904,31 @@ function _try_chain_projection!(s, pat_expr::MORK.Expr, pat_v::UInt8,
     sources = pa[2:end]
     (ch_ok, hps) = _classify_chain(sources)
     ch_ok || return nothing
+    # BINARY FACTORS ONLY. `_classify_chain` deliberately accepts arity-N factors (its
+    # `for ap in 4:length(fa)` arm admits "arity-N tails"), because the STREAMING chain join
+    # (Space.jl:1004 -> `_chain_join_emit!`) handles them. This PROJECTION path does not:
+    #
+    #   * `_chain_compose` splits each stored path with `_split2`, which returns exactly TWO
+    #     sub-expressions. On a 3-ary fact `(e 1 2 x)` the "link" becomes arg2++arg3, so it
+    #     never equals the next factor's arg1 and `reach` comes back EMPTY.
+    #   * `xk_idx = oi - 1` is the LAST NewVar, which is the chain endpoint only when every
+    #     factor is binary. With payload vars it names the last payload instead.
+    #
+    # Together those made a 3-ary chain emit NOTHING whenever the template happened to pass
+    # `_chain_projection_ok` — including a template with NO variables at all, which passes
+    # VACUOUSLY since the check only rejects INTERIOR var refs. Measured against the upstream
+    # binary: `space/s5_chain4_ground` must emit `(done)` and `space/s5_chain4_proj` must emit
+    # `(out 1 z)`; both emitted nothing, and both are correct with this path bypassed.
+    #
+    # So restrict the optimization to the shape it is actually correct for and let everything
+    # else fall through to the general per-match path, which is verified correct. Generalising
+    # `_chain_compose` via `_arg_at` (already present, used by the binary join) would restore
+    # the optimization for arity-N — that is a PERF task, and it needs its own oracle before
+    # it can be trusted, which is exactly what this path lacked.
+    for src in sources
+        fa = ExprEnv[]; ee_args!(src, fa)
+        length(fa) == 3 || return nothing        # head + exactly 2 args
+    end
     (pat_nv, _, _) = _ee_traverseh(UInt8(0), ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
         (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
         (h, o, a) -> (h, nothing), (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
