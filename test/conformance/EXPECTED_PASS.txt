@@ -1,7 +1,10 @@
 sinks/g1_count_ctl_shape
 sinks/g1_count_fixed_match
 sinks/g1_count_fixed_mismatch
+sinks/g1_count_fixed_vartpl
 sinks/g1_count_group_varkey
+sinks/g1_count_newvar_guard
+sinks/g1_count_newvar_readback
 sinks/g1_count_twodigit
 sinks/g1_count_varref_k0
 sinks/g1_count_varref_k1

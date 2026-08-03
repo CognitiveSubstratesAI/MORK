@@ -456,6 +456,7 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
     counts = Dict{Vector{UInt8}, Int}()
     slots  = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
     order  = Vector{Vector{UInt8}}()
+    root   = sink_request(s)                             # upstream's `request()` write root
     rz = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
         parsed = _redsink_parse_entry(collect(zipper_path(rz)); symbol_value = false)
@@ -482,6 +483,16 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
                     _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, cnt_sym) : nothing
             else
                 source == cnt_sym ? rbytes : nothing     # branch 1 — fixed literal
+            end
+            # ROOT-DOUBLING — same rule and same guard as `_redsink_finalize!`; see the long
+            # comment there for the derivation. CountSink needs its own copy because it reduces at
+            # the CONTEXT level and so does not share that finalize.
+            # Prepend only when the root is a PROPER PREFIX of the output: that is the case where
+            # the sink expression's first variable sits inside the result. When the result is
+            # ground the root runs past it into the source slot and prepending is wrong.
+            if out !== nothing && !isempty(root) && !(t isa ExprVarRef) &&
+               length(root) < length(out) && view(out, 1:length(root)) == root
+                out = vcat(root, out)
             end
             out === nothing && continue
             old = get_val_at(btm, out)
