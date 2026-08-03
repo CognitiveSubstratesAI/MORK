@@ -4783,6 +4783,12 @@ const _MORK_TS = @testset "MORK" begin
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 
+    # ── sink_request: the WRITE ROOT each sink asks for (upstream `Sink::request()`) ──
+    # Step 1 of the write-rooting port that root-doubling needs (~15 conformance probes).
+    # Pinned on its own BEFORE anything writes with it, because the previous attempt went
+    # straight to the write side and was measured to fix 11 probes and break 16.
+    include("unit_sink_request.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 

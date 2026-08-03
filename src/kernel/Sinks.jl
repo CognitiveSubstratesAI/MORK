@@ -141,6 +141,72 @@ end
 Insert each matched path verbatim into the destination PathMap.
 Mirrors `CompatSink` in sinks.rs.
 """
+# =====================================================================
+# sink_request — upstream `Sink::request()` (ROOT ONLY; writes nothing yet)
+# =====================================================================
+#
+# STATUS 2026-08-03: STEP 1 OF THE WRITE-ROOTING PORT. This computes WHAT the root is.
+# Nothing consumes it yet — `sink_apply!` still takes a flat absolute path. That separation is
+# deliberate: the previous attempt at root-doubling conflated "what the root is" with "how it is
+# written", prepended the root in branches 1+2, and was MEASURED to fix 11 probes and break 16
+# (corpus 237->232). So the root is landed and pinned FIRST, on its own oracle.
+#
+# WHAT UPSTREAM DOES. Every BTM sink asks for a write zipper rooted at its own expression's GROUND
+# PREFIX, minus its keyword header:
+#
+#     let p = &self.e.prefix().unwrap_or_else(<ground fallback>)[<skip>..];
+#     std::iter::once(WriteResourceRequest::BTM(p))
+#
+# `Expr::prefix()` is the bytes before the FIRST VARIABLE; when the expression is fully ground it
+# has no proper prefix and each sink supplies its own fallback. There are exactly TWO fallbacks and
+# the difference is load-bearing — `RemoveSink` states why at sinks.rs:341:
+#
+#     "we're never grabbing the full expression path, because then we don't have the ability to
+#      remove the root value"
+#
+#   FULL span      : Compat(skip 0) · Add(3) · U(3) · AU(4)
+#   span MINUS ONE : Remove(3) · And(5) · Sum(5) · Hash(6) · Pure(6) · Count(7) · FloatReduction(2+len(NAME))
+#
+# `skip` is uniformly `2 + length(keyword)` — the Arity byte plus the SymbolSize byte plus the
+# keyword itself (Compat strips nothing). Non-BTM sinks request a different resource entirely and
+# have NO root: ACTSink asks for an ACT file (sinks.rs:320), Z3Sink for a Z3 instance (:1204).
+#
+# CHECKED ARITHMETICALLY AGAINST THE BINARY'S OWN OUTPUT before this was written:
+#   (and (ok $z) 2 $i)      first var $z at 10 -> stop 9,  skip 5 -> root `(ok`
+#                           binary emits (ok (ok $a))        = root ++ result  ✓
+#   (fsum (res p $z) $c $x) first var $z at 14 -> stop 13, skip 6 -> root `(res p`
+#                           binary emits (res p (res p $a))  = root ++ result  ✓
+#   (sum (correct) 6 $x)    result is GROUND, so the first var is $x and the root runs PAST the
+#                           result into the source slot -> `(correct) 6`. This is exactly why
+#                           "prepend the root" is NOT the doubling rule and why the shortcut failed.
+"""
+    sink_request(s::AbstractSink) → Union{Nothing, Vector{UInt8}}
+
+The BTM write root this sink asks for, or `nothing` for sinks that request a non-BTM resource.
+Pure and read-only — see the block comment above for the upstream correspondence.
+"""
+function sink_request end
+
+# `skip` bytes of `(<keyword>` header, and whether the GROUND fallback drops the final byte.
+function _sink_root(e::MORK.Expr, skip::Int, ground_minus_one::Bool)::Vector{UInt8}
+    buf = e.buf; n = length(buf); i = 1; varpos = 0
+    while i <= n
+        t = byte_item(buf[i])
+        if t isa ExprNewVar || t isa ExprVarRef
+            varpos = i; break
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)
+        else
+            i += 1                                  # Arity
+        end
+    end
+    stop = varpos != 0 ? (varpos - 1) : (ground_minus_one ? n - 1 : n)
+    stop <= skip && return UInt8[]
+    Vector{UInt8}(buf[(skip + 1):stop])
+end
+
+# (the per-sink methods are defined at the END of this file, after every sink struct exists)
+
 mutable struct CompatSink <: AbstractSink
     expr::MORK.Expr
     changed::Bool
@@ -1577,3 +1643,34 @@ export _expr_end_offset
 export FloatReductionSink
 export asink_new, asink_compat
 export _au_merge!, _zipper_subtrie_hash
+
+# ── sink_request methods (see the block comment near the top of this file) ───────────────────
+# Defined here because they dispatch on sink types declared throughout the file.
+# `skip` = 2 + length(keyword); the Bool is the GROUND fallback (true = span minus one byte).
+sink_request(s::CompatSink)  = _sink_root(s.expr, 0, false)
+sink_request(s::AddSink)     = _sink_root(s.expr, 3, false)
+sink_request(s::USink)       = _sink_root(s.expr, 3, false)
+sink_request(s::AUSink)      = _sink_root(s.expr, 4, false)
+sink_request(s::RemoveSink)  = _sink_root(s.expr, 3, true)
+sink_request(s::AndSink)     = _sink_root(s.expr, 5, true)
+sink_request(s::SumSink)     = _sink_root(s.expr, 5, true)
+sink_request(s::HashSink)    = _sink_root(s.expr, 6, true)
+sink_request(s::PureSink)    = _sink_root(s.expr, 6, true)
+sink_request(s::CountSink)   = _sink_root(s.expr, 7, true)
+# FloatReduction's header is `2 + Reduction::NAME.len()` upstream (sinks.rs:980). fsum/fmin/fmax
+# are 4 and fprod is 5, so READ the length off the expression rather than hardcoding one — a
+# future reduction name must not silently mis-skip.
+function sink_request(s::FloatReductionSink)
+    buf = s.expr.buf
+    t = length(buf) >= 2 ? byte_item(buf[2]) : nothing
+    _sink_root(s.expr, 2 + (t isa ExprSymbol ? Int(t.size) : 4), true)
+end
+# HeadSink/TailSink embed the N literal in their header, so reuse the width the constructor
+# already computed (upstream: `[self.skip..]`, sinks.rs:383-389).
+sink_request(s::HeadSink)    = _sink_root(s.expr, s.skip, true)
+# Non-BTM resources have NO write root: ACTSink requests an ACT file (sinks.rs:320) and Z3Sink a
+# Z3 instance (:1204).
+sink_request(::ACTSink)      = nothing
+sink_request(::Z3Sink)       = nothing
+
+export sink_request
