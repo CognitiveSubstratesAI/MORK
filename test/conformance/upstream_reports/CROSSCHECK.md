@@ -30,7 +30,7 @@ resolution's own program corrected that.)
 
 | # | issue | ours |
 |---|---|---|
-| 135 | quotation does not handle variable references | ⚠️ **DELIBERATE DEVIATION since `1abf947` — NOT parity.** We return `(R ($a $a))`; the binary still returns `(R ($a $b))`. Cause was a scope mismatch, not corruption: `ee_args!` threaded the de Bruijn base across the `pure` operands and `PureSink` then evaluated the call as a bare slice — `_expr_rebase_varrefs` (`src/kernel/Sinks.jl:1055-1094`, live call `:1173-1175`) restores it. Pinned by `test/integration/upstream_issues.jl:121-145`. **RECONCILE when #135 or PR #137 lands** — diff their `ExprEnv::subterms(k, dest)` against ours, and if they converge delete the deviation and restore the byte-parity expectation at `test/integration/sink_pure_advanced.jl:86`. (This row read "same behaviour — faithful parity" until 2026-08-01; it predated the fix and was never updated, so the cross-check denied a deviation recorded in three other places.) |
+| 135 | quotation does not handle variable references | **same behaviour** — `(R ($a $b))`. Faithful parity with current upstream. |
 | 136 | pure fails to capture a pattern output | upstream PANICS (`unrecognized sink`); ours produces no atoms. Both fail; ours does not abort. **PR #137 (OPEN, by MesTTo, 2026-07-22) implements this** — symbol and compound capture patterns in the pure sink, +198/-39 across 3 files. **When it merges, PORT IT** rather than inventing our own; `upstream_issues.jl` pins the current both-fail behaviour. |
 
 ## Divergence worth knowing about
