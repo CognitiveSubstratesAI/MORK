@@ -116,6 +116,60 @@ No upstream counterpart. Same caveat as entry 4: no conformance probe can see it
 
 ---
 
+## 6. `remove_val_at!` call sites do NOT pass `prune` — ATTEMPTED, REVERTED, cause UNKNOWN
+
+Upstream's PathMap removal at a call site is `.remove(path)`, which is the alias
+`remove_val_at(path, TRUE)` (`trie_map.rs:379-381`) — it always prunes. Four of our MORK call sites
+omit the flag and take the `prune=false` default:
+
+    Space.jl:217   <-> upstream space.rs:850   (space_add_all_sexpr! add/remove branch)
+    Space.jl:2220  <-> upstream space.rs:1704  (driver popping the exec it is about to run)
+    Space.jl:2497                              (transform result path — upstream counterpart unmapped)
+    Space.jl:2745                              (prefix variant of :2220 — unmapped)
+
+`Sinks.jl` HeadSink WAS fixed (`remove_val_at!(s.head, s.top, true)`) and closed 2 probes.
+`RemoveSink` is a MECHANISM difference, not a missing flag: upstream does ONE trie-level
+`wz.subtract_into(&self.remove.read_zipper(), true)` (sinks.rs:366) where ours loops per path.
+
+### ⚠️ DO NOT simply add `prune=true` and commit — it was tried on 2026-08-03 and REVERTED
+
+Adding it to the first two sites made the 285-probe conformance corpus **6-10x slower**:
+
+    gate normally        ~110-230s
+    with the two sites   1260s and 1855s (both killed before finishing), at load 1.30 on 2 cores
+
+and the cause was NOT identified. What WAS measured, and rules out the obvious explanations:
+
+* prune is CHEAP in isolation — 1.6x over 4000 `remove_val_at!` calls at n=4000, and *faster* than
+  no-prune at n=100/1000.
+* prune WORKS and matches upstream's construction — after `remove_val_at!(m, b"p/q/r", true)`,
+  `path_exists_at(m, b"p/q")` is false; with prune=false it stays true; upstream's own
+  root-zipper-then-descend form gives the same answer as ours.
+* the DRIVER is not the victim — 80 execs / 80 steps / 6480 atoms in **0.664s** with both sites
+  pruning.
+* individual probes are FAST WARM — `g8_act_accum` 0.0s, `g1_hash_ctl_eg_fixpoint` 0.2s,
+  `g2_sum_dup` 0.0s, taking the minimum of 3 runs.
+
+So it is not the prune primitive, not the driver, and not steady-state probe execution. The cost
+appears only in the full corpus. **Next attempt should PROFILE (`@profile` / `@time` inside the
+corpus runner), not bisect** — three bisect rounds at 20+ minutes each produced no localisation.
+
+### ⚠️ And check the machine FIRST
+
+Two environment traps cost more time than the change itself on 2026-08-03:
+
+* **VS Code's Julia LSP was indexing `~/PRIMUS`** (the dead 8.2 GB legacy root) at 85% CPU for
+  55 minutes. This box has **2 cores**, so that alone doubles every timing. Check `/proc/loadavg`
+  and `ps -eo pcpu,pid,cmd --sort=-pcpu` BEFORE attributing a slowdown to code.
+* **Cold JIT reads as a slowdown.** A probe-by-probe sweep timing each probe's FIRST run reported
+  18s/63s/10s for probes that are 0.0-0.2s warm. Always warm before timing — the same trap already
+  recorded for `meet_k_path` ("10 min for 800 cases" was JIT; 61ms warm).
+
+**Zero conformance probes currently depend on these four sites**, which is why reverting was the
+right call rather than pushing through.
+
+---
+
 ## MAINTENANCE — the sink layer has THREE independent write paths, and that is why fixes recur
 
 **Measured from `git log -- src/kernel/Sinks.jl` on 2026-08-03: 47 commits since 2026-04-23.** The
