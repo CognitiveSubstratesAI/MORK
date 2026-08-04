@@ -2108,14 +2108,30 @@ function space_interpret!(s::Space, rt::MORK.Expr;
 
     if pat_functor == comma && tpl_functor == comma
         space_transform_comma_comma!(s, pat_expr, tpl_expr, rt; prefix=prefix)
+    # ── pat_v / tpl_v are ALWAYS 0. Upstream builds every pattern and template env with
+    # `ExprEnv::new(0, expr)` (expr/src/lib.rs:1756-1763, whose body hardcodes `v: 0`), uniformly at
+    # space.rs:1023 :1131 (query_multi / query_multi_i) and :1338 :1413 :1488 :1574 (all four
+    # transform_multi_multi_* template decompositions). It never threads a loc-relative offset here.
+    #
+    # We passed `pat_ee.v` / `tpl_ee.v` — the WHOLE-EXEC-relative offset, which counts variables in
+    # the exec's `loc` arg. With a var-free loc that offset is 0 and the two agree, which is why this
+    # hid: every ground-loc probe passes either way. With a var in `loc` (e.g. `(exec (0 $j) ...)`)
+    # the pattern's NewVar keys got counted from the shifted base, so they lined up with the
+    # template's VarRef indices and we GROUNDED a variable upstream leaves free.
+    #
+    # The `,`/`,` arm was already right — `space_transform_comma_comma!` hardcodes 0. So did the
+    # three named wrappers `space_transform_i_comma!` / `space_transform_comma_o!` /
+    # `space_transform_i_o!` added by ba34df5 (2026-05-01) — but the dispatcher was never rewired to
+    # call them and kept the pre-refactor inline calls. A correct fix that nothing invokes is
+    # indistinguishable from no fix.
     elseif pat_functor == i_src && tpl_functor == comma
-        space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
+        space_transform_multi_multi!(s, pat_expr, UInt8(0), tpl_expr, UInt8(0), rt;
             no_source=false, no_sink=true)
     elseif pat_functor == comma && tpl_functor == o_snk
-        space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
+        space_transform_multi_multi!(s, pat_expr, UInt8(0), tpl_expr, UInt8(0), rt;
             no_source=true, no_sink=false, prefix=prefix)
     elseif pat_functor == i_src && tpl_functor == o_snk
-        space_transform_multi_multi!(s, pat_expr, pat_ee.v, tpl_expr, tpl_ee.v, rt;
+        space_transform_multi_multi!(s, pat_expr, UInt8(0), tpl_expr, UInt8(0), rt;
             no_source=false, no_sink=false)
     else
         return _exec_err_other(

@@ -243,6 +243,7 @@ space/s6_baseline
 space/s6_cycle_join
 space/s6_cycle_selfocc
 space/s6_io_locground_coref
+space/s6_io_locvar_coref
 space/s6_io_two_tpl
 space/s6_io_usink
 space/s6_locground_coref
@@ -250,6 +251,8 @@ space/s6_locvar2_coref
 space/s6_locvar_coref
 space/s6_meta_varhead4
 space/s6_o_locground_coref
+space/s6_o_locvar2_coref
+space/s6_o_locvar_coref
 space/s6_o_two_tpl
 space/s6_pure_ctx_second
 space/s6_pure_keyed
