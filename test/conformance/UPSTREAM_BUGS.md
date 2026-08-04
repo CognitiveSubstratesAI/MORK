@@ -103,6 +103,51 @@ every other failure mode in the file. Recorded in `Pure.jl` at the arm.
 **Ours:** raises before emitting, so the atom is skipped and the run continues. `sink_write!`
 enforces the 63-byte limit independently. Documented at `_nat_encode_hex` (`Pure.jl:1192`).
 
+### 2b. The SAME truncation, a SECOND time — `FloatReductionSink::finalize` (this is what `g3_bigsymbol` hits)
+
+`encode_hex` is not the only site. `kernel/src/sinks.rs:1063`:
+
+```rust
+let min_str = total.to_string();
+let mut cntv = vec![item_byte(Tag::SymbolSize(min_str.len() as _))];
+cntv.extend_from_slice(min_str.as_bytes());
+```
+
+`min_str.len()` is a `usize` and `as _` narrows it to the `u8` the tag holds. `fprod` of `1e300` and
+`10.0` renders as **302** decimal digits (Rust's `Display` for f64 never uses exponent form), and
+`302 as u8 == 46`. So upstream tags the symbol as 46 bytes and then appends all 302 — the atom reads
+back as `1` followed by 45 zeros. Silently wrong, no panic. That is exactly what
+`sinks/g3_bigsymbol.expected` contains, and why it can never be in `EXPECTED_PASS.txt`.
+
+**Ours:** `_freduce_enc` (`src/kernel/Sinks.jl:1581`) refuses the write — `(n < 1 || n > 63) && return
+nothing` — so no `(pd ...)` atom is emitted at all. Dropping an unrepresentable value beats emitting
+a corrupted one, and beats aborting the engine on a large float.
+
+⚠️ Recorded separately because attributing `g3_bigsymbol` to entry 2's `pure.rs`/`encode_hex` site
+sends the next reader to the wrong function. Same bug CLASS — `SymbolSize(len as _)` narrowing a
+`usize` — two different occurrences.
+
+### The CLASS, swept 2026-08-04 — it is not two sites, it is TWENTY
+
+`grep -rn 'SymbolSize(.*as _)' --include=*.rs` over upstream returns **20** occurrences. Two are
+already documented above; the rest were never triaged. Triaged by whether the length can actually
+exceed 63:
+
+| site | length source | reachable > 63? |
+|---|---|---|
+| `pure.rs:748-760` (`encode_hex`) | `2 * input.len()` | **YES** — entry 2, corrupts at 32 B, aborts at 33 |
+| `sinks.rs:1063` (`FloatReductionSink`) | `f64::to_string()` | **YES** — entry 2b, 302 digits for `1e300` |
+| `sinks.rs:584 :605 :701 :812 :921` | `cnt_str` — a count/sum rendered as decimal | no: a `u64` is at most 20 digits |
+| `space.rs:727 :736 :743 :751 :760 :799 :808 :817` | `sa_symbol` = `tokenizer("NKV")`; `internal_s/k/v` from graph attribute data | ⚠️ **UNVERIFIED.** `sa_symbol` is an interned tokenizer symbol and looks bounded, but `internal_v` carries attribute VALUES, which have no obvious bound. This is the neo4j/graph loader path. Not assessed — flagged, not claimed. |
+| `main.rs:3328`, `lib_nightly.rs:102`, `eval-ffi/sink.rs:67`, `expr/lib.rs:2163`, `expr/macros.rs:214 :224` | parser / serializer / type-check paths | not assessed |
+
+**The rule, since this is now the second time the same narrowing surfaced as a separate mystery:**
+there is no shared symbol-overflow guard on upstream's write path, so every `SymbolSize(len as _)`
+is an independent opportunity for the same silent corruption. Ours should not grow a third one-off
+patch either — the standing gap is a general Rule-of-64 guard at the write boundary, already noted
+at `_freduce_enc`. Until that exists, any NEW port of a site in the table above needs its own guard,
+and the reachability column is the thing to check first.
+
 ---
 
 ## 3. `'` (quote) rewinds the evaluation cursor by one item

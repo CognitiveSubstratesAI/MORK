@@ -170,6 +170,52 @@ right call rather than pushing through.
 
 ---
 
+## 7. `HashSink` digest — 8-byte XOR fold where upstream is a 16-byte `gxhash` catamorphism
+
+**Upstream** hashes the collected subtrie with PathMap's `Catamorphism::hash()` /`hash_with()`
+(`PathMap/src/morphisms.rs:236-261`): a recursive fold of each node's `ByteMask` (32 B) plus its
+children's hashes (16 B each) plus the value hash, through
+`gxhash::GxHasher::with_seed(0b0100001010101101111110010110100110000010011000100100100111110111i64)`,
+yielding a **u128**. Called from `kernel/src/sinks.rs:668` and `:698` as
+`prz.fork_read_zipper().hash()`.
+
+The real AES-NI `gxhash` IS what the vendored x86_64 release binary runs — `PathMap/src/lib.rs:13-14`
+gates it as `#[cfg(not(any(miri, target_arch = "riscv64")))]`, so the hand-rolled XOR/rotate fallback
+at `lib.rs:17-58` is reachable only under miri or riscv64. Do not mistake the fallback for the
+implementation; that misreading is why "just port the simple one" looks tempting.
+
+**Ours** (`src/kernel/Sinks.jl:1157-1169`) is a linear XOR-fold over the raw path bytes from a fixed
+`UInt64` seed, emitted as **8 bytes** (`_hash_enc`, `SymbolSize(8)`). Different algorithm, different
+width. The reasoning is at `Sinks.jl:1138-1156`.
+
+**Why it is sound.** The digest is never compared ACROSS engines. Its one real consumer is the
+EG-fixpoint termination check in `ctl_model_checking.mm2`, which needs only self-consistency within a
+single run — and that works: `sinks/g1_hash_ctl_eg_fixpoint` and `sinks/g1_hash_eq_same` both PASS,
+the latter being the probe that asserts two equal subtries hash equal and emit `(same)`.
+
+**What it costs — six probes, MEASURED 2026-08-04.** All six hash probes match upstream
+STRUCTURALLY — same atoms, same order, `(same)` present exactly when upstream emits it — and differ
+ONLY in the digest payload:
+
+    sinks/g1_hash_eq_diff   sinks/g1_hash_eq_same   sinks/g1_hash_varref
+    space/s6_hash_multi     space/s6_hash_single    space/s6_io_hash
+
+Fixture corruption was ruled out (`xxd` + `git diff` vs `b522e49`: the `.expected` files are the
+repaired, non-UTF-8-corrupt versions with clean 16-byte payloads).
+
+⚠️ **Closing them is a real port, not a tweak**: AES-NI `gxhash` through `llvmcall`, PLUS PathMap's
+catamorphism with byte-exact node serialisation and child-iteration order — and that order is not a
+documented public contract upstream. Zero behavioural gain. Treat as permanently excluded unless
+byte-stable cross-engine digests become an actual requirement.
+
+⚠️ **This entry was WRITTEN ONCE BEFORE AND LOST.** It existed as `UPSTREAM_BUGS.md` entry 7, was
+deleted by `104d5cab` ("Revert all 2026-08-02 work"), and was never restored — while the
+cross-reference to it survived, so `ADAPTATIONS.md` pointed at a deleted entry for two days. A revert
+that spans a doc and its referrer breaks the referrer silently. It also belongs HERE, not in
+`UPSTREAM_BUGS.md`: upstream's hash is correct for upstream's purpose.
+
+---
+
 ## MAINTENANCE — the sink layer has THREE independent write paths, and that is why fixes recur
 
 **Measured from `git log -- src/kernel/Sinks.jl` on 2026-08-03: 47 commits since 2026-04-23.** The
@@ -217,8 +263,9 @@ root-doubling work into one commit and caught HashSink in July.
 
 Cases where **upstream is wrong** live in `UPSTREAM_BUGS.md`, not here — `mod_i*` aborting on a zero
 divisor, `encode_hex` corrupting at 32 bytes and aborting at 33, the quote cursor rewind, `unbind`'s
-255 sentinel, `load_jsonl`'s untagged index, #135, the HashSink digest width, and the
-`_redsink_parse_entry` / `remove` prune defects. Those are deviations FROM a defect; these are
+255 sentinel, `load_jsonl`'s untagged index, #135, and the `_redsink_parse_entry` / `remove` prune
+defects. (The HashSink digest width was listed here until 2026-08-04; it is NOT an upstream bug and
+is now entry 7 ABOVE — upstream's hash is correct for upstream's purpose.) Those are deviations FROM a defect; these are
 adaptations AWAY FROM a correct design.
 
 `PathMap/test/differential/ADAPTATIONS.md` carries the PathMap-side entries.
