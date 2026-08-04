@@ -1180,6 +1180,14 @@ sink_finalize!(s::HashSink, btm::SinkBtm)::Bool =
 
 mutable struct PureSink <: AbstractSink
     expr::MORK.Expr
+    # RAW, pre-substitution `(pure ...)` atom — used ONLY by `sink_request`, which upstream computes
+    # from `self.e` (sinks.rs:1095-1097), and upstream's `self.e` is the raw template because its
+    # PureSink is constructed ONCE PER EXEC CLAUSE, not per match. Ours is built per match from the
+    # already-substituted atom (Space.jl, the immediate-sink branch), so `expr` has the bindings
+    # applied and its first variable sits further right — giving a LONGER root than upstream's and
+    # silently disabling the root-prepend guard. `expr` stays substituted: `sink_apply!` reads its
+    # template and formula spans out of it and would break on the raw form.
+    raw::Vector{UInt8}
     changed::Bool
     # upstream `PureSink { e, unique, scope: EvalScope }` (sinks.rs:1087). The scope is PER-SINK
     # there — `PureSink::new` builds its own — and `scope_eval!` mutates its cursor/stack/alloc pool,
@@ -1187,7 +1195,8 @@ mutable struct PureSink <: AbstractSink
     # own machine state over the one read-only op registry.
     scope::EvalScope
 end
-PureSink(e::MORK.Expr) = PureSink(e, false, eval_scope_sharing(PURE_SCOPE))
+PureSink(e::MORK.Expr, raw::Vector{UInt8}=e.buf) =
+    PureSink(e, raw, false, eval_scope_sharing(PURE_SCOPE))
 
 # ── `_pure_eval_formula` WAS HERE, and is now upstream's stack machine ──────────────────────
 #
@@ -1595,7 +1604,7 @@ sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool =
 Construct the appropriate sink from the pattern expression.
 Mirrors `ASink::new` in sinks.rs.
 """
-function asink_new(e::MORK.Expr)::AbstractSink
+function asink_new(e::MORK.Expr, raw::Vector{UInt8}=e.buf)::AbstractSink
     buf = e.buf
     length(buf) < 2 && return CompatSink(e)
 
@@ -1684,7 +1693,7 @@ function asink_new(e::MORK.Expr)::AbstractSink
     # [4] pure → PureSink
     if a1 == item_byte(ExprArity(UInt8(4))) && a2 == item_byte(ExprSymbol(UInt8(4))) &&
         length(buf) >= 6 && buf[3:6] == Vector{UInt8}("pure")
-        return PureSink(e)
+        return PureSink(e, raw)
     end
 
     # [3] ACT → ACTSink
@@ -1734,7 +1743,7 @@ sink_request(s::RemoveSink)  = _sink_root(s.expr, 3, true)
 sink_request(s::AndSink)     = _sink_root(s.expr, 5, true)
 sink_request(s::SumSink)     = _sink_root(s.expr, 5, true)
 sink_request(s::HashSink)    = _sink_root(s.expr, 6, true)
-sink_request(s::PureSink)    = _sink_root(s.expr, 6, true)
+sink_request(s::PureSink)    = _sink_root(MORK.Expr(s.raw), 6, true)  # RAW: upstream sinks.rs:1095
 sink_request(s::CountSink)   = _sink_root(s.expr, 7, true)
 # FloatReduction's header is `2 + Reduction::NAME.len()` upstream (sinks.rs:980). fsum/fmin/fmax
 # are 4 and fprod is 5, so READ the length off the expression rather than hardcoding one — a

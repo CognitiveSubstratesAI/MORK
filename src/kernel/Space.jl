@@ -1871,8 +1871,12 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                         # Accumulating sink: apply but don't finalize yet
                         sink_apply!(ps[k], bindings, result_expr.buf, sink_btm)
                     else
-                        # Immediate sink: create fresh, apply, finalize
-                        sink = asink_new(result_expr)
+                        # Immediate sink: create fresh, apply, finalize.
+                        # Pass the RAW (pre-substitution) template too: `sink_request` must compute
+                        # its root from it, matching upstream's once-per-clause `Sink::new(e)`.
+                        # Only PureSink reads it; every other sink ignores the argument.
+                        raw_tpl_bytes = Vector{UInt8}(expr_span(ee.base, Int(ee.offset) + 1))
+                        sink = asink_new(result_expr, raw_tpl_bytes)
                         sink_apply!(sink, bindings, result_expr.buf, sink_btm)
                         changed = sink_finalize!(sink, sink_btm)
                         changed && (any_new[] = true)
