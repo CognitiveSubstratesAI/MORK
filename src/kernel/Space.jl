@@ -198,9 +198,26 @@ function _space_load_all_sexpr_impl!(s::Space, src, add::Bool)::Int
     ctx = SexprContext(bv)
     parser = SpaceParser()
     i = 0
+    # ── SCRATCH BUFFER, ALLOCATED ONCE — this loop used to allocate it PER EXPRESSION ────────────
+    # The old comment read "Fresh buffer per expression (mirrors stack[] in Rust)". It does NOT
+    # mirror Rust: `space.rs:839-841` allocates `stack` ONCE, above the loop, and each iteration
+    # rebuilds only the zipper over it (`:845`). Ours reallocated `2 * length(entire input)` bytes on
+    # every expression, so parsing N expressions out of one input of length L allocated O(N·L).
+    #
+    # MEASURED 2026-08-07, `(inc k)` facts through `space_add_all_sexpr!`:
+    #     N=100  0.3 MB      N=1000  20.9 MB      N=10000  2098.9 MB
+    # ~70x then ~100x per 10x N — quadratic. At N=10000 that was 93% of the compiled lane's total
+    # allocation, and it is why the lane looked more memory-hungry than the interpreter. Saturation
+    # itself is LINEAR over the same range (1.6 -> 16.2 -> 168.6 MB) and was never the cost.
+    #
+    # SAFE TO REUSE: the parsed bytes are COPIED OUT below — `data = z.root.buf[1:(z.loc - 1)]` is a
+    # slice-index, which allocates a fresh Vector — and that copy is what `set_val_at!` stores. The
+    # trie never retains the buffer, so the next expression may overwrite it.
+    #
+    # Size still tracks the input instead of Rust's fixed `1 << 32` (4 GiB of lazily-mapped virtual
+    # address space): one expression cannot exceed its own input, so `2L` stays a safe upper bound.
+    buf = Vector{UInt8}(undef, max(length(bv) * 2, 64))
     while true
-        # Fresh buffer per expression (mirrors stack[] in Rust)
-        buf = Vector{UInt8}(undef, max(length(bv) * 2, 64))
         z = ExprZipper(MORK.Expr(buf), 1)
         try
             sexpr_parse!(parser, ctx, z)
