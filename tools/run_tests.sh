@@ -67,5 +67,43 @@ EOF
 # single-threaded they would pass VACUOUSLY. Julia defaults to 1 thread, so under every invocation
 # this repo documented, that guard asserted NOTHING while the suite read green. The inert-testset
 # check in test/runtests.jl is what surfaced it. Override with JULIA_TEST_THREADS.
-julia --project=. --threads="${JULIA_TEST_THREADS:-4}" -i "$DRIVER" < /dev/null
+# ── MEMORY CEILING — the test process must die BEFORE the machine does ──────────────────────────
+#
+# THE SAME GUARD AS `Core/tools/run_tests.sh`, added the same day and for the same measured reason
+# (these three runners are one lineage; this one is a separate repo, so it is a copy and not an
+# include). MEASURED 2026-08-10 in Core: a test evaluated a space-wide `match` with a variable
+# pattern, the process grew past the box's 17 GB, and the kernel OOM-killer chose its victim by score
+# — it killed the VS Code SERVER, not the runaway. A bad test in one process cost the developer their
+# editor session.
+#
+# A cgroup scope fixes the blast radius: the runaway hits ITS OWN ceiling, dies with 137, and nothing
+# outside the scope is a candidate. `MemorySwapMax=0` matters as much as `MemoryMax` — without it the
+# process thrashes swap for minutes first. `--heap-size-hint` is the cooperative half, set BELOW the
+# hard cap so Julia's GC gets its chance before the kernel does.
+#
+# Override:       MORK_TEST_MEM_MAX=12G tools/run_tests.sh
+# Escape hatch:   MORK_TEST_MEM_MAX=none tools/run_tests.sh
+MEM_MAX="${MORK_TEST_MEM_MAX:-8G}"
+HEAP_HINT="${MORK_TEST_HEAP_HINT:-6G}"
+JL=(julia --project=. --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="$HEAP_HINT"
+    -i "$DRIVER")
+
+if [ "$MEM_MAX" = "none" ]; then
+  echo "run_tests.sh: memory ceiling DISABLED (MORK_TEST_MEM_MAX=none)" >&2
+  "${JL[@]}" < /dev/null
+elif command -v systemd-run >/dev/null 2>&1 &&
+     systemd-run --user --scope -p MemoryMax=256M --quiet true >/dev/null 2>&1; then
+  # `--scope` runs it as a child of THIS shell, so stdin/stdout and the exit code pass through
+  # unchanged — which the `< /dev/null` discipline above depends on.
+  systemd-run --user --scope -p MemoryMax="$MEM_MAX" -p MemorySwapMax=0 --quiet \
+      "${JL[@]}" < /dev/null
+  rc=$?
+  [ $rc -eq 137 ] && echo "run_tests.sh: KILLED at the ${MEM_MAX} ceiling — a test allocated without
+  bound. Find it before raising MORK_TEST_MEM_MAX." >&2
+  exit $rc
+else
+  echo "run_tests.sh: WARNING — systemd-run --user --scope unavailable; running WITHOUT a memory
+  ceiling. A runaway test can OOM-kill unrelated processes on this machine." >&2
+  "${JL[@]}" < /dev/null
+fi
 # allow-cold-start: full-suite runner; a suite run is a cold run by nature
