@@ -3,9 +3,20 @@
 ;; dropped — the recursion-termination behaviour lives entirely in the lte-generation
 ;; rules (self-respawning exec + O-sink `(-)` front retirement).
 ;;
-;; ORACLE (upstream `target/release/mork run --timing`): halts at 60 steps.
-;; Our MORK currently does NOT halt (exec-resurrection regression, Space.jl _pat_overlaps_exec_prefix
-;; / pjoin path). This fixture is the regression detector — see workflows/mm2_xcheck.sh.
+;; ORACLE (upstream `target/release/mork run --timing`): halts at 58 steps.
+;; ✅ OURS HALTS AT 58 TOO — Δ=0, re-measured 2026-08-12 via workflows/mm2_xcheck.sh.
+;;
+;; ⚠️ THIS HEADER PREVIOUSLY SAID "our MORK currently does NOT halt (exec-resurrection regression,
+;; Space.jl _pat_overlaps_exec_prefix / pjoin path)". THAT DIAGNOSIS WAS WRONG AND THE CLAIM IS STALE.
+;; It was never exec-resurrection: the NAIVE multi-source join was exploding (~step 10), fixed by
+;; flipping the default to coref in `921c05c`. `test/integration/upstream_conformance.jl:132-133`
+;; recorded the correction; this file did not, so the wrong diagnosis kept propagating out of here —
+;; into `docs/specs/omegaclaw/omegaclaw_study_findings_2026-07-16.md` §1(f), and from there into a
+;; fresh summary on 2026-08-12 that repeated "even a correctly-written self-respawning driver is not
+;; trustworthy here". It is trustworthy; this fixture proves it.
+;;
+;; STILL THE REGRESSION DETECTOR, and now a passing one: wired at upstream_conformance.jl:136
+;; (`_ours_default(lte, 200) == _upstream(lte, 200)`) and runnable ad hoc via workflows/mm2_xcheck.sh.
 
 (= (fromNumber 0) Z)
 (= (fromNumber 1) (S Z))
