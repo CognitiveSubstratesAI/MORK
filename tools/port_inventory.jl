@@ -72,10 +72,23 @@ const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experime
 
 # ── PROFILES — 2026-08-14: this tool now covers PathMap too ──────────────────────────────────────────
 #
-# WHY. CODEMAP row 173 has tracked "STILL UNSCANNED: ALL of PathMap (61 files / 54.7k lines vs MORK's
-# 28k)" since 2026-07-30, user-identified. The cost of leaving it unscanned came due on 2026-08-14:
-# `merkleize` (a PathMap symbol) was asserted UNPORTED, twice on different days, when it is `map_hash`.
-# The instrument that exists precisely to answer that question could not see the package it lives in.
+# WHY. CODEMAP row 173 tracked "STILL UNSCANNED: ALL of PathMap" since 2026-07-30 — meaning not covered
+# by THIS TOOL. The cost showed on 2026-08-14: `merkleize` (a PathMap symbol) was asserted UNPORTED,
+# twice on different days, when its hashing half is `map_hash`.
+#
+# 🔴🔴 DO NOT READ THIS AS "PATHMAP WAS UNMEASURED" — I wrote that on 2026-08-14 and it is FALSE, and
+# the user corrected it. PathMap has an EXECUTABLE byte-exact differential against upstream Rust since
+# 2026-07-27 (`PathMap/test/differential/`: vendored `expected/upstream.tsv`, an `EXPECTED_PASS.txt`
+# ratchet, `UPSTREAM_BUGS.md`, upstream reports, a fuzz gate and a delta-debugging shrinker) plus 24
+# wired test files, and CODEMAP row 181 carries per-file SYMBOL counts from a 2026-07-30 audit. THE
+# BEHAVIOURAL DIFFERENTIAL IS THE AUTHORITATIVE GATE; this tool is a name-diff SCREEN that sees a class
+# the differential structurally cannot (absence), and nothing more. "Not covered by the screen" is not
+# "not measured" — conflating the two misrepresents a 30-day port.
+#
+# ⚠️⚠️ AND NEVER QUOTE THIS TOOL'S PERCENTAGE AS COVERAGE. CODEMAP row 171 says so in capitals, from
+# measurement: hand-checking 16 of the 43 it called missing in `expr/lib.rs` found only 4 real, the rest
+# present under our renamings. `port_has` matches prefixes and `!` suffixes — it CANNOT see a semantic
+# rename, so every such function counts as absent. The number is a lower bound on a lower bound.
 #
 # ⚠️ MORK'S BEHAVIOUR IS UNCHANGED BY CONSTRUCTION. Every entry point keeps a `p = MORK_PROFILE`
 # default, so `test_port_inventory.jl` — which calls `coverage()` and `baseline_revision()` with no
