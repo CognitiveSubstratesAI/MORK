@@ -70,6 +70,69 @@ const BASELINE = joinpath(HERE, "test", "conformance", "PORT_INVENTORY.txt")
 # instrument's SCOPE was wrong, so its green meant less than it appeared to.
 const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experiments/eval"]
 
+# ── PROFILES — 2026-08-14: this tool now covers PathMap too ──────────────────────────────────────────
+#
+# WHY. CODEMAP row 173 has tracked "STILL UNSCANNED: ALL of PathMap (61 files / 54.7k lines vs MORK's
+# 28k)" since 2026-07-30, user-identified. The cost of leaving it unscanned came due on 2026-08-14:
+# `merkleize` (a PathMap symbol) was asserted UNPORTED, twice on different days, when it is `map_hash`.
+# The instrument that exists precisely to answer that question could not see the package it lives in.
+#
+# ⚠️ MORK'S BEHAVIOUR IS UNCHANGED BY CONSTRUCTION. Every entry point keeps a `p = MORK_PROFILE`
+# default, so `test_port_inventory.jl` — which calls `coverage()` and `baseline_revision()` with no
+# arguments and pins their numbers — sees exactly what it saw before. Generalising a load-bearing
+# ratchet must not move the ratchet.
+#
+# THE RUNTIME AUTHORITY DIFFERS PER PACKAGE, and that is the whole design, not an inconvenience:
+# MORK's op names live in Dicts (`PURE_OPS`, `GROUNDED_REGISTRY`) that no source line spells out, so
+# the registry is the authority. PathMap has no such table — its names ARE its module bindings, so
+# `names(PathMap; all = true)` is the authority. Both ask the RUNTIME. Neither reads source text for
+# presence, which is the defect this file's header exists to describe.
+struct PortProfile
+    name        :: String
+    upstream    :: String          # upstream checkout root
+    dirs        :: Vector{String}  # crate/dir roots to scan under `upstream`
+    our_src     :: String          # our Julia src tree
+    baseline    :: String          # vendored symbol inventory
+    runtime_syms:: Function        # () -> Set{String}, the LIVE authority for our names
+    features    :: String          # ⚠️ upstream cargo feature set the baseline is taken under
+end
+
+"""
+    runtime_module_names(mod::Symbol) -> Set{String}
+
+Every binding defined in one of our modules, asked of the RUNTIME rather than scraped from source.
+
+This is PathMap's analogue of MORK's `runtime_op_keys`. `names(m; all = true)` includes unexported and
+generated bindings, which is what an absence check needs — an unexported helper is still ported.
+
+🔴 DELIBERATELY FATAL, for the same reason `runtime_op_keys` is: the first version of that function
+swallowed a load error and silently degraded to a source-text scan, which re-fabricated the exact false
+gap it had been written to kill. A tool whose job is proving absence must fail loudly, never guess.
+"""
+function runtime_module_names(mod::Symbol)::Set{String}
+    m = isdefined(Main, mod) ? Base.invokelatest(getglobal, Main, mod) : Base.require(Main, mod)
+    Set{String}(String(n) for n in Base.invokelatest(names, m; all = true)
+                if !startswith(String(n), "#"))          # drop gensyms/closure boxes
+end
+
+const MORK_PROFILE = PortProfile(
+    "MORK", UPSTREAM, CRATES, joinpath(HERE, "src"), BASELINE,
+    () -> runtime_op_keys(),
+    "default + nightly (the differential binary's build)")
+
+# PathMap upstream is a SINGLE crate — `src/` plus `experimental/` and `utils/` — not a workspace, so
+# the dir list is just the source root and `walkdir` finds the rest.
+const PATHMAP_UPSTREAM = get(ENV, "PATHMAP_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/PathMap"))
+const PATHMAP_HERE     = normpath(joinpath(HERE, "..", "PathMap"))
+const PATHMAP_PROFILE  = PortProfile(
+    "PathMap", PATHMAP_UPSTREAM, ["src"], joinpath(PATHMAP_HERE, "src"),
+    joinpath(PATHMAP_HERE, "test", "conformance", "PORT_INVENTORY.txt"),
+    () -> runtime_module_names(:PathMap),
+    # ⚠️ RECORDED BECAUSE ROW 173 SAYS A CONFORMANCE CLAIM MUST NAME ITS FEATURE SET AND OURS NEVER HAS.
+    # `graft_root_vals` is SEMANTIC, not cosmetic — upstream describes it as changing what `graft`,
+    # `graft_map`, `make_map`, `take_map` and `join_map` do with the value at the focus.
+    "default = [graft_root_vals, slim_ptrs, serialization]; MORK additionally enables nightly")
+
 # ── extraction ────────────────────────────────────────────────────────────────────────────────────
 
 """
@@ -176,9 +239,9 @@ function runtime_op_keys()
 end
 
 "Names our Julia port defines: functions, live registry op keys, and types."
-function julia_symbols(root::AbstractString)
+function julia_symbols(root::AbstractString, runtime_syms::Function = runtime_op_keys)
     names, tys = Set{String}(), Set{String}()
-    union!(names, runtime_op_keys())     # ← authoritative; the regexes below are best-effort backup
+    union!(names, runtime_syms())        # ← authoritative; the regexes below are best-effort backup
     for (dir, _, files) in walkdir(root), f in files
         endswith(f, ".jl") || continue
         text = read(joinpath(dir, f), String)
@@ -219,11 +282,11 @@ end
 
 # ── report ────────────────────────────────────────────────────────────────────────────────────────
 
-function extract_upstream()
-    isdir(UPSTREAM) || error("upstream not found at $UPSTREAM — set MORK_UPSTREAM")
+function extract_upstream(p::PortProfile = MORK_PROFILE)
+    isdir(p.upstream) || error("$(p.name) upstream not found at $(p.upstream) — set $(uppercase(p.name))_UPSTREAM")
     out = Pair{String, Tuple{Vector{String}, Vector{String}}}[]
-    for crate in CRATES
-        d = joinpath(UPSTREAM, crate)
+    for crate in p.dirs
+        d = joinpath(p.upstream, crate)
         isdir(d) || continue
         for (dir, _, files) in walkdir(d), f in sort(files)
             endswith(f, ".rs") || continue
@@ -254,50 +317,56 @@ days staler. The release binary the 277-probe differential grades us against is 
 MAIN is the anchor. A baseline extracted from a `server` checkout would silently grade us against
 code upstream has moved past.
 """
-function upstream_revision()::String
-    isdir(joinpath(UPSTREAM, ".git")) || return "UNKNOWN (not a git checkout)"
+function upstream_revision(p::PortProfile = MORK_PROFILE)::String
+    U = p.upstream
+    isdir(joinpath(U, ".git")) || return "UNKNOWN (not a git checkout)"
     try
-        br = strip(read(`git -C $UPSTREAM rev-parse --abbrev-ref HEAD`, String))
-        sha = strip(read(`git -C $UPSTREAM rev-parse --short HEAD`, String))
-        dt = strip(read(`git -C $UPSTREAM log -1 --format=%ad --date=short`, String))
+        br = strip(read(`git -C $U rev-parse --abbrev-ref HEAD`, String))
+        sha = strip(read(`git -C $U rev-parse --short HEAD`, String))
+        dt = strip(read(`git -C $U log -1 --format=%ad --date=short`, String))
         "$br @ $sha ($dt)"
     catch
         "UNKNOWN (git query failed)"
     end
 end
 
-function write_baseline(rows)
-    rev = upstream_revision()
-    open(BASELINE, "w") do io
-        println(io, "# PORT_INVENTORY — upstream MORK symbol inventory, VENDORED.")
+function write_baseline(rows, p::PortProfile = MORK_PROFILE)
+    rev = upstream_revision(p)
+    mkpath(dirname(p.baseline))
+    open(p.baseline, "w") do io
+        println(io, "# PORT_INVENTORY — upstream $(p.name) symbol inventory, VENDORED.")
         println(io, "# UPSTREAM: ", rev)
+        # CODEMAP row 173: a port-conformance claim must NAME THE FEATURE SET it targets, and ours
+        # never has. PathMap's `graft_root_vals` is SEMANTIC, so a baseline taken under a different
+        # feature set is measuring a different upstream.
+        println(io, "# FEATURES: ", p.features)
         println(io, "#   ^ REQUIRED. Without it this file cannot distinguish a port gap from upstream drift.")
         println(io, "#     Our port draws from main AND server; the differential binary is built from MAIN,")
         println(io, "#     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl.")
-        println(io, "# Regenerate: MORK_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract")
+        println(io, "# Regenerate: $(uppercase(p.name))_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract" * (p.name == "MORK" ? "" : " --pathmap"))
         println(io, "# Format:  <crate/file>\\tFN|TY\\t<name>")
         for (file, (fns, tys)) in rows
             for n in fns; println(io, file, "\t", "FN", "\t", n); end
             for n in tys; println(io, file, "\t", "TY", "\t", n); end
         end
     end
-    println("wrote $(BASELINE)  ($(sum(length(v[1]) + length(v[2]) for (_, v) in rows)) symbols)")
+    println("wrote $(p.baseline)  ($(sum(length(v[1]) + length(v[2]) for (_, v) in rows)) symbols)")
 end
 
 "The UPSTREAM revision recorded in the vendored baseline, or a loud marker if absent."
-function baseline_revision()::String
-    isfile(BASELINE) || return "NO BASELINE"
-    for line in eachline(BASELINE)
+function baseline_revision(p::PortProfile = MORK_PROFILE)::String
+    isfile(p.baseline) || return "NO BASELINE"
+    for line in eachline(p.baseline)
         startswith(line, "# UPSTREAM: ") && return strip(line[13:end])
         startswith(line, "#") || break
     end
     "UNPINNED — regenerate with --extract"
 end
 
-function read_baseline()
-    isfile(BASELINE) || error("no vendored baseline at $BASELINE — run with --extract")
+function read_baseline(p::PortProfile = MORK_PROFILE)
+    isfile(p.baseline) || error("no vendored baseline at $(p.baseline) — run with --extract")
     rows = Dict{String, Tuple{Vector{String}, Vector{String}}}()
-    for line in eachline(BASELINE)
+    for line in eachline(p.baseline)
         (isempty(line) || startswith(line, "#")) && continue
         file, kind, name = split(line, '\t')
         f, t = get!(rows, file, (String[], String[]))
@@ -307,9 +376,9 @@ function read_baseline()
 end
 
 "Return (missing_fns, missing_tys) per file, plus totals. Pure — the test wraps this."
-function coverage()
-    ours_names, ours_tys = julia_symbols(joinpath(HERE, "src"))
-    rows = read_baseline()
+function coverage(p::PortProfile = MORK_PROFILE)
+    ours_names, ours_tys = julia_symbols(p.our_src, p.runtime_syms)
+    rows = read_baseline(p)
     report = Pair{String, Tuple{Vector{String}, Vector{String}}}[]
     tf = tfm = tt = ttm = 0
     for (file, (fns, tys)) in rows
@@ -322,11 +391,15 @@ function coverage()
 end
 
 function main(args)
+    # `--pathmap` selects the PathMap profile. Default stays MORK so every existing invocation, and the
+    # wired test, behave exactly as before.
+    p = ("--pathmap" in args) ? PATHMAP_PROFILE : MORK_PROFILE
     if "--extract" in args
-        write_baseline(extract_upstream()); return
+        write_baseline(extract_upstream(p), p); return
     end
-    c = coverage()
-    println("baseline UPSTREAM: ", baseline_revision())
+    c = coverage(p)
+    println("PROFILE: ", p.name, "   (upstream ", p.upstream, ")")
+    println("baseline UPSTREAM: ", baseline_revision(p))
     println(rpad("upstream file", 36), lpad("fns MISSING", 12), lpad("types MISSING", 15))
     println("-"^63)
     for (file, (fm, tm)) in c.report
@@ -342,6 +415,14 @@ function main(args)
             100 * (c.tys_total - c.tys_missing) ÷ max(c.tys_total, 1))
     println("\n⚠️  LENIENT by construction (see port_has): reported coverage is a CEILING.")
     println("    Absence is proof of a gap; presence is NOT proof of equivalence.")
+    # 🔴 AND THE INVERSE WARNING, which this tool needed and did not have. `port_has` matches by our
+    # RENAMING CONVENTIONS (prefixes, `!` suffixes) — it cannot see a SEMANTIC rename. `merkleize` is
+    # reported missing here and that is right for the DEDUP half, but its HASHING half is fully ported
+    # as `map_hash`, a name sharing no substring. Reading this column alone produced exactly that wrong
+    # claim, twice, on 2026-08-07 and 2026-08-14.
+    println("\n🔴  A NAME HERE IS NOT A VERDICT. Semantic renames are invisible to port_has —")
+    println("    check the alias table before acting on any row:  workflows/PORT_NAME_MAP.tsv")
+    println("    e.g. merkleize -> map_hash (hashing PORTED; only the dedup half is really absent).")
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
