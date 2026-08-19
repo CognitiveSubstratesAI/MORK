@@ -2233,7 +2233,13 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
     # Eliminates collect(zipper_path) + vcat(_EXEC_PREFIX, rel_path) each iteration.
     path_buf = UInt8[]
 
-    while done < steps
+    # 🔴 DO-WHILE, NOT TEST-FIRST — this is `while { BODY; done < steps } { done += 1 }`
+    # (space.rs:1945-1969). Upstream evaluates the BODY INSIDE the loop CONDITION and puts
+    # `done += 1` in the while-BODY, so the work runs before the bound is ever tested and the LAST
+    # interpret is never counted: `metta_calculus(N)` performs N+1 interprets and reports N.
+    # Ours was `while done < steps` and performed exactly N. FIXED 2026-08-19 — see the `done`
+    # increment below, which is where the ordering actually lives.
+    while true
         rz = read_zipper_at_path(s.btm, _EXEC_PREFIX)
         found = zipper_to_next_val!(rz)
 
@@ -2288,6 +2294,18 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
         if err === nothing
             retry = false
             retry_cnt = _METTA_CALCULUS_MAX_RETRIES
+            # ⚠️ THE TEST COMES BEFORE THE INCREMENT, AND THAT ORDER IS THE WHOLE FIX.
+            # Upstream's condition block ends `done < steps` and its while-BODY is `done += 1`, so a
+            # run that has just done its Nth interpret exits WITHOUT counting it. Reporting is
+            # therefore unchanged by this fix — `metta_calculus(N)` still returns N — while one more
+            # exec is now interpreted, which is what the space dump shows.
+            # 🔑 INVISIBLE AT FIXPOINT: when the execs run out, both engines leave through the
+            # `!found` arm above and neither reaches here, so every caller whose cap is generous
+            # enough to reach a fixpoint is completely unaffected. That is why this survived every
+            # gate we had until upstream's own corpus pinned two BOUNDED runs
+            # (`workflows/mork_gold_corpus.sh`: unify/large_statement @steps 0, programs/bc0
+            # @steps 50 — ours at cap+1 reproduced both golds byte for byte).
+            done < steps || break
             done += 1
         elseif is_user_perm_err(err)
             # Re-insert using the intact path_buf (not modified between remove and here)
