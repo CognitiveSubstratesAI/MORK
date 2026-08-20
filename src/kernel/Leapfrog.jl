@@ -102,7 +102,9 @@
 # [[feedback_native_julia_not_transliteration]]
 module Leapfrog
 
-using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar
+using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
+              ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars
+using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
 # plainly and take everything else by name.
@@ -119,7 +121,9 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts,
        GroundFactor, ground_leapfrog,
        is_wildcard_term, is_symbol_head, column_matches_by_equality,
-       cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes
+       cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes,
+       factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
+       with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS
 
 """
     PARSE_START
@@ -235,6 +239,9 @@ such a position every node has a single child by construction, so a sibling prob
 fail.
 """
 const BRANCH_CANDIDATE = 0x80
+
+"Query variables live in namespace 0; factor `f`'s data lives in `1 + f`. Upstream `QUERY_NS`."
+const QUERY_NS = UInt8(0)
 
 """
     Column
@@ -980,5 +987,128 @@ function stored_wildcard_bytes(mask::ByteMask)::Vector{UInt8}
     end
     out
 end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 3d — the DESCENT: bind a candidate, unify, recurse, restore.
+#
+# Ports upstream `match_candidate` / `with_bound_term` / `with_bound_path_bytes` /
+# `unified_bindings` / `data_env_for` (`69393c7^:kernel/src/zipper_join.rs:2709-3044`).
+#
+# 🔑 `unified_bindings` DOES NOT EXTEND INCREMENTALLY — it rebuilds the WHOLE equation set (every
+# existing binding re-stated as an equation, plus the new pair) and re-runs `unify` from scratch:
+#
+#     for (&var, &env) in &self.bindings { pairs.push((self.var_env(var), env)); }
+#     pairs.push((lhs, rhs));
+#     unify(&mut pairs).ok()
+#
+# That is O(|bindings|) work and one full unification PER CANDIDATE, and it is exactly why upstream
+# later replaced it with an undo trail (`cfa8abf` "Bind candidates incrementally with an undo
+# trail"). We follow THIS version first, deliberately: it is upstream's own sequence, it is simple
+# enough to validate, and the trail is a separate optimization with its own correctness argument.
+#
+# ⚠️ WE NEED NO `bound[f]` MIRROR. This older upstream keeps `bound[f]` as a byte-for-byte copy of
+# the cursor's path and `debug_assert`s they agree ("held cursor drifted from prefix+bound"). The
+# LATER design dropped it — "the zipper's own path IS the key" — and our layer 2 already follows
+# that, so the invariant is structural here rather than asserted. One less thing to drift.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"A factor's variable namespace. Upstream: `1 + f as u8` — namespace 0 is reserved for query vars."
+@inline factor_namespace(f::Int)::UInt8 = UInt8(1 + f)
+
+"The one-byte NewVar term, as upstream's `NEW_VAR_EXPR_BYTES`."
+const NEWVAR_BYTES = UInt8[0xC0]
+
+"""
+    var_env(key) -> ExprEnv
+
+An `ExprEnv` standing for the variable `key = (n, v)` — a NewVar term carrying that namespace and
+index. Used to re-state an existing binding as a unification equation.
+"""
+@inline var_env(key::Tuple{UInt8, UInt8})::ExprEnv =
+    ExprEnv(key[1], key[2], UInt32(0), MORKExpr(NEWVAR_BYTES))
+
+"The query-variable env for global variable `v` — namespace `QUERY_NS` (0)."
+@inline query_var_env(v::Int)::ExprEnv = ExprEnv(QUERY_NS, UInt8(v), UInt32(0), MORKExpr(NEWVAR_BYTES))
+
+"""
+    data_env_for(f, intro, bytes) -> ExprEnv
+
+An `ExprEnv` over a factor's STORED bytes, in that factor's namespace, offset by the NewVars already
+introduced for it. Upstream threads this through an arena; in Julia the bytes are owned by the
+`Expr`, so the arena is the GC.
+"""
+@inline data_env_for(f::Int, intro::UInt8, bytes::AbstractVector{UInt8})::ExprEnv =
+    ExprEnv(factor_namespace(f), intro, UInt32(0), MORKExpr(Vector{UInt8}(bytes)))
+
+"""
+    unified_bindings(bindings, lhs, rhs) -> Union{Bindings, Nothing}
+
+Unify `lhs` against `rhs` UNDER the existing bindings, returning the new binding set or `nothing`
+when they do not unify.
+
+⚠️ EVERY EXISTING BINDING IS RE-STATED AS AN EQUATION, not carried. That is upstream's shape and it
+is what makes the result a genuine MGU over the whole system rather than a local extension — a new
+pair can force an existing binding to refine, and an incremental `setindex!` would miss that.
+The cost is the reason the trail exists; the correctness is the reason we start here.
+"""
+function unified_bindings(bindings::Bindings, lhs::ExprEnv, rhs::ExprEnv)::Union{Bindings, Nothing}
+    pairs = Vector{Tuple{ExprEnv, ExprEnv}}()
+    sizehint!(pairs, length(bindings) + 1)
+    for (var, env) in bindings
+        push!(pairs, (var_env(var), env))
+    end
+    push!(pairs, (lhs, rhs))
+    r = expr_unify(pairs)
+    r isa UnificationFailure ? nothing : r
+end
+
+"""
+    with_bound_bytes!(c, bytes, cont)
+
+Descend the cursor past `bytes`, run `cont()`, ascend back. The held cursor's floor moves with the
+binding, so no probe below re-opens from the trie root — which upstream names as the join's dominant
+cost.
+
+⚠️ RESTORE IS UNCONDITIONAL. `cont` may throw or stop the search; the ascend must still happen or
+every enclosing column is left descended. Upstream relies on straight-line control flow; Julia has
+exceptions, so this is a `try/finally`.
+"""
+function with_bound_bytes!(c::SubtermCursor, bytes::AbstractVector{UInt8}, cont::Function)
+    cursor_descend_raw!(c, bytes)
+    try
+        cont()
+    finally
+        cursor_ascend_raw!(c, length(bytes))
+    end
+    nothing
+end
+
+"""
+    match_candidate!(c, bindings, f, pattern, bytes, cont) -> Union{Bindings, Nothing}
+
+Try one stored candidate: unify `pattern` against it under `bindings`, and if it unifies, descend
+and run `cont(newbindings)`. Returns the bindings that were in force for the continuation, or
+`nothing` when the candidate did not unify.
+
+⚠️ THE CALLER'S `bindings` ARE NOT MUTATED. Upstream saves and restores around the call
+(`let saved = self.bindings.clone(); … self.bindings = saved;`); we return the new set instead and
+leave the caller's untouched, which is the same discipline without the aliasing question.
+
+`intro_delta` is the candidate's OWN NewVar count — a stored wildcard introduces one variable, a
+ground term none — and it advances the factor's namespace so a later candidate in the same factor
+cannot collide with variables this one introduced.
+"""
+function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::UInt8,
+                          pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function)
+    data = data_env_for(f, intro, bytes)
+    nb = unified_bindings(bindings, pattern, data)
+    nb === nothing && return nothing
+    with_bound_bytes!(c, bytes, () -> cont(nb))
+    nb
+end
+
+"The NewVars a candidate introduces — upstream `expr_from_bytes(bytes).newvars()`."
+@inline candidate_intro_delta(bytes::AbstractVector{UInt8})::UInt8 =
+    UInt8(_expr_newvars(Vector{UInt8}(bytes), 1, length(bytes)))
 
 end # module Leapfrog

@@ -4798,6 +4798,7 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/leapfrog_layer3a.jl")
     include("integration/leapfrog_layer3b.jl")
     include("integration/leapfrog_layer3c.jl")
+    include("integration/leapfrog_layer3d.jl")
     include("integration/bindings_slab.jl")
 
     # JET dispatch ratchet — fails when a change ADDS runtime dispatch to the exec hot path.
