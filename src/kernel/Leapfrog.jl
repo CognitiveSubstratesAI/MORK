@@ -90,6 +90,60 @@
 #             starts from a verified floor.
 #   LAYER 4 ⏳ dispatch, gated against the existing P5 path
 #
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# THE ALGORITHM, END TO END — read 2026-08-20 from `kernel/src/leapfrog.rs` (the CURRENT version,
+# not the `zipper_join.rs` ancestor layers 3a/3d follow). This is the assembly plan.
+#
+#   recurse(i)                     = catch_up(i, 0)
+#
+#   catch_up(i, f)                 advance every factor past steps ALREADY DETERMINED
+#     f == nfactors             -> recurse_after_catch_up(i)
+#     step is Var(vp), pos >= i -> catch_up(i, f+1)      # scheduled now or later: leave it
+#     otherwise                 -> consume_step(f) then catch_up(i, f)   # same factor again
+#
+#   recurse_after_catch_up(i)
+#     i == nvars                -> every factor must sit on a stored value -> EMIT
+#     v = var_order[i]
+#     parts = factors whose CURRENT step is Var(v)       # dynamic, recomputed per level
+#     parts empty               -> recurse(i+1)
+#     v already bound           -> consume_var_parts(parts, v, i)        # seek all to it
+#     else                      -> rank_parts · partition_restrictors · consume_lead
+#
+# 🔑 WHY IT AVOIDS THE 1 182x BLOWUP `_JOIN_TRACE` MEASURED. There is no tuple set. The entire
+# state is the CURSORS' POSITIONS plus the bindings, and a candidate value for `v` is explored only
+# if EVERY participating factor offers it — so a value that would die three factors later is never
+# bound at all. Our `_connected_join_emit!` builds 2 555 436 partial tuples for 2 161 answers
+# because factors 4-6's constraints have not been consulted when factors 1-3 are combined.
+#
+# 🔴 TWO PIECES I HAD NOT UNDERSTOOD BEFORE READING IT PROPERLY, both in the level's work:
+#
+#  1. `rank_parts` — THE LEAD IS CHOSEN PER LEVEL, BY SMALLEST DOMAIN, VIA ROUND ROBIN. Every
+#     participating cursor is stepped ONE value per round; counting stops at the end of the round in
+#     which some cursor runs out, and that cursor is the EXACT argmin. Upstream says why a per-factor
+#     count-to-N cannot do this: "it scored every domain over the cap equal and left the choice to
+#     syntactic factor order, so a 100k-value factor beat a 100-value one and the join enumerated
+#     100k candidates to keep 100."
+#     ⇒ AND THE COST IS SELF-FINANCING, which is the elegant part: the scan costs
+#     `parts.len() * (min_domain + 1)` steps, while the node then enumerates `min_domain` candidates
+#     against `parts.len()-1` factors — at least `min_domain * (parts.len()-1)` steps. So ranking is
+#     never more than a constant factor of the enumeration it is choosing, and it NEVER scales with
+#     the space size: nothing reads more than the SMALLEST participating domain.
+#
+#  2. `partition_restrictors` — WHICH FACTORS MAY PRUNE. A column holding a stored wildcard matches
+#     ANYTHING and must never restrict an intersection; only equality-only columns can. That is
+#     `mask_has_wildcard`, which is our `column_matches_by_equality` (layer 3b) NEGATED — upstream
+#     flipped the name between versions, same expression. It also short-circuits: if the LEAD's
+#     column offers no symbol-headed value at all, nothing is prunable, so answer 0 off ONE mask read
+#     rather than scanning every other factor's.
+#
+# ⇒ WHAT LAYERS 1-3d ALREADY SUPPLY: the cursor (domains without materialising), `ground_probe!` +
+# `stored_wildcard_bytes` (3c), `column_matches_by_equality` (3b), `match_candidate!` +
+# `with_bound_bytes!` (3d), and the mutual seek (3a's `ground_leapfrog`).
+# ⇒ WHAT ASSEMBLY STILL NEEDS: the `Step` flattening (a variable at ANY depth becomes its own
+# schedulable position), `catch_up`, `rank_parts`, `partition_restrictors`, and the per-level
+# dispatch above.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+#
 # ⚠️ STILL NO CONSUMER, DELIBERATELY. `_space_query_multi_inner!` is untouched; the live engine takes
 # `_connected_join_emit!` exactly as before. Nothing here can affect a query result until layer 4
 # wires it, and it will be wired behind a flag so the two are A/B-comparable rather than swapped.
@@ -103,7 +157,8 @@
 module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
-              ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars
+              ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
+              item_byte, ee_args!, ee_var_opt, ExprVar
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
@@ -123,7 +178,9 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        is_wildcard_term, is_symbol_head, column_matches_by_equality,
        cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes,
        factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
-       with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS
+       with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
+       Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
+       UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog
 
 """
     PARSE_START
@@ -820,8 +877,25 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
                 end
             end
 
-            # Step the FIRST participant forward. Upstream steps `parts[0]`; any single participant
-            # works because the next round re-seeks the others to the new running maximum.
+            # Step the FIRST participant forward. `GroundJoin::leapfrog` steps `parts[0]`, and any
+            # single participant is CORRECT because the next round re-seeks the others to the new
+            # running maximum.
+            #
+            # 🔴 BUT WHICH ONE LEADS IS NOT ARBITRARY IN THE REAL JOIN, and I did not know that when
+            # I wrote this. `UnifyJoin` calls `rank_parts` FIRST, so `parts[0]` is the SMALLEST
+            # DOMAIN — and upstream reserves the name for exactly that
+            # (`zipper_join.rs:2414`): "The leapfrog principle: lead with the smallest domain so the
+            # leading factor enumerates few candidates and the rest seek. This is what makes a
+            # selective factor, say `(e a $y)` with a few edges, drive the join instead of the whole
+            # relation."
+            # `GroundJoin` is upstream's SCAFFOLDING and skips ranking; this port is faithful to it,
+            # so nothing here is wrong — but assembling the full join from THIS shape would ship a
+            # leapfrog without the principle it is named after. `rank_parts` (round-robin argmin, see
+            # the assembly plan in the header) is required, not an optimisation.
+            # ⚠️ Found only because the user asked for a deep dive of the whole algorithm. I had
+            # applied "read upstream first" PER PIECE and not to the orchestration, which is how a
+            # faithful port of the wrong layer looks correct all the way down.
+            # [[feedback_always_read_upstream_source_first]]
             cursor_next!(cursors[myparts[1]])
             if cursors[myparts[1]].at_end
                 reset_parts!(myparts)
@@ -1110,5 +1184,556 @@ end
 "The NewVars a candidate introduces — upstream `expr_from_bytes(bytes).newvars()`."
 @inline candidate_intro_delta(bytes::AbstractVector{UInt8})::UInt8 =
     UInt8(_expr_newvars(Vector{UInt8}(bytes), 1, length(bytes)))
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 4 — THE ASSEMBLY. The layer whose absence made the other three decoration.
+#
+# Ports upstream `UnifyJoin` (`kernel/src/leapfrog.rs:1411-2478`): `Step`/`push_steps`/
+# `factor_steps`, `catch_up`, `recurse_after_catch_up`, `consume_step`/`consume_col`/`consume_sym`/
+# `consume_compound`, `match_expr_at_current`/`match_compound_at_current`/`match_compound_children`,
+# and `consume_var_parts`.
+#
+# 🔴 WHY THIS EXISTS AND WHY IT IS LATE. Layers 3b/3c/3d were written, tested (77 assertions, all
+# green) and then CALLED BY NOTHING for as long as they existed — they appeared in `export` lines
+# and their own definitions and nowhere else. The only end-to-end path was `ground_leapfrog`, and a
+# twelve-line probe against the live engine showed what that meant:
+#
+#     space:  (edge $a b) | (edge a b) | (edge b c)
+#     ours: 2 answers        engine: 5 answers
+#
+# Component tests cannot report that. `test/integration/leapfrog_end_to_end.jl` pins it as
+# `@test_broken`; THIS FILE is what turns that green. The lesson is in the ordering, not the code:
+# the end-to-end oracle comparison was available from the first commit and should have been the
+# FIRST test written, not the one that arrived after three unreachable layers.
+# [[feedback_parses_is_not_fires]] · [[feedback_green_suite_hides_unwired_correct_code]]
+#
+# ─── WHAT MAKES THIS A UNIFICATION JOIN AND NOT `ground_leapfrog` WITH EXTRA STEPS ───────────────
+#
+# `ground_leapfrog` requires every participating factor's column to EQUAL the running maximum. That
+# is correct when data is ground, and WRONG the moment a fact contains a variable: `(edge $w b)`
+# unifies with `(edge a b)` without equalling it, so an equality intersection drops it. Every
+# structure below exists to let a position match in more ways than one:
+#
+#   · a stored WILDCARD at a position matches whatever the query has there (`consume_sym`,
+#     `consume_compound`, `match_*_at_current` all branch on the column's wildcard bytes)
+#   · a query COMPOUND may be matched by a stored wildcard capturing the WHOLE subterm, so its
+#     structure must NOT be absorbed into a seek prefix — the trap upstream names explicitly
+#   · matching is `expr_unify`, not `==`, so accepting a candidate can refine EARLIER bindings
+#
+# ─── STEPS: WHY THE COLUMN LIST IS FLATTENED ─────────────────────────────────────────────────────
+#
+# A factor is not a list of variables; it is a term, and a join variable can sit at any depth.
+# `factor_steps` flattens each column into a PRE-ORDER step list so that every position — a
+# variable, a ground symbol, a compound node — is a schedulable slot with an index. Upstream's note
+# on why this replaced a top-level-columns-only design is the warning worth keeping:
+#
+#     "Before flattening this asked only about top-level argument columns, so under a namespace
+#      wrapper no factor ever qualified, the multiway intersection never engaged, and the structural
+#      descent degenerated into the ProductZipper's nested loop with the join's machinery on top."
+#
+# A join that silently stops being a join is exactly the failure this port keeps re-learning.
+#
+# ─── WHAT IS DELIBERATELY NOT HERE YET, AND WHY THAT IS NOT A SILENT GAP ─────────────────────────
+#
+# Upstream splits the level into a BOUND path (`consume_var_parts`) and a FREE path
+# (`rank_parts` → `partition_restrictors` → `consume_lead` → `fill_lead_candidates`). We run
+# `consume_var_parts` for BOTH, which is correctness-complete — the first participating factor
+# enumerates its column and binds the variable, and every later one then sees it bound and seeks —
+# but it is NOT yet worst-case-optimal:
+#
+#   · `rank_parts` (round-robin argmin) picks the SMALLEST domain to lead. Without it, syntactic
+#     factor order decides, and a 100k-value factor can lead over a 100-value one.
+#   · `fill_lead_candidates` is the true multiway intersection: it leaps the lead to a restrictor's
+#     larger value instead of walking the values in between.
+#
+# ⚠️ THOSE ARE PERFORMANCE, NOT ANSWERS — the answer set is identical either way, and the
+# differential test asserts exactly that. They are the next commit, not a hidden shortcut. The
+# soundness constraint they must respect is already built and tested one layer down: pruning is
+# legal ONLY in the symbol-headed suffix (`is_symbol_head` + `column_matches_by_equality`), because
+# everywhere else a stored value can MATCH a candidate without EQUALLING it.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+const STEP_VAR      = 0x00
+const STEP_SYM      = 0x01
+const STEP_COMPOUND = 0x02
+
+"""
+    Step
+
+One position in a factor's flattened term: a schedulable join variable, a ground symbol leaf, or a
+compound node whose children are the following steps.
+
+⚠️ ONE CONCRETE STRUCT WITH A TAG, not a `Union` of three types and not an abstract field. `steps`
+is walked in the join's innermost loop; a `Vector{Step}` of a concrete isbits-adjacent struct stays
+a dense buffer, where a union-typed vector would box every element and put a dynamic dispatch in
+the hot path. [[feedback_no_any_typed_containers]]
+"""
+struct Step
+    kind::UInt8
+    v::Int          # STEP_VAR: the query variable this position IS (0-based, upstream's numbering)
+    env::ExprEnv    # STEP_SYM / STEP_COMPOUND: where the position sits in the query term
+    stop::Int       # STEP_COMPOUND: the step index just past this subtree — where a wildcard leaps to
+end
+
+"The env slot for a `STEP_VAR`, which carries no position. Built once; never read."
+const STEP_NO_ENV = ExprEnv(QUERY_NS, UInt8(0), UInt32(0), MORKExpr(NEWVAR_BYTES))
+
+"""
+    push_steps!(base, offset, intro, out) -> (offset, intro)
+
+Flatten the encoded subterm at `base[offset+1…]` into `out` in pre-order, returning the offset and
+introduced-variable count just past it.
+
+`offset` is 0-BASED, mirroring upstream's pointer arithmetic; every read adds 1 for Julia. Keeping
+upstream's numbering here rather than translating it makes the correspondence checkable line by
+line, and the `+ 1` appears exactly at the buffer reads. [[feedback_verify_the_correspondence_not_just_the_code]]
+"""
+function push_steps!(base::MORKExpr, offset::Int, intro::UInt8, out::Vector{Step})
+    b = base.buf[offset + 1]
+    env = ExprEnv(QUERY_NS, intro, UInt32(offset), base)
+    t = byte_item(b)
+    if t isa ExprNewVar
+        # A fresh variable: its index IS the count introduced so far, and the count advances.
+        push!(out, Step(STEP_VAR, Int(intro), STEP_NO_ENV, 0))
+        return (offset + 1, intro + 0x01)
+    elseif t isa ExprVarRef
+        push!(out, Step(STEP_VAR, Int(t.idx), STEP_NO_ENV, 0))
+        return (offset + 1, intro)
+    elseif t isa ExprSymbol
+        push!(out, Step(STEP_SYM, 0, env, 0))
+        return (offset + 1 + Int(t.size), intro)
+    else
+        arity = Int((t::ExprArity).arity)
+        at = length(out) + 1
+        push!(out, Step(STEP_COMPOUND, 0, env, 0))     # `stop` patched once the children are known
+        off = offset + 1
+        for _ in 1:arity
+            (off, intro) = push_steps!(base, off, intro, out)
+        end
+        # 🔴 1-BASED `stop`. Upstream stores `end = out.len()`, an EXCLUSIVE 0-based index; the same
+        # position in a 1-based vector is `length(out) + 1`. Off by one here and a wildcard that
+        # captures a whole subterm resumes INSIDE it — re-consuming the last child against data that
+        # has already moved past it. [[reference_mork_port_state_and_rule64]]
+        out[at] = Step(STEP_COMPOUND, 0, env, length(out) + 1)
+        return (off, intro)
+    end
+end
+
+"""
+    UnifyColumn
+
+One column of a unify-join factor: either a plain query variable, or a term (which may nest, and
+whose ground structure must stay a column so it can unify with a stored variable at its position).
+"""
+struct UnifyColumn
+    is_var::Bool
+    v::Int
+    term::MORKExpr
+    intro::UInt8
+end
+
+"A column that is exactly query variable `v`."
+unify_var_col(v::Int) = UnifyColumn(true, v, MORKExpr(UInt8[]), 0x00)
+
+"A column holding a term, with the count of variables introduced before it."
+unify_term_col(t::MORKExpr, intro::Integer = 0) = UnifyColumn(false, 0, t, UInt8(intro))
+
+"""
+    UnifyFactor
+
+One relation in a unify join: the trie prefix its facts live under, and its columns in syntactic
+order.
+
+⚠️ `prefix` IS TRIE-PATH BYTES, NOT AN EXPRESSION — upstream keeps it a slice for exactly that
+reason. Baking a ground relation head into the prefix is legal but costs the ability to match a
+stored WILDCARD head, so the body parser emits the arity byte alone and leaves the head as column 0.
+"""
+struct UnifyFactor
+    prefix::Vector{UInt8}
+    cols::Vector{UnifyColumn}
+end
+
+"The factor's columns flattened into one ordered step list."
+function factor_steps(f::UnifyFactor)::Vector{Step}
+    out = Step[]
+    sizehint!(out, length(f.cols))
+    for col in f.cols
+        if col.is_var
+            push!(out, Step(STEP_VAR, col.v, STEP_NO_ENV, 0))
+        else
+            push_steps!(col.term, 0, col.intro, out)
+        end
+    end
+    out
+end
+
+"""
+    UnifyJoinState
+
+The join's live state. `bindings` are NOT here: they are threaded through the recursion as values,
+because [`unified_bindings`] rebuilds the whole set per candidate anyway.
+
+⚠️ That threading is a DEVIATION FROM UPSTREAM'S SHAPE and it is deliberate. Upstream mutates one
+map and unwinds by trail, with `debug_assert`s that the unwind restored it. Rebuilding is O(|b|)
+per candidate — measurably worse, and the reason upstream replaced it — but it makes save/restore
+UNREPRESENTABLE rather than merely asserted. The trail is a later commit with its own correctness
+argument; adopting it and the assembly at once would leave a failure ambiguous between them.
+"""
+mutable struct UnifyJoinState{V, A, F}
+    cursors::Vector{SubtermCursor{V, A}}
+    steps::Vector{Vector{Step}}
+    next_step::Vector{Int}        # 1-based index into steps[f]
+    data_intro::Vector{UInt8}     # variables factor f's data has introduced so far
+    var_order::Vector{Int}        # level -> query variable (0-based ids)
+    var_pos::Vector{Int}          # query variable -> level
+    nvars::Int
+    nf::Int
+    emit::F
+    stopped::Bool
+    emitted::Int
+end
+
+"Query variable ids are 0-BASED (upstream's numbering); array slots are 1-based. One helper, so the
+conversion cannot drift — the `BoundsError at index [0]` in `TrieJoin` came from having it inline."
+@inline _vslot(v::Int) = v + 1
+
+"NewVars a one-byte stored wildcard introduces: a `NewVar` brings one, a `VarRef` reuses an old one."
+@inline uj_wildcard_newvars(w::UInt8)::UInt8 = byte_item(w) isa ExprNewVar ? 0x01 : 0x00
+
+"""
+    uj_deref(bindings, env) -> ExprEnv
+
+Follow variable bindings to the term they resolve to, or to the free variable at the end.
+
+The loop is BOUNDED by the number of bindings: each hop consumes a distinct bound variable, so a
+chain cannot be longer. Upstream's is unbounded and relies on `unify`'s occurs check; the bound
+costs nothing and turns a corrupted map into a wrong answer rather than a hang.
+"""
+function uj_deref(bindings::Bindings, env::ExprEnv)::ExprEnv
+    cur = env
+    for _ in 0:length(bindings)
+        var = ee_var_opt(cur)
+        var === nothing && return cur
+        nxt = get(bindings, var, nothing)
+        nxt === nothing && return cur
+        cur = nxt
+    end
+    cur
+end
+
+"Run `cont` with factor `f`'s data namespace advanced by a candidate's own NewVars, then restore.
+Without the advance, two candidates in one factor introduce COLLIDING variable ids."
+function uj_match_candidate(st::UnifyJoinState, bindings::Bindings, f::Int, pattern::ExprEnv,
+                            bytes::AbstractVector{UInt8}, newvars::UInt8, cont)
+    st.stopped && return
+    intro = st.data_intro[f]
+    st.data_intro[f] = intro + newvars
+    try
+        match_candidate!(st.cursors[f], bindings, f, intro, pattern, bytes, cont)
+    finally
+        st.data_intro[f] = intro
+    end
+    nothing
+end
+
+"Run `cont` with `next_step[f]` set to `to`, then restore it. Every step consumer needs this and
+each one that open-coded it was a place the index could be left advanced on an exception."
+@inline function uj_at_step(st::UnifyJoinState, f::Int, to::Int, cont)
+    s = st.next_step[f]
+    st.next_step[f] = to
+    try
+        cont()
+    finally
+        st.next_step[f] = s
+    end
+    nothing
+end
+
+"""
+    uj_match_expr_at_current(st, bindings, f, pattern, cont)
+
+Match `pattern` against factor `f`'s current cursor position, calling `cont(newbindings)` once per
+way the stored data can match — WITHOUT advancing `next_step`, which is the caller's business.
+"""
+function uj_match_expr_at_current(st::UnifyJoinState, bindings::Bindings, f::Int,
+                                  pattern::ExprEnv, cont)
+    st.stopped && return
+    c = st.cursors[f]
+    resolved = uj_deref(bindings, pattern)
+
+    if ee_var_opt(resolved) !== nothing
+        # A STILL-FREE variable: every stored value at this column is a candidate. Materialised
+        # before the loop because `match_candidate!` descends the very cursor being enumerated —
+        # iterating and mutating at once is how the cursor desyncs from its parse stack.
+        cands = Vector{Tuple{Vector{UInt8}, UInt8}}()
+        cursor_first!(c)
+        while !c.at_end
+            k = cursor_key(c)
+            k === nothing && break
+            (nv, _) = cursor_var_counts(c)          # EXACT counts off the parse — never a rescan
+            push!(cands, (Vector{UInt8}(k), nv))
+            cursor_next!(c)
+        end
+        cursor_reset_to_floor!(c)
+        for (bytes, nv) in cands
+            st.stopped && break
+            # ⚠️ Upstream has a GROUND FAST BIND here (a free variable against a ground candidate
+            # is one insert, no re-unify). We run the general path for both: same answers, and one
+            # path to be wrong in. It is a named optimisation to add against this test, not a
+            # behaviour we are missing.
+            uj_match_candidate(st, bindings, f, pattern, bytes, nv, cont)
+        end
+        return
+    end
+
+    t = byte_item(resolved.base.buf[Int(resolved.offset) + 1])
+    if t isa ExprArity
+        uj_match_compound_at_current(st, bindings, f, pattern, resolved, cont)
+    else
+        # A SYMBOL. Byte equality is unifiability on ground terms, so an exact probe hit binds
+        # directly; and a stored wildcard here unifies with the symbol too.
+        off = Int(resolved.offset)
+        bytes = view(resolved.base.buf, (off + 1):(off + 1 + Int((t::ExprSymbol).size)))
+        (exact, mask) = ground_probe!(c, bytes)
+        exact && with_bound_bytes!(c, bytes, () -> cont(bindings))
+        for w in stored_wildcard_bytes(mask)
+            st.stopped && break
+            uj_match_candidate(st, bindings, f, pattern, UInt8[w], uj_wildcard_newvars(w), cont)
+        end
+    end
+    nothing
+end
+
+"""
+    uj_match_compound_at_current(st, bindings, f, pattern, resolved, cont)
+
+🔴 THE TRAP UPSTREAM SAYS THIS MODULE KEEPS RE-LEARNING: the query's ground structure must NOT be
+absorbed into a seek prefix. A stored variable at this very position is a wildcard capturing the
+WHOLE subterm — `(data \$w)` must match a query `(data (e a b))` — so the child mask is read HERE and
+every wildcard byte becomes its own branch. Only then is the arity byte descended, leaving the
+children to their own steps so a variable inside them stays schedulable.
+"""
+function uj_match_compound_at_current(st::UnifyJoinState, bindings::Bindings, f::Int,
+                                      pattern::ExprEnv, resolved::ExprEnv, cont)
+    c = st.cursors[f]
+    # ONE mask read serves both branches: each `match_candidate!` restores the cursor, so the
+    # position — and therefore the mask — is the same before and after the wildcard loop.
+    mask = cursor_floor_child_mask(c)
+    for w in stored_wildcard_bytes(mask)
+        st.stopped && break
+        uj_match_candidate(st, bindings, f, pattern, UInt8[w], uj_wildcard_newvars(w), cont)
+    end
+    t = byte_item(resolved.base.buf[Int(resolved.offset) + 1])
+    t isa ExprArity || return
+    ab = item_byte(ExprArity((t::ExprArity).arity))
+    if test_bit(mask, ab)
+        children = ExprEnv[]
+        ee_args!(resolved, children)
+        with_bound_bytes!(c, UInt8[ab],
+                          () -> uj_match_compound_children(st, bindings, f, children, 1, cont))
+    end
+    nothing
+end
+
+"Match each child of a compound in turn against successive cursor positions."
+function uj_match_compound_children(st::UnifyJoinState, bindings::Bindings, f::Int,
+                                    children::Vector{ExprEnv}, idx::Int, cont)
+    if idx > length(children)
+        cont(bindings)
+        return
+    end
+    uj_match_expr_at_current(st, bindings, f, children[idx],
+        nb -> uj_match_compound_children(st, nb, f, children, idx + 1, cont))
+    nothing
+end
+
+"Consume factor `f`'s current position against `env`, advancing `next_step[f]` past exactly it."
+function uj_consume_env(st::UnifyJoinState, bindings::Bindings, f::Int, env::ExprEnv, cont)
+    s = st.next_step[f]
+    uj_match_expr_at_current(st, bindings, f, env, nb -> uj_at_step(st, f, s + 1, () -> cont(nb)))
+end
+
+"Consume factor `f`'s current position as query variable `v`."
+uj_consume_col(st::UnifyJoinState, bindings::Bindings, f::Int, v::Int, cont) =
+    uj_consume_env(st, bindings, f, query_var_env(v), cont)
+
+"""
+    uj_consume_sym(st, bindings, f, s, env, cont)
+
+A ground symbol position: the exact stored bytes match, and so does any stored wildcard at the
+column. Both are branches, not alternatives — a space can hold both `(rel a)` and `(rel \$w)`.
+"""
+function uj_consume_sym(st::UnifyJoinState, bindings::Bindings, f::Int, s::Int,
+                        env::ExprEnv, cont)
+    c = st.cursors[f]
+    buf = env.base.buf
+    off = Int(env.offset)
+    t = byte_item(buf[off + 1])
+    bytes = view(buf, (off + 1):(off + 1 + Int((t::ExprSymbol).size)))
+    (exact, mask) = ground_probe!(c, bytes)
+    if exact
+        with_bound_bytes!(c, bytes, () -> uj_at_step(st, f, s + 1, () -> cont(bindings)))
+    end
+    for w in stored_wildcard_bytes(mask)
+        st.stopped && break
+        uj_match_candidate(st, bindings, f, env, UInt8[w], uj_wildcard_newvars(w),
+                           nb -> uj_at_step(st, f, s + 1, () -> cont(nb)))
+    end
+    nothing
+end
+
+"""
+    uj_consume_compound(st, bindings, f, s, env, stop, cont)
+
+A compound position. A stored wildcard captures the WHOLE subterm and therefore leaps `next_step`
+to `stop`; the arity byte descends one level and leaves the children to the following steps.
+"""
+function uj_consume_compound(st::UnifyJoinState, bindings::Bindings, f::Int, s::Int,
+                             env::ExprEnv, stop::Int, cont)
+    c = st.cursors[f]
+    t = byte_item(env.base.buf[Int(env.offset) + 1])
+    mask = cursor_floor_child_mask(c)
+    for w in stored_wildcard_bytes(mask)
+        st.stopped && break
+        uj_match_candidate(st, bindings, f, env, UInt8[w], uj_wildcard_newvars(w),
+                           nb -> uj_at_step(st, f, stop, () -> cont(nb)))
+    end
+    ab = item_byte(ExprArity((t::ExprArity).arity))
+    if test_bit(mask, ab)
+        with_bound_bytes!(c, UInt8[ab], () -> uj_at_step(st, f, s + 1, () -> cont(bindings)))
+    end
+    nothing
+end
+
+"Consume whatever kind of position factor `f` currently sits on."
+function uj_consume_step(st::UnifyJoinState, bindings::Bindings, f::Int, cont)
+    s = st.next_step[f]
+    step = st.steps[f][s]
+    if step.kind == STEP_VAR
+        uj_consume_col(st, bindings, f, step.v, cont)
+    elseif step.kind == STEP_SYM
+        uj_consume_sym(st, bindings, f, s, step.env, cont)
+    else
+        uj_consume_compound(st, bindings, f, s, step.env, step.stop, cont)
+    end
+end
+
+"""
+    uj_catch_up(st, bindings, i, f)
+
+Before each scheduled variable, walk every factor forward over the positions whose value is already
+determined — the query's own ground structure at any depth, and variables an earlier level bound.
+A factor stops at the first position holding a variable this level has not reached, which is what
+leaves that variable available to the intersection.
+
+🔴 WITHOUT THIS A REPEATED VARIABLE SILENTLY RETURNS NOTHING — the same defect `ground_leapfrog`'s
+inline catch-up exists for, where `(edge \$x \$x)` returned 0 on a diagonal of 2.
+
+⚠️ AND EVERY DETERMINED POSITION CAN STILL BRANCH, which is the part an equality-based catch-up gets
+wrong: a stored variable there is a wildcard capturing whatever the query has, so the step consumers
+take those branches rather than seeking to one value.
+"""
+function uj_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int, f::Int)
+    st.stopped && return
+    if f > st.nf
+        uj_recurse_after_catch_up(st, bindings, i)
+        return
+    end
+    s = st.next_step[f]
+    if s > length(st.steps[f])
+        uj_catch_up(st, bindings, i, f + 1)
+        return
+    end
+    step = st.steps[f][s]
+    if step.kind == STEP_VAR && st.var_pos[_vslot(step.v)] >= i
+        uj_catch_up(st, bindings, i, f + 1)      # scheduled here or later: leave it to the intersection
+        return
+    end
+    uj_consume_step(st, bindings, f, nb -> uj_catch_up(st, nb, i, f))
+end
+
+"""
+    uj_consume_var_parts(st, bindings, parts, pi, v, i)
+
+Consume variable `v`'s column in each participating factor in turn.
+
+🔑 THIS IS THE LEAPFROG, in its correctness-complete form: `parts[1]` enumerates its column and
+binds `v`, and every later participant then sees `v` BOUND — `uj_match_expr_at_current` derefs it
+and seeks rather than enumerating. What is missing is only WHICH factor leads (`rank_parts`) and the
+mutual-seek leap (`fill_lead_candidates`); see this section's header. The answers are the same.
+"""
+function uj_consume_var_parts(st::UnifyJoinState, bindings::Bindings, parts::Vector{Int},
+                              pi::Int, v::Int, i::Int)
+    st.stopped && return
+    if pi > length(parts)
+        uj_catch_up(st, bindings, i + 1, 1)
+        return
+    end
+    f = parts[pi]
+    uj_consume_col(st, bindings, f, v, nb -> uj_consume_var_parts(st, nb, parts, pi + 1, v, i))
+end
+
+"Schedule the next variable: intersect the factors sitting on it, or emit if none are left."
+function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int)
+    st.stopped && return
+    if i > st.nvars
+        # Every position consumed. A factor not sitting on a stored value means this assignment
+        # spells a fact the space does not hold.
+        for f in 1:st.nf
+            cursor_has_value(st.cursors[f]) || return
+        end
+        st.emitted += 1
+        st.emit(bindings) === false && (st.stopped = true)
+        return
+    end
+    v = st.var_order[i]
+    parts = Int[]
+    for f in 1:st.nf
+        s = st.next_step[f]
+        s <= length(st.steps[f]) || continue
+        step = st.steps[f][s]
+        step.kind == STEP_VAR && step.v == v && push!(parts, f)
+    end
+    if isempty(parts)
+        uj_catch_up(st, bindings, i + 1, 1)      # nothing mentions it at this level
+        return
+    end
+    uj_consume_var_parts(st, bindings, parts, 1, v, i)
+end
+
+"""
+    unify_leapfrog(btm, factors, nvars, emit) -> Int
+
+Worst-case-optimal-shaped UNIFICATION conjunctive join. Calls `emit(bindings)` once per satisfying
+assignment and returns the number emitted; `emit` may return `false` to stop the search.
+
+Unlike [`ground_leapfrog`], a stored variable in a fact acts as a wildcard, so this agrees with the
+engine's full unification (`space_query_multi`) on schematic data — which is the property
+`test/integration/leapfrog_end_to_end.jl` asserts against the engine as oracle rather than against
+hand-computed counts.
+
+⚠️ `bindings` IS LIVE SCRATCH ONLY IN THE SENSE THAT THE CURSORS BENEATH IT MOVE. The map itself is
+a fresh value per candidate (see [`UnifyJoinState`]), but the `ExprEnv`s inside it VIEW candidate
+byte buffers owned by the enumerating frame — read what you need before returning.
+"""
+function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
+                        nvars::Int, emit::Function)::Int
+    nf = length(factors)
+    nf == 0 && return 0
+    cursors = SubtermCursor{UnitVal, GlobalAlloc}[]
+    for f in factors
+        push!(cursors, SubtermCursor(read_zipper_at_path(btm, f.prefix)))
+    end
+    steps = Vector{Step}[factor_steps(f) for f in factors]
+    var_order = collect(0:(nvars - 1))
+    var_pos = zeros(Int, max(nvars, 1))
+    for (lvl, v) in enumerate(var_order)
+        var_pos[_vslot(v)] = lvl
+    end
+    st = UnifyJoinState(cursors, steps, ones(Int, nf), zeros(UInt8, nf),
+                        var_order, var_pos, nvars, nf, emit, false, 0)
+    uj_catch_up(st, Bindings(), 1, 1)
+    st.emitted
+end
 
 end # module Leapfrog

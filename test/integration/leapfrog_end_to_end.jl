@@ -1,0 +1,195 @@
+# Leapfrog END-TO-END — does the join we ACTUALLY HAVE give the right answers?
+#
+# 🔴 WHY THIS FILE EXISTS, AND WHY IT SHOULD HAVE BEEN THE FIRST ONE WRITTEN.
+# The port reached 259 assertions across six layers before this file existed. Every layer passed.
+# Exactly ONE of them (`ground_leapfrog`) ran end to end; layers 3b/3c/3d — 77 assertions — appeared
+# only in `export` lines and their own definitions. NOTHING CALLED THEM. Tested in isolation,
+# correct in isolation, unreachable. Then a twelve-line probe against the live engine asked the only
+# question that matters, and `ground_leapfrog` answered 2 where the engine answered 5.
+#
+# The assembly (`unify_leapfrog`, layer 4) is what closed it. This file is its acceptance criterion,
+# and the ordering is the lesson: the oracle was available from the first commit.
+# [[feedback_parses_is_not_fires]] · [[feedback_green_suite_hides_unwired_correct_code]]
+#
+# ⚠️ AND THE ORACLE ITSELF NEEDED VERIFYING FIRST. The randomized differential's first run reported
+# 64 divergences — every one of them this harness passing a BARE conjunct where the engine expects a
+# `(, …)` conjunction, so `(link $a $b)` was read as a conjunction over `$a` and `$b` and a 4-atom
+# space answered 16. The join was right and the oracle was wrong.
+# [[feedback_verify_the_oracle_runs]] · [[feedback_verify_oracle_against_upstream_not_assume_canonical]]
+
+using MORK, Test
+const _E2E = MORK.Leapfrog
+const _E2E_ARITY3 = MORK.item_byte(MORK.ExprArity(0x03))
+
+"The head prefix of a binary relation — the common prefix of two atoms whose args differ in length."
+function _e2e_prefix(h::AbstractString)
+    a = MORK.sexpr_to_expr("($h a a)").buf
+    b = MORK.sexpr_to_expr("($h bb bb)").buf
+    k = 0; n = min(length(a), length(b))
+    while k < n && a[k + 1] == b[k + 1]; k += 1; end
+    a[1:k]
+end
+
+"Answers from the LIVE ENGINE — full unification, the oracle. The body MUST be a `(, …)` conjunction."
+function _e2e_engine(s, body::AbstractString)
+    n = Ref(0)
+    MORK.space_query_multi(s.btm, MORK.sexpr_to_expr(body), (_b, _l) -> (n[] += 1; true))
+    n[]
+end
+
+"Answers from the GROUND join — equality-only, by contract."
+function _e2e_ground(s, factors, nvars)
+    out = Set{Vector{Vector{UInt8}}}()
+    _E2E.ground_leapfrog(s.btm, factors, nvars, b -> push!(out, [copy(x) for x in b]))
+    length(out)
+end
+
+"Answers from the ASSEMBLED UNIFY join — layer 4."
+function _e2e_unify(s, factors, nvars)
+    n = Ref(0)
+    _E2E.unify_leapfrog(s.btm, factors, nvars, _b -> (n[] += 1; true))
+    n[]
+end
+
+"The two-hop chain `(, (edge \$x \$y) (edge \$y \$z))` as unify-join factors."
+function _e2e_chain()
+    head = _E2E.unify_term_col(MORK.sexpr_to_expr("edge"))
+    [ _E2E.UnifyFactor(UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(0), _E2E.unify_var_col(1)]),
+      _E2E.UnifyFactor(UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(1), _E2E.unify_var_col(2)]) ]
+end
+
+_e2e_space(src) = (s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
+const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
+
+@testset "leapfrog end-to-end vs the live engine" begin
+
+    @testset "GROUND data — both joins agree with the engine" begin
+        s = _e2e_space("(edge a b)\n(edge b c)\n(edge b d)\n(edge c e)\n(edge d e)\n")
+        p = _e2e_prefix("edge")
+        gf = [_E2E.GroundFactor(p, [1, 2]), _E2E.GroundFactor(p, [2, 3])]
+        eng = _e2e_engine(s, _E2E_CHAIN_BODY)
+        @test eng > 0                                    # anti-vacuity
+        @test _e2e_ground(s, gf, 3) == eng
+        @test _e2e_unify(s, _e2e_chain(), 3) == eng
+    end
+
+    @testset "🔑 STORED WILDCARD — the case that separates the two joins" begin
+        # `(edge $a b)` unifies with `(edge ANYTHING b)`, so equality-only matching drops answers.
+        s = _e2e_space("(edge a b)\n(edge \$w b)\n(edge b c)\n")
+        @test occursin("\$", MORK.space_dump_all_sexpr(s))     # the wildcard really is stored
+
+        p = _e2e_prefix("edge")
+        gf = [_E2E.GroundFactor(p, [1, 2]), _E2E.GroundFactor(p, [2, 3])]
+        eng = _e2e_engine(s, _E2E_CHAIN_BODY)
+
+        @test eng == 5                                   # pin the oracle, not just the agreement
+        @test _e2e_unify(s, _e2e_chain(), 3) == eng      # ⇐ THE ASSERTION THIS FILE EXISTS FOR
+        # The ground join is NOT broken here — it is ground-only BY CONTRACT, and this pins the
+        # difference so nobody later "fixes" it into a slower unify join.
+        @test _e2e_ground(s, gf, 3) == 2
+        @test _e2e_ground(s, gf, 3) < eng
+    end
+
+    @testset "wildcards in BOTH columns, and the degenerate spaces" begin
+        for (src, nv) in [("(edge a b)\n(edge \$u \$v)\n(edge b c)\n", 3),
+                          ("(edge a b)\n", 3),
+                          ("(zzz q)\n", 3)]
+            s = _e2e_space(src)
+            @test _e2e_unify(s, _e2e_chain(), nv) == _e2e_engine(s, _E2E_CHAIN_BODY)
+        end
+    end
+
+    @testset "🔑 CYCLIC CAPTURE yields no answer — and why that is free TODAY but not tomorrow" begin
+        # A stored wildcard can be captured by two columns at once, forcing  $x = (f $x)  — an
+        # occurs violation that arrives through a CHAIN of columns, not through any single equation.
+        # Upstream names this exactly ("the join-propagated capture builds x0 = (k (k x0))") and
+        # drops such a row at emit with an explicit `cycled` check.
+        #
+        # 🔴 WE HAVE NO SUCH CHECK AND STILL AGREE — because `unified_bindings` re-states EVERY
+        # existing binding as an equation and re-solves from scratch per candidate, so the occurs
+        # check sees the whole chain. That is a property of the SLOW path we deliberately ported.
+        # ⇒ WHEN THE INCREMENTAL UNDO TRAIL IS ADOPTED (upstream `cfa8abf`), THAT PROPERTY IS LOST
+        # AND THE `cycled` CHECK BECOMES MANDATORY. These cases are what will catch it: they pass
+        # now, and they are the reason the trail is not a drop-in swap.
+        mk(rel, c1, c2) = _E2E.UnifyFactor(UInt8[_E2E_ARITY3],
+            [_E2E.unify_term_col(MORK.sexpr_to_expr(rel)),
+             c1 isa Int ? _E2E.unify_var_col(c1) : _E2E.unify_term_col(MORK.sexpr_to_expr(c1[1]), c1[2]),
+             c2 isa Int ? _E2E.unify_var_col(c2) : _E2E.unify_term_col(MORK.sexpr_to_expr(c2[1]), c2[2])])
+
+        cyc = [mk("edge", 0, ("(f \$x)", 0))]
+        s1 = _e2e_space("(edge \$w \$w)\n")
+        @test _e2e_engine(s1, "(, (edge \$x (f \$x)))") == 0        # the oracle rejects it
+        @test _e2e_unify(s1, cyc, 1) == 0                          # …and so must we
+
+        # ⚠️ ANTI-VACUITY: the same query on a space that DOES satisfy it must still answer, or the
+        # assertion above would be satisfied by a join that simply never emits.
+        s2 = _e2e_space("(edge \$w \$w)\n(edge (f a) (f (f a)))\n")
+        @test _e2e_engine(s2, "(, (edge \$x (f \$x)))") == 1
+        @test _e2e_unify(s2, cyc, 1) == 1
+
+        # …and across TWO factors, where the cycle closes only when both are combined.
+        two = [mk("edge", 0, 1), mk("link", 1, ("(f \$x)", 0))]
+        s3 = _e2e_space("(edge \$w \$w)\n(link \$u \$u)\n")
+        @test _e2e_engine(s3, "(, (edge \$x \$y) (link \$y (f \$x)))") == 0
+        @test _e2e_unify(s3, two, 2) == 0
+    end
+
+    @testset "the layers the assembly made reachable are now CALLED" begin
+        # This replaces a testset that asserted the OPPOSITE — that nothing called them. Keeping it
+        # as a test rather than a comment is what made the change visible.
+        #
+        # ⚠️ COMMENT LINES ARE STRIPPED FIRST. The version before this one matched raw file text and
+        # so counted a name MENTIONED IN THE HEADER PROSE as a call — it reported
+        # `column_matches_by_equality` reachable when layer 4 never calls it. A test that a comment
+        # can satisfy is not a test. [[feedback_verify_code_body_not_comments]]
+        src = read(joinpath(@__DIR__, "..", "..", "src", "kernel", "Leapfrog.jl"), String)
+        layer4 = src[findfirst("LAYER 4 — THE ASSEMBLY", src).start:end]
+        code = join([l for l in split(layer4, '\n') if !startswith(strip(l), "#")], '\n')
+
+        for f in ("ground_probe!", "stored_wildcard_bytes", "match_candidate!",
+                  "with_bound_bytes!", "cursor_var_counts", "cursor_floor_child_mask")
+            @test occursin(f * "(", code)          # genuinely called from layer 4's body
+        end
+
+        # 🔴 AND THE HONEST OTHER HALF: these two are built, tested, and STILL NOT CALLED. They are
+        # the soundness guard for the leapfrog's pruning (`fill_lead_candidates` / `rank_parts`),
+        # which layer 4 deliberately does not yet do — see the section header. When that lands these
+        # lines fail and must flip, exactly as the previous version of this testset did.
+        for f in ("column_matches_by_equality", "is_symbol_head")
+            @test !occursin(f * "(", code)
+        end
+    end
+
+    @testset "🔴 the join is CORRECT and NOT YET THE PRODUCTION PATH" begin
+        # Stated as a failing-when-fixed assertion for the same reason as the layers above: this is
+        # STRUCTURALLY the situation that produced 77 assertions over unreachable code. The
+        # difference is that this time it is verified end to end against the oracle, and this test
+        # is here so "603/603 green" cannot be read as "the engine uses it".
+        #
+        # A MeTTa query is still answered by `space_query_multi`. Upstream reaches the join through
+        # two pieces not ported yet:
+        #   · `parse_body_factors`   (leapfrog.rs:1183) — query body -> Factors + var count, which
+        #                            these tests hand-build instead
+        #   · `query_multi_leapfrog` (leapfrog.rs:1319) — the entry point, plus the dispatch that
+        #                            decides when the join beats the ProductZipper
+        #
+        # ⚠️ THE DISPATCH IS NOT A DETAIL. Upstream gates it, and our own P5 measurement says a
+        # wrong gate makes things SLOWER, not merely different — so wiring this is an A/B against
+        # the existing path, not a swap. [[feedback_parity_vs_opt_in]]
+        srcdir = joinpath(@__DIR__, "..", "..", "src")
+        callers = String[]
+        for (root, _, files) in walkdir(srcdir), fn in files
+            endswith(fn, ".jl") || continue
+            fn == "Leapfrog.jl" && continue
+            txt = read(joinpath(root, fn), String)
+            occursin("unify_leapfrog(", txt) && push!(callers, fn)
+        end
+        # When the wiring lands this line FAILS and must be rewritten — that is the entire point.
+        @test isempty(callers)
+        # …and the pieces that would do it are genuinely absent, not merely unwired.
+        lf = read(joinpath(srcdir, "kernel", "Leapfrog.jl"), String)
+        code2 = join([l for l in split(lf, '\n') if !startswith(strip(l), "#")], '\n')
+        @test !occursin("parse_body_factors", code2)
+        @test !occursin("query_multi_leapfrog", code2)
+    end
+end
