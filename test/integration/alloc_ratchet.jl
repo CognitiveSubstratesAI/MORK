@@ -3,7 +3,17 @@
 # ─── WHY THIS EXISTS, AND WHY THE JET RATCHET IS NOT ENOUGH ──────────────────────────────────────
 # On 2026-08-20 `expr_traverseh` — the generic fold EVERY expression walk goes through — was found
 # declaring its accumulator stack `Tuple{UInt8, Any}[]`, boxing every value pushed. Fixing it took
-# `process_calculus` from 11.56 s / 1.751 GiB to 5.99 s / 0.750 GiB.
+# `process_calculus` (120 steps) from 1.751 GiB to 0.750 GiB of allocation.
+#
+# ⚠️ THE TIMING FIGURES FIRST PUBLISHED WITH THAT FIX (11.56 s -> 5.99 s, "1.93x") WERE HAND-ROLLED
+# MEDIANS OF THREE `@timed` RUNS AND WERE WRONG. Re-measured with BenchmarkTools the same day: the
+# post-fix median is **4.125 s**, not 5.99 — about 45% off. The "before" was measured the same crude
+# way and cannot now be re-checked, so the RATIO is unverified too. The ALLOCATION numbers are
+# unaffected: BenchmarkTools' memory estimate matches `@allocated` to the decimal, which is exactly
+# why this ratchet pins bytes and not seconds.
+# ⇒ TIMING GOES THROUGH BenchmarkTools OR IS NOT QUOTED. `@elapsed`/`@timed` medians hide the
+# variance: clique4 40x300 ranged 32.6-161.8 ms over 20 samples with GC between 0% and 72%.
+# [[feedback_perf_report_3_stable_runs]]
 #
 # 🔴 `jet_dispatch_ratchet.jl` REPORTED 104 BEFORE AND AFTER — it could not see it. `report_opt`
 # reports RUNTIME DISPATCH AT CALL SITES; this was a CONTAINER ELEMENT TYPE causing BOXING. Data,
