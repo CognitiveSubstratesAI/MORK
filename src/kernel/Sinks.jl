@@ -1399,17 +1399,33 @@ function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::Sink
     end
     out === nothing && return nothing
 
-    # ROOT-DOUBLING — same rule and guard as `_redsink_finalize!` (see the derivation there).
-    # PureSink writes PER MATCH rather than in finalize, so it needs its own copy. The NewVar
-    # "ignored guard" branch does not strip the write root, exactly as branches 1/2 of the
-    # reduction sinks do not; the VarRef branch does (upstream `&buffer[root_prefix_path().len()..]`).
-    # Guard: prepend only when the root is a PROPER PREFIX of the output, i.e. when the sink
-    # expression's first variable sits inside the template.
-    root = sink_request(s)
-    if !isempty(root) && !(src_tag isa ExprVarRef) &&
-       length(root) < length(out) && view(out, 1:length(root)) == root
-        out = vcat(root, out)
-    end
+    # 🔴 NO ROOT PREPEND HERE — REMOVED 2026-08-20, it was upstream defect #135 / PR #140 and we
+    # shared it byte for byte. The removed code prepended the write root to the NewVar ("ignored
+    # guard") result whenever the root was a proper prefix of it, which is upstream's PRE-FIX
+    # `root ++ template`. Its comment justified this as "branch 2 does not strip the write root,
+    # exactly as branches 1/2 of the reduction sinks do not" — true of the code it was ported from,
+    # and that code was wrong.
+    #
+    # Upstream `0acf314` ("Emit the template, not the request root, from the pure sink"): `prz` is
+    # rooted at the top of the grafted input so `prz.path()` is ABSOLUTE, while
+    # `WriteZipper::move_to_path` is root-RELATIVE. The NewVar arm handed the absolute path straight
+    # to `move_to_path`, appending the template to the root instead of replacing it. Post-fix BOTH
+    # arms strip (`sinks.rs` NewVar `&ignored[wz.root_prefix_path().len()..]`, VarRef
+    # `&buffer[wz.root_prefix_path().len()..oz.loc]`), so both write at the ABSOLUTE template path.
+    #
+    # 🔑 WE EMIT ABSOLUTE PATHS DIRECTLY (`set_val_at!`), not through a rooted zipper, so upstream's
+    # "strip the root" IS our "do not prepend the root" — the destination is identical. The VarRef
+    # branch already did not prepend, which is why only the NewVar branch was wrong.
+    #
+    # MEASURED against both binaries on upstream's own regression program
+    # (`sink_pure_ignored_guard_addressing`, main.rs:1218):
+    #     (exec 0 (,) (O (pure (tag $q) $ (reverse_symbol 123))))
+    #   pre-fix mork · OURS BEFORE  ->  (tag (tag $a))        ← the doubled path
+    #   post-fix mork · OURS AFTER  ->  (tag $a)
+    # ⚠️ ONLY VISIBLE WHEN THE TEMPLATE HOLDS A VARIABLE. With a CONSTANT template the root equals
+    # the template, the doubled path is `template ++ template`, and the surplus hangs BELOW a
+    # complete expression — so a dump reads the leading part and prints the right answer while a
+    # malformed over-long path sits in the trie. That is why every gate we had stayed green.
 
     old = get_val_at(btm, out)
     set_val_at!(btm, out, UNIT_VAL)

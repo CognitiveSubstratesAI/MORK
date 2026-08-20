@@ -1086,11 +1086,25 @@ const PURE_OPS = Dict{String, Function}(
     # Upstream (kernel/src/pure.rs:800-810):
     #     let h = e.hash(); let buf = h.to_le_bytes(); sink.write(SourceItem::Symbol(&buf))?;
     # i.e. ONE symbol of 16 LITTLE-endian bytes of a u128. `Expr::hash()` (expr/src/lib.rs:310) is
-    # `gxhash::gxhash128(span, 0)` — but `#[cfg(gxhash)]` is a BARE cfg with no build.rs and no
-    # rustflag setting it anywhere in that workspace, so it is OFF and the live function is the stub
+    # `gxhash::gxhash128(span, 0)` — but `#[cfg(gxhash)]` WAS a BARE cfg with no build.rs and no
+    # rustflag setting it anywhere in that workspace, so it was OFF and the live function was the stub
     # at expr/src/lib.rs:76 forwarding to `xxhash_rust::const_xxh3::xxh3_128`. Verified by compiling
     # a probe against the crate ("cfg(gxhash) = OFF"). So this is XXH3-128, default secret, seed 0 —
     # NOT gxhash, and no AES-NI is involved. See src/kernel/XXH3.jl (1:1 port of const_xxh3.rs).
+    #
+    # 🔴 UPSTREAM CLOSED THAT HOLE ON 2026-08-13 AND THIS COMMENT'S PRESENT TENSE IS NOW WRONG.
+    # `4876198` ("Compile the hasher the crate has always claimed to use") flips both cfgs to
+    # `feature = "gxhash"`, which Cargo DOES set — so upstream now compiles the real AES-NI
+    # gxhash128 and `hash_expr` returns different bytes. Our analysis above was correct for every
+    # upstream build that existed when it was written, and upstream's own commit message reaches the
+    # same conclusion independently ("that branch has never been compiled").
+    #
+    # ⇒ `sinks/g4_hash` MOVED OUT of EXPECTED_PASS on 2026-08-20. We do NOT chase the new bytes:
+    # gxhash is built on target intrinsics and upstream says so in the same message — "the real
+    # gxhash uses target intrinsics, so this newly-compiled path could behave differently on a
+    # target this machine cannot test." A digest that varies by target is not a portable contract to
+    # conform to, which is the identical argument ADAPTATIONS.md §7 already makes for `HashSink`.
+    # What `hash_expr` must be is CONSISTENT and content-addressing, and XXH3-128 is both.
     # This previously used Julia's builtin 64-bit `hash`, big-endian, 8 bytes — wrong algorithm,
     # wrong width, wrong byte order — so `hash_expr` emitted a symbol upstream never produces.
     "hash_expr" => (a) -> collect(reinterpret(UInt8, [htol(xxh3_128(a[1]))])),

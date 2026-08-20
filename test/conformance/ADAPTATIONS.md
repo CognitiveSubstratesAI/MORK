@@ -269,3 +269,40 @@ is now entry 7 ABOVE — upstream's hash is correct for upstream's purpose.) Tho
 adaptations AWAY FROM a correct design.
 
 `PathMap/test/differential/ADAPTATIONS.md` carries the PathMap-side entries.
+
+---
+
+## 8. `hash_expr` — XXH3-128 where upstream (since 2026-08-13) is a target-intrinsic `gxhash128`
+
+**Upstream, when this was ported.** `pure.rs:800-810` calls `gxhash::gxhash128(span, 0)`. But
+`#[cfg(gxhash)]` is a **bare cfg** — Cargo sets `cfg(feature = "gxhash")`, and nothing in that
+workspace emits a bare `gxhash` cfg (no `build.rs`, no rustflag). So the gxhash branch had never
+compiled and the live function was the stub at `expr/src/lib.rs:76`, forwarding to
+`xxhash_rust::const_xxh3::xxh3_128`. We verified this by compiling a probe against the crate
+("cfg(gxhash) = OFF") rather than by reading, and ported XXH3-128 exactly
+(`src/kernel/XXH3.jl`, a 1:1 port of `const_xxh3.rs`). `sinks/g4_hash` matched upstream byte for byte.
+
+**What changed.** Upstream `4876198` — "Compile the hasher the crate has always claimed to use" —
+flips both cfgs to `feature = "gxhash"`. Their commit message reaches our conclusion independently:
+*"that branch has never been compiled, despite `gxhash` being a default feature."* From 06cdcf3 the
+real AES-NI `gxhash128` compiles and `hash_expr` returns different bytes:
+
+    (w abc) -> upstream pre-fix / OURS   (h fc9b26289c31fde4352174f5442088c1)
+            -> upstream post-fix         (h 0845f9fa3f82fde697b78d919895918a)
+
+**What we do.** Keep XXH3-128. `sinks/g4_hash` moved OUT of `EXPECTED_PASS.txt` on 2026-08-20.
+
+**Why, and it is upstream's own argument.** The same commit says: *"the real gxhash uses target
+intrinsics, so this newly-compiled path could behave differently on a target this machine cannot
+test."* A digest whose value depends on the target is not a portable contract to conform to — the
+identical reasoning §7 already applies to `HashSink`, and that PathMap substitutes a different
+hasher entirely under miri/riscv64 is the same fact from a third direction. What `hash_expr` has to
+be is CONSISTENT and content-addressing within one engine; XXH3-128 is both, and is a real hash
+rather than the XOR stub upstream was actually running.
+
+**What it costs.** Any probe or program comparing a `hash_expr` digest against a post-06cdcf3
+upstream binary will differ, and content-addresses computed by the two engines are not
+interchangeable. It costs nothing where the hash is used as an identity within one engine, which is
+every live use (`ctl_model_checking`'s EG fixpoint compares hash(l+1) to hash(l) from the same
+engine). Reversible: porting gxhash128 bit-exactly would close it, at the price of AES-NI intrinsics
+and a value that upstream itself does not promise across targets.

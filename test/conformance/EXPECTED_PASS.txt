@@ -70,7 +70,6 @@ sinks/g4_bareroot
 sinks/g4_baseline
 sinks/g4_cmp
 sinks/g4_dedup
-sinks/g4_hash
 sinks/g4_ifnz_eager
 sinks/g4_ignored
 sinks/g4_ignored_var
