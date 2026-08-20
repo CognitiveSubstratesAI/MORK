@@ -4804,6 +4804,11 @@ const _MORK_TS = @testset "MORK" begin
     # once a workload turned out slow. The write-loop check is `@report_opt` on the function you
     # touched; this is the part a SUITE can remember.
     include("integration/jet_dispatch_ratchet.jl")
+    # Allocation ratchet — the COMPLEMENT to the JET one, which reported 104 before AND after the
+    # `Tuple{UInt8,Any}` fold fix and could not see it: report_opt catches dispatch at call sites,
+    # this catches BOXING in data. Allocation is deterministic here (0.0% spread over 5 runs), so
+    # unlike a timing pin it can be tight.
+    include("integration/alloc_ratchet.jl")
 
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
