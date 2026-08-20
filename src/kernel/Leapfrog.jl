@@ -111,13 +111,15 @@ using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, G
                zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
                zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
                zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
-               zipper_to_next_sibling_byte!, zipper_is_val
+               zipper_to_next_sibling_byte!, zipper_is_val,
+               iter        # ⇐ ByteMask's set-bit iterator; `import PathMap` collides with the TYPE
 
 export subterm_parse_step, least_ge, is_complete, PARSE_START,
        SubtermCursor, cursor_first!, cursor_next!, cursor_key, cursor_seek!,
        cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts,
        GroundFactor, ground_leapfrog,
-       is_wildcard_term, is_symbol_head, column_matches_by_equality
+       is_wildcard_term, is_symbol_head, column_matches_by_equality,
+       cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes
 
 """
     PARSE_START
@@ -891,6 +893,92 @@ total, and a reserved byte answers "not equality-only", which is the conservativ
     b = least_ge(mask, 0x80)              # item_byte(VarRef(0))
     b === nothing && return true
     b > 0xC0                              # item_byte(NewVar); anything above is a symbol
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 3c — the WILDCARD-AWARE ground probe.
+#
+# Ports upstream `ground_probe` (`69393c7^:kernel/src/zipper_join.rs:2667`). Small, and the insight
+# is the whole layer, in upstream's words:
+#
+#     "The stored wildcards at this position are exactly the WILDCARD TAG BYTES set in that mask: a
+#      wildcard is a COMPLETE SINGLE-BYTE SUBTERM, so its presence as a child byte at the column
+#      start IS its presence as a stored subterm."
+#
+# 🔑 WHY THAT MATTERS: a ground query column matches either the IDENTICAL bytes or ANY stored
+# wildcard — a fact `(rel $w)` unifies with `(rel anything)`. Finding those wildcards would
+# otherwise need a scan; instead one child-mask read at the floor yields all of them, because a
+# stored variable occupies exactly one byte and therefore appears as a child byte.
+#
+# ⚠️ THIS IS THE HALF THAT MAKES THE JOIN A UNIFICATION JOIN RATHER THAN A RELATIONAL ONE, and it is
+# where the file header's soundness constraint becomes operative: the leapfrog may prune only in the
+# symbol-headed suffix, because everywhere else a stored value can MATCH a candidate without
+# EQUALLING it. `column_matches_by_equality` (layer 3b) is the guard; this is what it guards.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    cursor_floor_child_mask(c) -> ByteMask
+
+The trie children at the column start. Requires the cursor to be AT its floor — the caller's
+obligation, and `ground_probe` satisfies it by reading the mask before it seeks.
+"""
+@inline cursor_floor_child_mask(c::SubtermCursor)::ByteMask = zipper_child_mask(c.z)
+
+"""
+    ground_probe!(c, ground) -> (exact::Bool, mask::ByteMask)
+
+Probe a factor's current GROUND column: does the trie hold this exact subterm, and what are the
+column's children?
+
+Ports upstream verbatim in shape — mask read at the floor, ONE exact seek, restore:
+
+    let mask = cur.floor_child_mask();   cur.seek(ground);
+    let exact = cur.key() == Some(ground);   cur.reset_to_floor();
+
+⚠️ THE ORDER IS LOAD-BEARING. The mask must be read BEFORE the seek, because seeking moves the
+zipper off the floor and `cursor_floor_child_mask` would then report the children of wherever it
+landed. Reading it after would be a silently different question with a plausible-looking answer.
+
+⚠️ AND IT RESTORES THE CURSOR. A probe that left the cursor positioned would corrupt the enclosing
+enumeration — the same class of defect as `cursor_ascend_floor!`'s precondition, which cost two
+speculative fixes before instrumentation found it.
+"""
+function ground_probe!(c::SubtermCursor, ground::AbstractVector{UInt8})
+    mask = cursor_floor_child_mask(c)          # BEFORE the seek — see above
+    cursor_seek!(c, ground)
+    k = cursor_key(c)
+    exact = k !== nothing && length(k) == length(ground) && all(k[i] == ground[i] for i in eachindex(ground))
+    cursor_reset_to_floor!(c)
+    (exact, mask)
+end
+
+"""
+    stored_wildcard_bytes(mask) -> Vector{UInt8}
+
+The stored wildcards present at a column, read off its child mask: every variable tag byte set in
+it. `VarRef(0..63)` is `0x80..0xBF` and `NewVar` is `0xC0`, so the wildcard range is exactly
+`0x80..0xC0` — the same range `column_matches_by_equality` tests, which is why the two cannot
+disagree about what counts as a wildcard.
+
+Ascending byte order, which is the order upstream's former seek-and-scan produced; the join's visit
+order depends on it.
+"""
+function stored_wildcard_bytes(mask::ByteMask)::Vector{UInt8}
+    # ⚠️ ITERATE THE SET BITS AND FILTER WITH THE PREDICATE, exactly as upstream does:
+    #     for w in mask.iter() { if is_wildcard_term(&[w]) { … } }
+    # 🔴 A FIRST VERSION SCANNED THE HARDCODED RANGE 0x80..0xC0 with `least_ge`. Same answer TODAY —
+    # layer 3b pins that range exhaustively — but it encodes the tag layout in a SECOND place.
+    # Upstream asks the PREDICATE, so a re-encoding moves one definition and every caller follows;
+    # the range form would keep returning confident wrong answers. Cross-checking against upstream
+    # on 2026-08-20 is what caught it, and it is the same "assert the contract, not the
+    # representation" error in a new costume. [[feedback_assert_the_contract_not_the_representation]]
+    # Not slower either: `ByteMaskIter` visits only bits that are SET, where the range scan probed
+    # 65 positions whether or not anything was there.
+    out = UInt8[]
+    for w in iter(mask)
+        is_wildcard_term(UInt8[w]) && push!(out, w)
+    end
+    out
 end
 
 end # module Leapfrog
