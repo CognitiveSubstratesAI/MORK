@@ -4804,6 +4804,10 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/leapfrog_end_to_end.jl")
     # The oracle test that actually establishes the port: generated shapes, engine as judge.
     include("integration/leapfrog_differential.jl")
+    # The PARSE + the engine-facing entry: 300 generated BODIES, engine as judge. This is the only
+    # test that exercises `parse_body_factors`; the differential above hand-builds its factors and
+    # so cannot see a parse that joins on the wrong variables.
+    include("integration/leapfrog_wiring.jl")
     include("integration/bindings_slab.jl")
 
     # JET dispatch ratchet — fails when a change ADDS runtime dispatch to the exec hot path.

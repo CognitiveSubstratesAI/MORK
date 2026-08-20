@@ -62,7 +62,7 @@ end
 
 function _d_ours(s, factors::Vector{_DIFF.UnifyFactor}, nvars::Int)
     n = Ref(0)
-    _DIFF.unify_leapfrog(s.btm, factors, nvars, _b -> (n[] += 1; true))
+    _DIFF.unify_leapfrog(s.btm, factors, nvars, (_b, _st) -> (n[] += 1; true))
     n[]
 end
 

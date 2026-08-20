@@ -158,7 +158,7 @@ module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
               ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
-              item_byte, ee_args!, ee_var_opt, ExprVar
+              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
@@ -180,7 +180,8 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
        with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
        Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
-       UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog
+       UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
+       scan_subterm, parse_body_factors, fact_bytes
 
 """
     PARSE_START
@@ -1683,7 +1684,7 @@ function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::In
             cursor_has_value(st.cursors[f]) || return
         end
         st.emitted += 1
-        st.emit(bindings) === false && (st.stopped = true)
+        st.emit(bindings, st) === false && (st.stopped = true)
         return
     end
     v = st.var_order[i]
@@ -1702,10 +1703,29 @@ function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::In
 end
 
 """
+    fact_bytes(st, f) -> Vector{UInt8}
+
+Factor `f`'s STORED FACT at the current answer — upstream's `original_fact_bytes`, which the
+engine-facing entry passes to the stock callback as `loc`.
+
+🔑 NO RECONSTRUCTION IS NEEDED, and that is a property of the held-cursor design rather than a
+shortcut: the cursor was opened AT the factor's prefix and every consumed column was descended in
+place, so the zipper's own path IS `prefix ++ every column consumed` — the complete stored fact.
+Upstream needs a real reconstruction only for a RE-INDEXED factor, whose columns were permuted into
+a private map; we do not re-index, so this stays a copy.
+"""
+@inline fact_bytes(st::UnifyJoinState, f::Int)::Vector{UInt8} =
+    Vector{UInt8}(zipper_path(st.cursors[f].z))
+
+"""
     unify_leapfrog(btm, factors, nvars, emit) -> Int
 
-Worst-case-optimal-shaped UNIFICATION conjunctive join. Calls `emit(bindings)` once per satisfying
-assignment and returns the number emitted; `emit` may return `false` to stop the search.
+Worst-case-optimal-shaped UNIFICATION conjunctive join. Calls `emit(bindings, st)` once per
+satisfying assignment and returns the number emitted; `emit` may return `false` to stop the search.
+
+`st` is the live join state, passed so the callback can recover a factor's stored fact via
+[`fact_bytes`] — the `loc` the engine's own callback contract expects. Upstream reads it off `self`
+for the same reason; a callback that only ever counts can ignore it.
 
 Unlike [`ground_leapfrog`], a stored variable in a fact acts as a wildcard, so this agrees with the
 engine's full unification (`space_query_multi`) on schematic data — which is the property
@@ -1734,6 +1754,163 @@ function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
                         var_order, var_pos, nvars, nf, emit, false, 0)
     uj_catch_up(st, Bindings(), 1, 1)
     st.emitted
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 5 — THE PARSE. A query BODY becomes factors, so the engine can reach the join at all.
+#
+# Ports upstream `scan_subterm` + `parse_body_factors` (`kernel/src/leapfrog.rs:1183-1298`).
+#
+# ⚠️ THIS IS WHERE A WRONG ANSWER HIDES, NOT IN THE JOIN. The join is differentialled over 603
+# generated shapes — but every one of those HAND-BUILT its factors, so it cannot see a parse that
+# numbers a variable wrong or picks the wrong prefix. Such a parse produces a perfectly well-formed
+# join OF THE WRONG QUESTION, and every downstream assertion still passes. `leapfrog_wiring.jl`
+# therefore compares against the engine given the SAME BODY TEXT, never against hand-built factors.
+#
+# 🔴 THE DEFECT THAT SHAPE INVITES: a PER-CONJUNCT variable counter. Then `$y` in the second
+# conjunct is a different variable from `$y` in the first, the join stops joining, and the answer is
+# a cross product — still well-formed, still "green" against any structural check. Variable ids are
+# BODY-GLOBAL, which is what `intro` threading through every conjunct is for, and
+# `leapfrog_wiring.jl` asserts the shared id explicitly rather than trusting the count.
+#
+# ─── A THIRD DELIBERATE OMISSION: RE-INDEXING ────────────────────────────────────────────────────
+#
+# `scan_subterm` returns a VARIABLE MASK that this parse discards. Upstream stores it per column and
+# feeds `is_inverted` (`leapfrog.rs:727`), which asks whether a factor mentions variables OUT OF
+# SCHEDULE ORDER — `(, (edge $x $y) (edge $z $x))`, where factor 2 has `$z` (id 2) before `$x`
+# (id 0). Such a factor cannot seek on `$x` at its first column, so upstream permutes its columns
+# into a PRIVATE re-indexed map and seeks that instead.
+#
+# ⚠️ ITS ABSENCE COSTS SPEED, NOT ANSWERS: `catch_up` still walks an inverted factor forward
+# correctly, it just enumerates where it could have sought. That shape is COMMON, so this belongs
+# on the same list as `rank_parts` and `fill_lead_candidates` — the three things standing between
+# "correct" and "worst-case-optimal" — and the mask is discarded rather than stored precisely so
+# nobody reads a stored-but-unused field as evidence the feature is half-present.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    scan_subterm(buf, at, intro) -> Union{Nothing, Tuple{Int, UInt64, UInt8}}
+
+Walk the one complete subterm at `buf[at+1…]`, returning its byte length, the mask of query
+variables it mentions, and `intro` advanced past its own `NewVar`s — which is what gives each
+variable its BODY-GLOBAL id.
+
+`nothing` on a truncated term, a `VarRef` naming a variable not yet introduced, or a variable id at
+or above 64. Upstream returns `None` for all three and the caller treats it as "not routable"; none
+is an error, because a body the join cannot represent is a body the ProductZipper still answers.
+
+⚠️ `maybe_byte_item`, NOT `byte_item` — ours THROWS on a reserved byte (0x40–0x7F) where upstream's
+returns a tag. A malformed body must make this UNROUTABLE, not blow up a query.
+"""
+function scan_subterm(buf::AbstractVector{UInt8}, at::Int, intro::UInt8)
+    i = at
+    pending = 1
+    vars = UInt64(0)
+    while pending != 0
+        i < length(buf) || return nothing            # truncated
+        b = buf[i + 1]
+        i += 1
+        pending -= 1
+        t = maybe_byte_item(b)
+        if t isa ExprArity
+            pending += Int(t.arity)
+        elseif t isa ExprSymbol
+            i += Int(t.size)
+        elseif t isa ExprNewVar
+            intro >= 0x40 && return nothing          # the parser's 63-variable cap
+            vars |= UInt64(1) << intro
+            intro += 0x01
+        elseif t isa ExprVarRef
+            t.idx >= intro && return nothing         # names a variable never introduced
+            vars |= UInt64(1) << t.idx
+        else
+            return nothing                           # a reserved byte: not routable
+        end
+    end
+    i <= length(buf) || return nothing               # a symbol payload ran off the end
+    (i - at, vars, intro)
+end
+
+"""
+    parse_body_factors(body) -> Union{Nothing, Tuple{Vector{UnifyFactor}, Int}}
+
+Turn a query body into join factors and the body's variable count, or `nothing` when the body is not
+a well-formed conjunction — in which case the caller sends it down the ProductZipper path.
+
+Two ways a conjunct spreads over seekable columns, both upstream's:
+
+  · a COMPOUND `(rel arg…)` seeks under its ARITY BYTE ALONE, with every top-level argument a
+    column and the relation head as column 0. 🔑 The head stays a COLUMN rather than being baked
+    into the prefix so a query head and a STORED WILDCARD head can unify either way round; baking
+    it in would be faster and would silently drop `(\$anything a b)` facts.
+  · anything else — a bare symbol, a bare variable, `()` — has no arguments to spread, so it
+    becomes a WHOLE-ATOM factor: EMPTY prefix, so the cursor opens at the trie root where complete
+    facts live, and one column holding the conjunct.
+"""
+function parse_body_factors(body::MORKExpr)
+    buf = body.buf
+    isempty(buf) && return nothing
+    t0 = maybe_byte_item(buf[1])
+    t0 isa ExprArity || return nothing
+    nconj = Int(t0.arity)
+    nconj == 0 && return nothing
+
+    intro = 0x00
+    pos = 1                                          # 0-based offset, just past the arity byte
+    factors = UnifyFactor[]
+    sizehint!(factors, max(nconj - 1, 0))
+
+    for ci in 0:(nconj - 1)
+        conj_start = pos
+        if ci == 0
+            # The `,` head itself carries no factor — but it is still SCANNED, because a head that
+            # introduced variables would shift every id after it.
+            sc = scan_subterm(buf, pos, intro)
+            sc === nothing && return nothing
+            (len, _, intro) = sc
+            pos += len
+            continue
+        end
+
+        pos < length(buf) || return nothing
+        tb = maybe_byte_item(buf[pos + 1])
+        local prefix::Vector{UInt8}
+        local ncols::Int
+        if tb isa ExprArity && tb.arity != 0
+            prefix = buf[(conj_start + 1):(conj_start + 1)]     # the arity byte ALONE
+            pos += 1
+            ncols = Int(tb.arity)
+        else
+            prefix = UInt8[]                                    # whole-atom factor, cursor at root
+            ncols = 1
+        end
+
+        cols = UnifyColumn[]
+        sizehint!(cols, ncols)
+        for _ in 1:ncols
+            col_intro = intro
+            col_start = pos
+            sc = scan_subterm(buf, pos, intro)
+            sc === nothing && return nothing
+            (len, _, intro) = sc
+            tc = maybe_byte_item(buf[col_start + 1])
+            if len == 1 && tc isa ExprNewVar
+                push!(cols, unify_var_col(Int(col_intro)))
+            elseif len == 1 && tc isa ExprVarRef
+                push!(cols, unify_var_col(Int(tc.idx)))
+            else
+                # ⚠️ THE COLUMN'S OWN `intro` IS `col_intro`, NOT THE RUNNING ONE. `push_steps!`
+                # numbers a `NewVar` by the count it is handed, so passing the post-scan value would
+                # give every variable in this column an id one too high — a join on the wrong
+                # variables, silently.
+                push!(cols, unify_term_col(MORKExpr(buf[(col_start + 1):(col_start + len)]),
+                                           col_intro))
+            end
+            pos += len
+        end
+        push!(factors, UnifyFactor(prefix, cols))
+    end
+    (factors, Int(intro))
 end
 
 end # module Leapfrog

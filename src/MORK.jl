@@ -102,6 +102,9 @@ export trie_argset, trie_join_unary
 # WHY: measured 2026-08-20 on upstream's clique4 generator — ours 19 080 ms vs leapfrog 175 ms at
 # 200x3600, with OUR exponent the worst of the three (145x vs 54x vs 6.3x). See Leapfrog.jl header.
 include("kernel/Leapfrog.jl")
+# The engine-facing entry (upstream `query_multi_leapfrog`). Separate file because it sits ABOVE the
+# Leapfrog module and below Space.jl's contract — it is routing, not join machinery.
+include("kernel/LeapfrogEntry.jl")
 using .Leapfrog: subterm_parse_step, least_ge, is_complete
 
 # ── DyckZipper (experiments/expr/dyck/) ──────────────────────────────────────

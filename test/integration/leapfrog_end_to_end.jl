@@ -47,7 +47,7 @@ end
 "Answers from the ASSEMBLED UNIFY join — layer 4."
 function _e2e_unify(s, factors, nvars)
     n = Ref(0)
-    _E2E.unify_leapfrog(s.btm, factors, nvars, _b -> (n[] += 1; true))
+    _E2E.unify_leapfrog(s.btm, factors, nvars, (_b, _st) -> (n[] += 1; true))
     n[]
 end
 
@@ -160,36 +160,34 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         end
     end
 
-    @testset "🔴 the join is CORRECT and NOT YET THE PRODUCTION PATH" begin
-        # Stated as a failing-when-fixed assertion for the same reason as the layers above: this is
-        # STRUCTURALLY the situation that produced 77 assertions over unreachable code. The
-        # difference is that this time it is verified end to end against the oracle, and this test
-        # is here so "603/603 green" cannot be read as "the engine uses it".
-        #
-        # A MeTTa query is still answered by `space_query_multi`. Upstream reaches the join through
-        # two pieces not ported yet:
-        #   · `parse_body_factors`   (leapfrog.rs:1183) — query body -> Factors + var count, which
-        #                            these tests hand-build instead
-        #   · `query_multi_leapfrog` (leapfrog.rs:1319) — the entry point, plus the dispatch that
-        #                            decides when the join beats the ProductZipper
-        #
-        # ⚠️ THE DISPATCH IS NOT A DETAIL. Upstream gates it, and our own P5 measurement says a
-        # wrong gate makes things SLOWER, not merely different — so wiring this is an A/B against
-        # the existing path, not a swap. [[feedback_parity_vs_opt_in]]
+    @testset "🔴 REACHABLE from an entry point, but NOT on the default query path" begin
+        # This testset previously asserted `isempty(callers)` — that NOTHING in src/ called the
+        # join. Wiring `LeapfrogEntry.jl` made it fail, which is exactly what it was written to do,
+        # and this is its rewrite. The remaining gap is narrower and must stay just as visible.
         srcdir = joinpath(@__DIR__, "..", "..", "src")
         callers = String[]
         for (root, _, files) in walkdir(srcdir), fn in files
             endswith(fn, ".jl") || continue
             fn == "Leapfrog.jl" && continue
-            txt = read(joinpath(root, fn), String)
-            occursin("unify_leapfrog(", txt) && push!(callers, fn)
+            occursin("unify_leapfrog(", read(joinpath(root, fn), String)) && push!(callers, fn)
         end
-        # When the wiring lands this line FAILS and must be rewritten — that is the entire point.
-        @test isempty(callers)
-        # …and the pieces that would do it are genuinely absent, not merely unwired.
+        @test callers == ["LeapfrogEntry.jl"]        # reachable, from exactly one place
+
+        # …and the parse that makes a BODY routable now exists.
         lf = read(joinpath(srcdir, "kernel", "Leapfrog.jl"), String)
         code2 = join([l for l in split(lf, '\n') if !startswith(strip(l), "#")], '\n')
-        @test !occursin("parse_body_factors", code2)
-        @test !occursin("query_multi_leapfrog", code2)
+        @test occursin("function parse_body_factors", code2)
+
+        # 🔴 THE GAP THAT REMAINS: `space_query_multi` — what a MeTTa query actually calls — does
+        # NOT consult the leapfrog. There is no dispatch, so the join answers only a caller who
+        # asks for it by name. When a dispatch lands this line fails and must be rewritten again.
+        #
+        # ⚠️ AND A DISPATCH IS NOT A SWAP. Our own P5 measurement says a wrong gate makes queries
+        # SLOWER, not merely different, so the gate has to be earned on measured shapes — which is
+        # why wiring the entry point and choosing when to use it are deliberately separate commits.
+        sp = read(joinpath(srcdir, "kernel", "Space.jl"), String)
+        spcode = join([l for l in split(sp, '\n') if !startswith(strip(l), "#")], '\n')
+        @test !occursin("space_query_multi_leapfrog", spcode)
+        @test !occursin("Leapfrog.", spcode)
     end
 end
