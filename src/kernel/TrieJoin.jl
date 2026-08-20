@@ -22,6 +22,38 @@ const _TRIE_JOIN_ENABLED = Ref(true)
 # order `_classify_connected` picks — used to A/B the reorder win without code changes.
 const _CARD_REORDER_ENABLED = Ref(true)
 
+# Opt-in trace of the pipeline's INTERMEDIATE sizes. Off by default and costs one branch per factor
+# step when off. Turn on to answer the only question that decides whether materialization is the
+# latency: how far do the intermediates exceed the ANSWER count?
+#   MORK._JOIN_TRACE[] = true
+# A relation-at-a-time join materializes `nxt` at every factor; a worst-case-optimal join never
+# builds it. If |intermediates| >> |answers| the copies ARE the cost and no tuning of the copy
+# reaches it — that is the claim this flag exists to confirm or refute with numbers.
+#
+# 🔴 MEASURED 2026-08-20 on upstream's clique4_200x3600 (3600 edges, 2161 four-cliques):
+#
+#     step 2/6  factor 2   3 600      ->    89 638      shared=[0]
+#     step 3/6  factor 3   89 638     -> 2 555 436      shared=[0]   ← PEAK
+#     step 4/6  factor 4   2 555 436  ->   220 383      shared=[1,2]
+#     step 5/6  factor 5   220 383    ->    32 201      shared=[1,3]
+#     step 6/6  factor 6   32 201     ->     2 161      shared=[2,3]
+#
+# **2 555 436 intermediates for 2 161 answers — a 1 182x blowup**, each tuple costing a
+# `copy(slot)` + `copy(bnd)`, and 99.9% of them discarded. It detonates at step 3 because the first
+# three factors share ONLY variable 0 — a star around $x0, effectively a product until the later
+# factors constrain it.
+#
+# ⚠️ FACTOR ORDER IS NOT THE LEVER, and the flag next door proves it: `_CARD_REORDER_ENABLED` ON and
+# OFF give BYTE-IDENTICAL intermediate sizes here, because all six factors have the same cardinality
+# (3600) and a cardinality-greedy heuristic has nothing to discriminate on.
+#
+# ⚠️ NOR IS ANY CONSTANT-FACTOR TOOL. Making each copy 7x cheaper (Dict -> flat slab, same day)
+# bought 4.4x, not 24x. Threads would buy <= ncores while parallelising work that should not exist;
+# metaprogramming would generate specialised code for the SAME plan and still build 2.55M tuples.
+# The intermediate exceeds BOTH the input (3600) and the output (2161) by three orders of magnitude,
+# which is precisely the pathology a worst-case-optimal join removes by never materialising.
+const _JOIN_TRACE = Ref(false)
+
 # Resolve a PathMap `pmeet` result to a concrete PathMap.
 #   • AlgResElement  → its `.value` (a genuinely-new meet: overlap, or disjoint→empty)
 #   • AlgResIdentity → the meet equals one input; for a meet (intersection) that input
@@ -833,6 +865,13 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
                 nb = copy(bnd); for vid in vids[fi]; nb[_slot(vid)] = vv[_slot(vid)]; end
                 push!(nxt, (ns, nb))
             end
+        end
+        if _JOIN_TRACE[]
+            println("  [join] step ", lpad(step, 2), "/", k,
+                    "  factor=", lpad(fi, 2),
+                    "  |atoms[fi]|=", lpad(length(atoms[fi]), 7),
+                    "  |tuples|: ", lpad(length(tuples), 8), " -> ", lpad(length(nxt), 8),
+                    "  shared=", shared)
         end
         tuples = nxt
         union!(boundvars, keys(occ[fi]))
