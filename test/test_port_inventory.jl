@@ -100,7 +100,10 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # `experiments/eval/lib.rs` lost its remaining missing function. TYS is unchanged at 32 — the one
     # gap there is `alloc.rs`'s `StdoutTracker`, a Rust global-allocator instrumentation shim with no
     # Julia counterpart and deliberately not ported.
-    PIN_FNS = 105
+    # 105 -> 98 on 2026-08-20 (upstream bumped 5464713 -> 06cdcf3, inventory re-extracted 647 -> 701
+    # symbols). TIGHTENED even though upstream GREW by 56 symbols, because the re-extraction also
+    # resolved names the Jul-30 baseline counted missing. The tool asked for the lower pin; taken.
+    PIN_FNS = 98
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
@@ -110,7 +113,40 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # traits, Traversal/TraverseSide iterator types, serde derive types) plus the deliberate `linalg`
     # skip. Only ~5 names are worth a look: WriteResourceRequest, ASpaceTranscriber, ATranscriber,
     # DebugTranscriber, Tables. So this pin is a REGRESSION guard, not a target to drive to zero.
-    PIN_TYS = 32
+    #
+    # ⚠️ 32 -> 38 on 2026-08-20. THIS PIN LOOSENS, so every one of the 11 is attributed — a widened
+    # pin with an unexamined delta is how a ratchet becomes a rubber stamp. Measured old=27 new=38,
+    # ELEVEN newly missing and ZERO resolved (set difference, not totals):
+    #
+    #   4  kernel/leapfrog.rs  EncodedTerm · Factor · FactorColumn · SubtermCursor
+    #      The worst-case-optimal join, NEW in this bump. MEASURED: it sits behind the non-default
+    #      `leapfrog` cargo feature (`kernel/Cargo.toml:36`, marked "experimental"), so it is not in
+    #      the default build our differential runs against; and we hold an n-ary join of our own
+    #      (TrieJoin P1-P3, gated, [[project_zam_join_planning_adr056]]).
+    #      ⚠️ WHETHER TO ALSO ADOPT UPSTREAM'S WCO JOIN IS OPEN, not settled here — same correction as
+    #      the linalg entry below. Having our own is a reason it is not URGENT, not a reason it is not
+    #      wanted; upstream measured real asymptotic wins for shapes ProductZipper handles badly.
+    #   4  expr/lib_nightly.rs  ItemSink · NullSink · SliceSink · VecSink
+    #      Sink plumbing in the unstable-Rust variant of expr. Julia has no nightly/stable split for
+    #      this to mean anything — the same reasoning PORT_NAME_MAP already records for
+    #      `paths_serialization_nightly`.
+    #   1  linalg/ewise.rs  Pow
+    #      MEASURED: `kernel/Cargo.toml` declares no dependency on the `linalg` crate (sibling
+    #      workspace member), and the capability is held one package over (`MORKTensorNetworks`
+    #      CSRMatrix/BCSRMatrix/gpu_semiring_spmm). See PORT_NAME_MAP `Csr`.
+    #      🔴 THAT IS NOT A SCOPE VERDICT AND THIS COMMENT NO LONGER PRETENDS IT IS. A first version
+    #      called linalg's 59 scanned symbols "permanent noise" and declared the crate out of port
+    #      scope; the user corrected it — where upstream wires a crate today does not decide what our
+    #      substrate should offer, and that call is not the ratchet's to make. So linalg STAYS IN THE
+    #      SCAN and stays counted. If it should leave, that is a decision to record, not a silent
+    #      narrowing. [[feedback_memory_no_inference_as_fact]]
+    #   2  expr/lib.rs  Bindings · SkippedSubterm      🔴 THE ONLY REAL ONE
+    #      Upstream's Bindings/stamp rewrite (`52f5fb7` flat sorted vec -> `0a41fb9` direct-indexed
+    #      slab on the trail, plus `cfa8abf` incremental bind-with-undo-trail). This is a PERFORMANCE
+    #      redesign to ADOPT, not a defect to fix — and it is the same object as our standing
+    #      optimization target #1 (`Bindings` O(n^2), risk HIGH, guarded). Nothing behavioural depends
+    #      on it: the two-engine differential is 98/99 and conformance 274/274 without it.
+    PIN_TYS = 38
 
     @test c.fns_missing <= PIN_FNS
     @test c.tys_missing <= PIN_TYS

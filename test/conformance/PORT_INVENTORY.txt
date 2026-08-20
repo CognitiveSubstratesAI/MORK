@@ -1,5 +1,6 @@
 # PORT_INVENTORY — upstream MORK symbol inventory, VENDORED.
-# UPSTREAM: main @ 5464713 (2026-07-02)
+# UPSTREAM: main @ 06cdcf3 (2026-08-17)
+# FEATURES: default + nightly (the differential binary's build)
 #   ^ REQUIRED. Without it this file cannot distinguish a port gap from upstream drift.
 #     Our port draws from main AND server; the differential binary is built from MAIN,
 #     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl.
@@ -23,6 +24,7 @@ expr/lib.rs	FN	args
 expr/lib.rs	FN	arity
 expr/lib.rs	FN	byte_item
 expr/lib.rs	FN	compute_length
+expr/lib.rs	FN	contains_key
 expr/lib.rs	FN	difference
 expr/lib.rs	FN	difference_under
 expr/lib.rs	FN	equate_var
@@ -35,15 +37,23 @@ expr/lib.rs	FN	extract_data
 expr/lib.rs	FN	finish_span
 expr/lib.rs	FN	finish_u128
 expr/lib.rs	FN	forward_references
+expr/lib.rs	FN	from_slice
+expr/lib.rs	FN	get
 expr/lib.rs	FN	gnext
+expr/lib.rs	FN	ground_stamp
 expr/lib.rs	FN	gxhash128
 expr/lib.rs	FN	has_unbound
 expr/lib.rs	FN	hash
+expr/lib.rs	FN	insert
+expr/lib.rs	FN	is_empty
 expr/lib.rs	FN	is_ground
 expr/lib.rs	FN	item
 expr/lib.rs	FN	item_byte
 expr/lib.rs	FN	item_str
+expr/lib.rs	FN	iter
+expr/lib.rs	FN	keys
 expr/lib.rs	FN	leaves
+expr/lib.rs	FN	len
 expr/lib.rs	FN	max_arity
 expr/lib.rs	FN	maybe_byte_item
 expr/lib.rs	FN	new
@@ -58,14 +68,17 @@ expr/lib.rs	FN	parse
 expr/lib.rs	FN	prefix
 expr/lib.rs	FN	prefix_non_proper
 expr/lib.rs	FN	references
+expr/lib.rs	FN	remove
 expr/lib.rs	FN	reset
 expr/lib.rs	FN	serialize
 expr/lib.rs	FN	serialize2
 expr/lib.rs	FN	serialize_highlight
 expr/lib.rs	FN	shift
+expr/lib.rs	FN	shift_from
 expr/lib.rs	FN	show
 expr/lib.rs	FN	size
 expr/lib.rs	FN	span
+expr/lib.rs	FN	stamp_ground
 expr/lib.rs	FN	string
 expr/lib.rs	FN	subexpr
 expr/lib.rs	FN	subsexpr
@@ -73,7 +86,9 @@ expr/lib.rs	FN	substitute
 expr/lib.rs	FN	substitute_de_bruijn
 expr/lib.rs	FN	substitute_de_bruijn_ivc
 expr/lib.rs	FN	substitute_one_de_bruijn
+expr/lib.rs	FN	substitute_one_de_bruijn_at
 expr/lib.rs	FN	substitute_symbols
+expr/lib.rs	FN	subterm_parse_step
 expr/lib.rs	FN	symbol
 expr/lib.rs	FN	symbols
 expr/lib.rs	FN	tag
@@ -84,9 +99,13 @@ expr/lib.rs	FN	traverse
 expr/lib.rs	FN	unbind
 expr/lib.rs	FN	unifiable
 expr/lib.rs	FN	unify
+expr/lib.rs	FN	unify_into
 expr/lib.rs	FN	v_incr_traversal
+expr/lib.rs	FN	values
+expr/lib.rs	FN	values_mut
 expr/lib.rs	FN	var_opt
 expr/lib.rs	FN	variables
+expr/lib.rs	FN	with_intro
 expr/lib.rs	FN	with_seed
 expr/lib.rs	FN	write_arity
 expr/lib.rs	FN	write_move
@@ -96,9 +115,11 @@ expr/lib.rs	FN	write_var_ref
 expr/lib.rs	TY	AntiUnificationFailure
 expr/lib.rs	TY	AntiUnifyResult
 expr/lib.rs	TY	AuVar
+expr/lib.rs	TY	Bindings
 expr/lib.rs	TY	Breadcrumb
 expr/lib.rs	TY	Expr
 expr/lib.rs	TY	ExprEnv
+expr/lib.rs	TY	ExprVar
 expr/lib.rs	TY	ExprZipper
 expr/lib.rs	TY	ExtractFailure
 expr/lib.rs	TY	GxHasher
@@ -106,17 +127,24 @@ expr/lib.rs	TY	HashMapExt
 expr/lib.rs	TY	HashSetExt
 expr/lib.rs	TY	PairTraversal
 expr/lib.rs	TY	RelExprEnv
+expr/lib.rs	TY	SkippedSubterm
 expr/lib.rs	TY	Tag
 expr/lib.rs	TY	Traversal
 expr/lib.rs	TY	TraverseSide
 expr/lib.rs	TY	UnificationFailure
 expr/lib_nightly.rs	FN	apply_e
-expr/lib_nightly.rs	FN	item_sink
 expr/lib_nightly.rs	FN	item_source
+expr/lib_nightly.rs	FN	new
+expr/lib_nightly.rs	FN	pattern_cycles_and_intros
+expr/lib_nightly.rs	FN	position
 expr/lib_nightly.rs	FN	unifiable_reuse_state
 expr/lib_nightly.rs	FN	unifies_reuse_state
+expr/lib_nightly.rs	TY	ItemSink
+expr/lib_nightly.rs	TY	NullSink
 expr/lib_nightly.rs	TY	OwnedSourceItem
+expr/lib_nightly.rs	TY	SliceSink
 expr/lib_nightly.rs	TY	SourceItem
+expr/lib_nightly.rs	TY	VecSink
 expr/macros.rs	TY	DeserializableExpr
 expr/macros.rs	TY	SerializableExpr
 frontend/bytestring_parser.rs	FN	new
@@ -155,6 +183,23 @@ interning/symbol_backing.rs	FN	free
 interning/symbol_backing.rs	FN	register_bytes
 interning/symbol_backing.rs	FN	total_slab_size
 interning/symbol_backing.rs	TY	ThinBytes
+kernel/leapfrog.rs	FN	ascend_floor
+kernel/leapfrog.rs	FN	descend_floor
+kernel/leapfrog.rs	FN	first
+kernel/leapfrog.rs	FN	has_value
+kernel/leapfrog.rs	FN	key
+kernel/leapfrog.rs	FN	least_ge
+kernel/leapfrog.rs	FN	new
+kernel/leapfrog.rs	FN	next
+kernel/leapfrog.rs	FN	parse_body_factors
+kernel/leapfrog.rs	FN	query_multi_leapfrog
+kernel/leapfrog.rs	FN	seek
+kernel/leapfrog.rs	FN	unify_join_zipper
+kernel/leapfrog.rs	FN	unify_join_zipper_partial
+kernel/leapfrog.rs	TY	EncodedTerm
+kernel/leapfrog.rs	TY	Factor
+kernel/leapfrog.rs	TY	FactorColumn
+kernel/leapfrog.rs	TY	SubtermCursor
 kernel/pure.rs	FN	abs_f32
 kernel/pure.rs	FN	abs_f64
 kernel/pure.rs	FN	abs_i128
@@ -575,6 +620,7 @@ kernel/space.rs	FN	parse_sexpr
 kernel/space.rs	FN	prefix_subsumption
 kernel/space.rs	FN	prefix_subsumption_resources
 kernel/space.rs	FN	query_multi
+kernel/space.rs	FN	query_multi_dispatch
 kernel/space.rs	FN	query_multi_i
 kernel/space.rs	FN	query_multi_raw
 kernel/space.rs	FN	remove_all_sexpr
@@ -589,6 +635,7 @@ kernel/space.rs	FN	transform_multi_multi_
 kernel/space.rs	FN	transform_multi_multi_i
 kernel/space.rs	FN	transform_multi_multi_io
 kernel/space.rs	FN	transform_multi_multi_o
+kernel/space.rs	FN	warn_top_level_variable
 kernel/space.rs	TY	ASpaceTranscriber
 kernel/space.rs	TY	ParDataParser
 kernel/space.rs	TY	Space
@@ -602,6 +649,7 @@ linalg/blocked.rs	TY	Blocked
 linalg/blocked.rs	TY	Blocked16
 linalg/blocked.rs	TY	Blocked8
 linalg/csr.rs	FN	add
+linalg/csr.rs	FN	add_assign_tensor
 linalg/csr.rs	FN	bandwidth_stats
 linalg/csr.rs	FN	connected_components
 linalg/csr.rs	FN	dim
@@ -612,6 +660,7 @@ linalg/csr.rs	FN	get
 linalg/csr.rs	FN	identity
 linalg/csr.rs	FN	matmul
 linalg/csr.rs	FN	matmul_par
+linalg/csr.rs	FN	mul_assign_tensor
 linalg/csr.rs	FN	n
 linalg/csr.rs	FN	n_cols
 linalg/csr.rs	FN	n_rows
@@ -620,6 +669,8 @@ linalg/csr.rs	FN	new
 linalg/csr.rs	FN	nnz
 linalg/csr.rs	FN	rcm
 linalg/csr.rs	FN	row
+linalg/csr.rs	FN	sub_assign_tensor
+linalg/csr.rs	FN	zip_assign_with
 linalg/csr.rs	TY	Csr
 linalg/csr.rs	TY	Index
 linalg/csr.rs	TY	Value
@@ -635,6 +686,9 @@ linalg/einsum.rs	FN	exec
 linalg/einsum.rs	FN	parse_spec
 linalg/einsum.rs	TY	InvalidSpec
 linalg/einsum.rs	TY	Program
+linalg/ewise.rs	FN	pow_assign
+linalg/ewise.rs	FN	zip_assign
+linalg/ewise.rs	TY	Pow
 linalg/jit.rs	FN	compile
 linalg/jit.rs	FN	einsum_jit
 linalg/jit.rs	FN	new
