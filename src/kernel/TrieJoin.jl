@@ -673,21 +673,58 @@ function _outer_head_prefix(lp::Vector{UInt8})::Union{Nothing, Vector{UInt8}}
     vcat(lp[1], expr_span(e, 2))
 end
 
-function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int,Vector{Int}})
-    d = Dict{Int,Vector{UInt8}}()
+# ── BINDINGS AS A FLAT SLAB, NOT A HASH TABLE ────────────────────────────────────────────────────
+# ADOPTED from upstream's `Bindings` rewrite (`52f5fb7` flat sorted vec -> `0a41fb9` direct-indexed
+# slab). Its insight: "The key domain is bounded ... so (n, v) IS an index." Ours is simpler still —
+# the key is ALREADY a plain variable id, and the parser caps an expression at 64 variables — so a
+# `Vector` indexed by var id replaces the `Dict` outright. A probe is one load with no hashing and
+# no comparison; a copy is one allocation and one memcpy of N pointers.
+#
+# 🔴 MEASURED HERE BEFORE ADOPTING, because upstream's own justification is a measurement ("the
+# traces put the map at 0-8 entries on every workload") and theirs is not ours. Our distribution,
+# taken through `space_query_multi`'s binding callback on 2026-08-20:
+#
+#     clique4 (K40)    91 390 matches   EVERY ONE exactly 4 bindings
+#     3-chain                       4
+#     2-chain                       3
+#     single factor                 2
+#     ⇒ overall max 4, against upstream's observed 0-8. The premise holds with margin.
+#
+# So clique4 was allocating 91 390 hash tables of FOUR entries. Profiled cost of the structure the
+# join copies per tuple per factor: 448 B for the Dict, against 64 B for a flat slab.
+#
+# ⚠️ EMPTY MEANS UNBOUND, and that is sound rather than a convention: a bound value is a complete
+# subterm, which is at least one byte, so no legitimate binding is empty.
+# ⚠️ THE SENTINEL IS SHARED AND MUST NEVER BE MUTATED THROUGH. Slots are ASSIGNED whole vectors
+# (`slab[v] = bytes`), never `push!`ed into, so the aliasing `fill` introduces is safe. Any future
+# in-place mutation of a slot would corrupt every unbound entry at once.
+const _EMPTY_BIND = UInt8[]
+const BindSlab = Vector{Vector{UInt8}}
+
+# ⚠️ VARIABLE IDS ARE 0-BASED; Julia arrays are 1-based. Caught immediately by `trie_join.jl` as
+# `BoundsError … at index [0]` — the slab is sized `maxvid + 1` and every access goes through
+# `_slot`, so the offset lives in ONE place rather than as a `+ 1` sprinkled at each site (which is
+# how one gets missed).
+@inline _slot(vid::Int)::Int = vid + 1
+@inline _new_slab(nv::Int)::BindSlab = fill(_EMPTY_BIND, nv)
+@inline _slab_bound(sl::BindSlab, v::Int)::Bool = !isempty(sl[_slot(v)])
+
+function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int,Vector{Int}}, nv::Int)
+    d = _new_slab(nv)
     for (vid, path) in occ
         v = _navigate_path(atom, path)
         v === nothing && return nothing
         v === :hov && return :hov
         _expr_has_var(v) && return :hov
-        d[vid] = v::Vector{UInt8}
+        d[_slot(vid)] = v::Vector{UInt8}
     end
     d
 end
 
-# Multi-key: concatenate the (sorted) shared vars' bound values into one Dict key.
-_join_key(vals::Dict{Int,Vector{UInt8}}, shared::Vector{Int}) = begin
-    out = UInt8[]; for v in shared; append!(out, vals[v]); end; out
+# Multi-key: concatenate the (sorted) shared vars' bound values into one key. Direct indexing —
+# no hash, no comparison.
+_join_key(vals::BindSlab, shared::Vector{Int}) = begin
+    out = UInt8[]; for v in shared; append!(out, vals[_slot(v)]); end; out
 end
 
 # Pipelined hash join. Returns (handled, count); handled=false ⇒ a higher-order key was
@@ -697,19 +734,27 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         effect::Function, bindings_scratch::Dict{ExprVar, ExprEnv},
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
     k = length(sources)
+    # The slab's width: the highest variable id any factor mentions. Bounded by the parser's
+    # 64-variable cap, so this is small by construction.
+    nv = 0
+    for o in occ, vid in keys(o); nv = max(nv, vid + 1); end   # ids are 0-based ⇒ width = max + 1
+    # Per factor, the var ids it binds — iterated instead of a Dict's keys when merging a candidate.
+    vids = Vector{Vector{Int}}(undef, k)
+    for fi in 1:k; vids[fi] = sort!(collect(keys(occ[fi]))); end
+
     # Load + index each factor's atoms once; bail on any higher-order (var-bearing) atom.
-    atoms = Vector{Vector{Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}}}(undef, k)
+    atoms = Vector{Vector{Tuple{Vector{UInt8}, BindSlab}}}(undef, k)
     for fi in 1:k
-        lst = Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}[]
+        lst = Tuple{Vector{UInt8}, BindSlab}[]
         rz = read_zipper_at_path(btm, lps[fi])
         _n_scanned = 0
         while zipper_to_next_val!(rz)
             _n_scanned += 1
             full = vcat(lps[fi], collect(zipper_path(rz)))
-            vv = _atom_varvals(full, occ[fi])
+            vv = _atom_varvals(full, occ[fi], nv)
             vv === nothing && continue            # structural non-match → not in this relation
             vv === :hov && return (false, 0)      # higher-order key → bail
-            push!(lst, (full, vv::Dict{Int,Vector{UInt8}}))
+            push!(lst, (full, vv::BindSlab))
         end
         # Soundness cross-check (2026-07-24): a deep ground-prefix scan finding NOTHING is
         # not proof this relation has no data — it could be a stored higher-order RULE whose
@@ -763,26 +808,29 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
 
     # Pipeline. A partial tuple = (slot atoms by SOURCE index, merged bound values).
     f0 = order[1]
-    tuples = Tuple{Vector{Union{Nothing,Vector{UInt8}}}, Dict{Int,Vector{UInt8}}}[]
+    # ⚠️ `slot` WAS `Vector{Union{Nothing,Vector{UInt8}}}` — neither bits nor concrete, so every
+    # element boxed, and the copy cost 112 B. Same fix, same reason: an empty vector is the
+    # unbound marker and the element type becomes concrete.
+    tuples = Tuple{Vector{Vector{UInt8}}, BindSlab}[]
     for (a, vv) in atoms[f0]
-        slot = Vector{Union{Nothing,Vector{UInt8}}}(nothing, k); slot[f0] = a
+        slot = fill(_EMPTY_BIND, k); slot[f0] = a
         push!(tuples, (slot, copy(vv)))
     end
     boundvars = Set{Int}(keys(occ[f0]))
     for step in 2:k
         fi = order[step]
         shared = sort(collect(intersect(keys(occ[fi]), boundvars)))
-        idx = Dict{Vector{UInt8}, Vector{Tuple{Vector{UInt8}, Dict{Int,Vector{UInt8}}}}}()
+        idx = Dict{Vector{UInt8}, Vector{Tuple{Vector{UInt8}, BindSlab}}}()
         for t in atoms[fi]
             push!(get!(idx, _join_key(t[2], shared), valtype(idx)()), t)
         end
-        nxt = Tuple{Vector{Union{Nothing,Vector{UInt8}}}, Dict{Int,Vector{UInt8}}}[]
+        nxt = Tuple{Vector{Vector{UInt8}}, BindSlab}[]
         for (slot, bnd) in tuples
             cands = get(idx, _join_key(bnd, shared), nothing)
             cands === nothing && continue
             for (a, vv) in cands
                 ns = copy(slot); ns[fi] = a
-                nb = copy(bnd); for (vid, val) in vv; nb[vid] = val; end
+                nb = copy(bnd); for vid in vids[fi]; nb[_slot(vid)] = vv[_slot(vid)]; end
                 push!(nxt, (ns, nb))
             end
         end
