@@ -43,7 +43,14 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
     # Lazy stack: only allocated on the first Arity node with arity > 0.
     # Leaf-only and single-symbol expressions (the common case in unification)
     # never touch this variable, eliminating the ~180 byte/call Vector allocation.
-    stack = nothing   # Union{Nothing, Vector{Tuple{UInt8,Any}}}
+    # ⚠️ ELEMENT TYPE COMES FROM THE ACCUMULATOR, NOT FROM `Any`. This was
+    # `Tuple{UInt8, Any}[...]` below, which BOXED every accumulator value pushed. The allocation
+    # profiler found it on 2026-08-20: `Tuple{UInt8, Nothing}` was the single largest allocation
+    # type on `process_calculus` — 71 898 allocations in 60 steps — and `expr_traverseh` is the
+    # generic fold EVERY expression walk goes through, so the cost is paid everywhere.
+    # `zero_cb` is one function per call site and Julia specializes on it, so `typeof(acc)` is
+    # concrete; letting the literal infer gives `Vector{Tuple{UInt8, typeof(acc)}}` for free.
+    stack = nothing   # Union{Nothing, Vector{Tuple{UInt8, A}}} — A inferred at first push
     j = j0
 
     while true
@@ -70,7 +77,7 @@ function expr_traverseh(h0, x::MORK.Expr, j0::Int,
             else
                 # First compound node seen: allocate stack now
                 if stack === nothing
-                    stack = Tuple{UInt8, Any}[(tag.arity, acc)]
+                    stack = [(tag.arity, acc)]        # ⇐ infers Tuple{UInt8, typeof(acc)}
                 else
                     push!(stack, (tag.arity, acc))
                 end
