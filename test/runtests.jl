@@ -4780,6 +4780,14 @@ const _MORK_TS = @testset "MORK" begin
     # re-read the issue); #47 pins a deliberate divergence where upstream now aborts and we skip.
     include("integration/upstream_issues.jl")
 
+    # Leapfrog adoption (upstream kernel/src/leapfrog.rs) — built bottom-up, each layer validated
+    # before the next carries it. ⚠️ WIRED HERE THE SAME DAY THEY WERE WRITTEN: the first full-suite
+    # run after adding them came back 2970/2970 — the SAME count as before — because the files
+    # existed and nothing included them. A test that cannot run is worse than a missing test: it
+    # reads as coverage. [[feedback_verify_the_oracle_runs]]
+    include("integration/leapfrog_layer1.jl")
+    include("integration/leapfrog_layer2.jl")
+
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")
 

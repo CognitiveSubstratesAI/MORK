@@ -93,6 +93,17 @@ include("morkl/MorkL.jl")
 include("kernel/TrieJoin.jl")
 export trie_argset, trie_join_unary
 
+# ── Leapfrog (upstream kernel/src/leapfrog.rs, MORK PR #146) ─────────────────
+# Worst-case-optimal unification join. Being adopted BOTTOM-UP, each layer validated before the
+# next carries it — LAYER 1 ONLY so far (byte-scan + resumable subterm parser, no zipper, no join).
+# ⚠️ NO CONSUMER YET AND THAT IS DELIBERATE: `_space_query_multi_inner!` is untouched, so the live
+# engine still takes the P5 `_connected_join_emit!` path. Wiring happens when the join exists and
+# is gated against it, not before. [[feedback_parses_is_not_fires]]
+# WHY: measured 2026-08-20 on upstream's clique4 generator — ours 19 080 ms vs leapfrog 175 ms at
+# 200x3600, with OUR exponent the worst of the three (145x vs 54x vs 6.3x). See Leapfrog.jl header.
+include("kernel/Leapfrog.jl")
+using .Leapfrog: subterm_parse_step, least_ge, is_complete
+
 # ── DyckZipper (experiments/expr/dyck/) ──────────────────────────────────────
 
 # Compact bit-packed binary tree representation using Dyck words.
