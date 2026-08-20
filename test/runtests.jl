@@ -3954,7 +3954,14 @@ const _MORK_TS = @testset "MORK" begin
             e1 = MORK.Expr(UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')])
             e2 = MORK.Expr(UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')])
             result = expr_unify([(ExprEnv(0, e1), ExprEnv(1, e2))])
-            @test result isa Dict
+            # ⚠️ ASSERT THE CONTRACT, NOT THE REPRESENTATION. This read `isa Dict` and correctly went
+            # RED on 2026-08-20 when `expr_unify` began returning MORK's `Bindings` slab
+            # (`Bindings <: AbstractDict` but NOT `<: Dict`). The contract is "an AbstractDict of
+            # bindings, or a UnificationFailure" — the concrete map type is MORK's to change, and
+            # the same `isa Dict` shape had ALREADY broken Core's MorkBridge silently, returning
+            # `nothing` for every successful unification.
+            @test !(result isa UnificationFailure)
+            @test result isa AbstractDict{ExprVar, ExprEnv}
             @test isempty(result)
         end
 
@@ -3963,7 +3970,8 @@ const _MORK_TS = @testset "MORK" begin
             e1 = MORK.Expr(UInt8[0xC0])                              # $x
             e2 = MORK.Expr(UInt8[0xC3, UInt8('f'), UInt8('o'), UInt8('o')])  # foo
             result = expr_unify([(ExprEnv(0, e1), ExprEnv(1, e2))])
-            @test result isa Dict
+            @test !(result isa UnificationFailure)
+            @test result isa AbstractDict{ExprVar, ExprEnv}
             @test length(result) == 1
         end
 
@@ -4789,6 +4797,13 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/leapfrog_layer2.jl")
     include("integration/leapfrog_layer3a.jl")
     include("integration/leapfrog_layer3b.jl")
+    include("integration/bindings_slab.jl")
+
+    # JET dispatch ratchet — fails when a change ADDS runtime dispatch to the exec hot path.
+    # Added 2026-08-20 after a bare `::Vector` (element type Any) was found by running JET only
+    # once a workload turned out slow. The write-loop check is `@report_opt` on the function you
+    # touched; this is the part a SUITE can remember.
+    include("integration/jet_dispatch_ratchet.jl")
 
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")

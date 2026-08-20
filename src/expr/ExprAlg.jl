@@ -10,7 +10,7 @@ Provides:
 Julia translation notes
 ========================
   - Rust `traverseh!` macro (SmallVec stack) → Julia function + Vector stack
-  - Rust `BTreeMap<ExprVar, ExprEnv>` → Julia `Dict{ExprVar, ExprEnv}`
+  - Rust `BTreeMap<ExprVar, ExprEnv>` → Julia `Bindings` (a direct-indexed slab; see Expr.jl)
   - Rust `gxhash::HashSet<(ExprEnv, ExprEnv)>` → Julia `Set{...}` (skipped for simplicity)
   - 0-based byte offsets preserved; 1-based buf indexing via `buf[j+1]`
 """
@@ -418,14 +418,14 @@ Used by `_space_query_multi_inner!` to eliminate per-call Dict allocation.
 Public callers use `expr_unify` which allocates a fresh Dict.
 """
 function _expr_unify_inplace!(pairs::Vector{Tuple{ExprEnv, ExprEnv}},
-    bindings::Dict{ExprVar, ExprEnv})::Union{Bool, UnificationFailure}
+    bindings::Bindings)::Union{Bool, UnificationFailure}
     empty!(bindings)
     result = _expr_unify_core!(pairs, bindings)
     result isa UnificationFailure ? result : true
 end
 
 """
-    expr_unify(stack) → Union{Dict{ExprVar,ExprEnv}, UnificationFailure}
+    expr_unify(stack) → Union{Bindings, UnificationFailure}
 
 Unify pairs of `ExprEnv`s. Returns a fresh bindings map on success or a failure.
 Public API — always allocates a new Dict; safe to retain the result.
@@ -433,8 +433,8 @@ Mirrors `unify` in mork_expr.
 """
 function expr_unify(
     stack::Vector{Tuple{ExprEnv, ExprEnv}}
-)::Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
-    bindings = Dict{ExprVar, ExprEnv}()
+)::Union{Bindings, UnificationFailure}
+    bindings = Bindings()
     result = _expr_unify_core!(stack, bindings)
     result isa UnificationFailure ? result : bindings
 end
@@ -442,7 +442,7 @@ end
 # Shared implementation: fills `bindings` (which must already be empty/cleared).
 # Returns `bindings` on success or `UnificationFailure`.
 function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
-    bindings::Dict{ExprVar, ExprEnv})::Union{Dict{ExprVar, ExprEnv}, UnificationFailure}
+    bindings::Bindings)::Union{Bindings, UnificationFailure}
     iters = 0
     # encountered: deduplicates structural child pairs to break cyclic chains.
     # Mirrors the `encountered` HashSet<(ExprEnv,ExprEnv)> in the Rust `unify`.
@@ -612,7 +612,7 @@ Mirrors `apply` in mork_expr.
 """
 function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
     ez::ExprZipper,
-    bindings::Dict{ExprVar, ExprEnv},
+    bindings::Bindings,
     oz::ExprZipper,
     cycled::Dict{ExprVar, UInt8},
     stack::Vector{ExprVar},
@@ -732,7 +732,7 @@ function expr_apply(n::UInt8, original_intros::UInt8, new_intros::UInt8,
 end
 
 # Convenience wrapper
-function expr_apply(ez::ExprZipper, bindings::Dict{ExprVar, ExprEnv}, oz::ExprZipper)
+function expr_apply(ez::ExprZipper, bindings::Bindings, oz::ExprZipper)
     expr_apply(UInt8(0), UInt8(0), UInt8(0), ez, bindings, oz,
         Dict{ExprVar, UInt8}(), ExprVar[], ExprVar[])
 end

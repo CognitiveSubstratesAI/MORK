@@ -217,7 +217,7 @@ end
 
 CompatSink(e::MORK.Expr) = CompatSink(e, false)
 
-function sink_apply!(s::CompatSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::CompatSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     set_val_at!(btm, path, UNIT_VAL) === nothing && (s.changed = true)
 end
@@ -241,7 +241,7 @@ end
 
 AddSink(e::MORK.Expr) = AddSink(e, false)
 
-function sink_apply!(s::AddSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::AddSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     length(path) > 3 || return nothing
     set_val_at!(btm, path[4:end], UNIT_VAL) === nothing && (s.changed = true)
@@ -268,7 +268,7 @@ end
 
 RemoveSink(e::MORK.Expr) = RemoveSink(e, PathMap{UnitVal}())
 
-function sink_apply!(s::RemoveSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::RemoveSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     length(path) > 3 || return nothing
     set_val_at!(s.remove, path[4:end], UNIT_VAL)
@@ -339,7 +339,7 @@ end
 HeadSink(e::MORK.Expr) = _headtail_sink(e, true)
 TailSink(e::MORK.Expr) = _headtail_sink(e, false)
 
-function sink_apply!(s::HeadSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::HeadSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     length(path) <= s.skip && return nothing
     mpath = path[(s.skip + 1):end]
@@ -444,7 +444,7 @@ end
 
 CountSink(e::MORK.Expr) = CountSink(e, PathMap{UnitVal}())
 
-function sink_apply!(s::CountSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::CountSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     # Store the INSTANTIATED `<result> <source> <value>` (upstream: unique.insert(mpath, ())).
     plen = _sink_keyword_prefix_len(s.expr)
@@ -716,7 +716,7 @@ SumSink(e::MORK.Expr) = SumSink(e, PathMap{UnitVal}())
 # the 3-char symbol "sum" + its size byte. Mirrors upstream's `path[5+root..]`.
 const _SUM_KEYWORD_PREFIX_LEN = 5
 
-function sink_apply!(s::SumSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::SumSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     # Store the args after `(sum` (i.e. `<result> <expected> <x>`); finalize groups + sums them.
     length(path) > _SUM_KEYWORD_PREFIX_LEN || return nothing
@@ -780,7 +780,7 @@ AndSink(e::MORK.Expr) = AndSink(e, PathMap{UnitVal}())
 
 const _AND_KEYWORD_PREFIX_LEN = 5   # [4] + "and"(sym3) + size byte — mirrors upstream path[5+root..]
 
-function sink_apply!(s::AndSink, bindings::Dict{ExprVar, ExprEnv},
+function sink_apply!(s::AndSink, bindings::Bindings,
     path::Vector{UInt8}, btm::SinkBtm)
     length(path) > _AND_KEYWORD_PREFIX_LEN || return nothing
     set_val_at!(s.unique, path[(_AND_KEYWORD_PREFIX_LEN + 1):end], UNIT_VAL)
@@ -804,7 +804,7 @@ struct WASMSink <: AbstractSink
     ;
     expr::MORK.Expr;
 end
-@eval sink_apply!(::WASMSink, ::Dict, ::Vector{UInt8}, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
+@eval sink_apply!(::WASMSink, ::AbstractDict, ::Vector{UInt8}, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
 @eval sink_finalize!(::WASMSink, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
 
 # ── Z3Sink — write SMT-LIB assertions to a named z3 instance (real port of Rust Z3Sink) ──────────────
@@ -823,7 +823,7 @@ function Z3Sink(e::MORK.Expr)
     ins = name_tag isa ExprSymbol ? String(buf[6:(5 + Int(name_tag.size))]) : ""
     Z3Sink(e, ins, 5 + length(ins))
 end
-function sink_apply!(s::Z3Sink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+function sink_apply!(s::Z3Sink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return nothing
     text = expr_serialize(path[(s.skip + 1):end])            # the <se> assertion, e.g. (assert (> a 5))
     proc = z3_instance!(s.ins)
@@ -862,7 +862,7 @@ function ACTSink(e::MORK.Expr)
     ACTSink(e, PathMap{UnitVal}(), name, skip)
 end
 
-function sink_apply!(s::ACTSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+function sink_apply!(s::ACTSink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return nothing
     set_val_at!(s.tmp, path[(s.skip + 1):end], UNIT_VAL)
 end
@@ -892,7 +892,7 @@ end
 
 USink(e::MORK.Expr) = USink(e, nothing, false)
 
-function sink_apply!(s::USink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+function sink_apply!(s::USink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > 3 || return nothing
     s.conflict && return nothing
     # Skip [2] U header (3 bytes: arity + sym_header + 'U')
@@ -1060,7 +1060,7 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     (s1, s2)
 end
 
-function sink_apply!(s::AUSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+function sink_apply!(s::AUSink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > 4 || return nothing
     # Skip [2] AU header: arity(1) + sym_header(1) + 'A'(1) + 'U'(1) = 4 bytes
     expr_bytes = path[5:end]
@@ -1114,7 +1114,7 @@ function HashSink(e::MORK.Expr)
     HashSink(e, PathMap{UnitVal}(), skip)
 end
 
-function sink_apply!(s::HashSink, ::Dict, path::Vector{UInt8}, ::SinkBtm)
+function sink_apply!(s::HashSink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return nothing
     set_val_at!(s.unique, path[(s.skip + 1):end], UNIT_VAL)
 end
@@ -1327,7 +1327,7 @@ function _expr_end_offset(buf::AbstractVector{UInt8}, off::Int)::Int
     off + 1
 end
 
-function sink_apply!(s::PureSink, bindings::Dict, path::Vector{UInt8}, btm::SinkBtm)
+function sink_apply!(s::PureSink, bindings::AbstractDict, path::Vector{UInt8}, btm::SinkBtm)
     buf = s.expr.buf
     length(buf) < 2 || byte_item(buf[1]) isa ExprArity || return nothing
 

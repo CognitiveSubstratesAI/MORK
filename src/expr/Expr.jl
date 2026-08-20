@@ -1013,6 +1013,129 @@ end
 ExprEnv(n::Integer, base::Expr) = ExprEnv(UInt8(n), UInt8(0), UInt32(0), base)
 ExprEnv(n::Integer, base::Vector{UInt8}) = ExprEnv(n, Expr(base))
 
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# Bindings — a DIRECT-INDEXED SLAB behind the `AbstractDict` interface.
+#
+# ADOPTED from upstream `Bindings` (`expr/src/lib.rs:1821`), which replaced a `BTreeMap` in two
+# steps: `52f5fb7` (flat sorted vec) then `0a41fb9` (direct-indexed slab, stacked on the trail).
+# The insight, in upstream's words:
+#
+#     "The key domain is bounded -- at most 64 conjuncts (an arity byte), each namespace at most 64
+#      variables (the parser's cap) -- so (n, v) IS an index: n << 6 | v. A probe is one load with
+#      no comparisons, ordering or hashing; insert is a store plus a touched-list push."
+#
+# 🔑 `ExprVar` IS ALREADY THAT PAIR HERE. Ours is `Tuple{UInt8,UInt8}` = (source_id, var_index),
+# mirroring upstream's `(u8, u8)` — so `Dict{ExprVar,ExprEnv}` has been hashing and comparing a key
+# that is already an index into a small array.
+#
+# ⚠️ IT SUBTYPES `AbstractDict` DELIBERATELY, and that is the Julia form of upstream's own strategy
+# ("The BTreeMap API subset the engine used is kept, so call sites are unchanged beyond constructor
+# literals"). There are 35 `Dict{ExprVar,ExprEnv}` sites across 5 files, and `space_query_multi`'s
+# callback hands one to CORE — `PatternMiner.jl` and `core_match_bind` both consume it — so the type
+# is PUBLIC CONTRACT. A drop-in keeps every one of those compiling and behaving while the
+# representation moves underneath.
+#
+# 🔴 MEASURED BEFORE ADOPTING, because upstream's justification is a measurement and theirs is not
+# ours. Binding counts observed through the query callback on 2026-08-20: clique4 (K40) 91 390
+# matches, EVERY ONE with exactly 4 bindings; 3-chain 4; 2-chain 3; single factor 2. Max 4, against
+# upstream's observed 0-8. The premise holds with margin.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    Bindings
+
+Variable bindings as a slab indexed by `(source_id << 6) | var_index`, with a `touched` list giving
+iteration order and length. A drop-in for `Dict{ExprVar,ExprEnv}`.
+
+`touched` holds 0-BASED slot indices. `length` is `length(touched)`, so it stays O(1) and cannot
+drift from the slab: every occupied slot is in the list exactly once, which the `setindex!`/`delete!`
+pair maintains.
+"""
+mutable struct Bindings <: AbstractDict{ExprVar, ExprEnv}
+    slots::Vector{Union{Nothing, ExprEnv}}
+    touched::Vector{Int}
+end
+
+Bindings() = Bindings(Union{Nothing, ExprEnv}[], Int[])
+
+"""Slot index for `k`, 0-based. `v` is masked to 6 bits — the parser caps variables at 63."""
+@inline _bind_idx(k::ExprVar)::Int = (Int(k[1]) << 6) | (Int(k[2]) & 63)
+
+@inline _bind_key(i::Int)::ExprVar = (UInt8(i >> 6), UInt8(i & 63))
+
+@inline function Base.get(b::Bindings, k::ExprVar, default)
+    i = _bind_idx(k) + 1
+    (i <= length(b.slots) && b.slots[i] !== nothing) ? b.slots[i]::ExprEnv : default
+end
+
+@inline Base.haskey(b::Bindings, k::ExprVar)::Bool = begin
+    i = _bind_idx(k) + 1
+    i <= length(b.slots) && b.slots[i] !== nothing
+end
+
+function Base.getindex(b::Bindings, k::ExprVar)::ExprEnv
+    v = get(b, k, nothing)
+    v === nothing && throw(KeyError(k))
+    v::ExprEnv
+end
+
+function Base.setindex!(b::Bindings, v::ExprEnv, k::ExprVar)
+    i = _bind_idx(k) + 1
+    # Grow by a namespace at a time, as upstream does (`resize(i + 64, None)`) — a source id in a
+    # join touches 64 consecutive slots, so this amortizes to one growth per namespace.
+    if i > length(b.slots)
+        # ⚠️ `resize!` LEAVES THE NEW ENTRIES UNDEFINED for a non-isbits element type (`ExprEnv`
+        # holds a `Vector`), so they must be written before anything reads them. Reading an
+        # undefined slot is not `nothing` — it throws, or worse.
+        old_len = length(b.slots)
+        resize!(b.slots, i + 63)
+        for j in (old_len + 1):length(b.slots)
+            b.slots[j] = nothing
+        end
+    end
+    prev = b.slots[i]
+    b.slots[i] = v
+    prev === nothing && push!(b.touched, i - 1)   # occupied exactly once in `touched`
+    v
+end
+
+function Base.delete!(b::Bindings, k::ExprVar)
+    i = _bind_idx(k) + 1
+    if i <= length(b.slots) && b.slots[i] !== nothing
+        b.slots[i] = nothing
+        # ⚠️ SCAN FROM THE BACK. Upstream: "The join removes by trail unwinding, newest first, so the
+        # scan from the back is usually one step." Order is not depended on, so the found entry is
+        # swap-removed rather than shifted.
+        z = i - 1
+        for p in length(b.touched):-1:1
+            if b.touched[p] == z
+                b.touched[p] = b.touched[end]
+                pop!(b.touched)
+                break
+            end
+        end
+    end
+    b
+end
+
+Base.length(b::Bindings)::Int = length(b.touched)
+Base.isempty(b::Bindings)::Bool = isempty(b.touched)
+
+function Base.empty!(b::Bindings)
+    for z in b.touched; b.slots[z + 1] = nothing; end   # only the occupied ones
+    empty!(b.touched)
+    b
+end
+
+function Base.iterate(b::Bindings, state::Int = 1)
+    state > length(b.touched) && return nothing
+    z = b.touched[state]
+    (_bind_key(z) => b.slots[z + 1]::ExprEnv, state + 1)
+end
+
+"""Copy: one allocation and one memcpy per vector. `ExprEnv` is immutable, so values are shared."""
+Base.copy(b::Bindings) = Bindings(copy(b.slots), copy(b.touched))
+
 """Sub-expression at current offset."""
 function ee_subsexpr(ee::ExprEnv)
     Expr(view(ee.base.buf, (Int(ee.offset) + 1):length(ee.base.buf)))

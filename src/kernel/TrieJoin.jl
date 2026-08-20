@@ -105,7 +105,7 @@ end
 # tail (so bindings + `combined` are byte-identical). Returns the candidate count.
 function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         hps::Vector{Vector{UInt8}}, effect::Function,
-        bindings_scratch::Dict{ExprVar, ExprEnv},
+        bindings_scratch::Bindings,
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     common = trie_join_unary(btm, hps)
     candidate = 0
@@ -224,7 +224,7 @@ end
 # tail (combined + bindings byte-identical). Returns the candidate count.
 function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         kp1::Int, kp2::Int, hp1::Vector{UInt8}, hp2::Vector{UInt8}, effect::Function,
-        bindings_scratch::Dict{ExprVar, ExprEnv},
+        bindings_scratch::Bindings,
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     m1 = _bin_keymap(btm, hp1, kp1)
     m2 = _bin_keymap(btm, hp2, kp2)
@@ -483,7 +483,7 @@ end
 # caller must fall through to ProductZipper (NO effect has fired yet in that case).
 function _nested_binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         lp1::Vector{UInt8}, vp1::Vector{Int}, lp2::Vector{UInt8}, vp2::Vector{Int},
-        effect::Function, bindings_scratch::Dict{ExprVar, ExprEnv},
+        effect::Function, bindings_scratch::Bindings,
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
     (m1, s1) = _nested_keymap(btm, lp1, vp1)
     s1 || return (false, 0)
@@ -558,7 +558,7 @@ end
 # the leaf reconstruct the combined path + drive the unify/effect contract. Returns the count.
 function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         hps::Vector{Vector{UInt8}}, effect::Function,
-        bindings_scratch::Dict{ExprVar, ExprEnv},
+        bindings_scratch::Bindings,
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     k = length(sources)
     kms = [Dict{Vector{UInt8}, Vector{Vector{UInt8}}}() for _ in 1:k]   # factor i>=2 keyed by 1st arg
@@ -731,7 +731,7 @@ end
 # found and NO effect fired ⇒ caller falls through to ProductZipper.
 function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         order::Vector{Int}, occ::Vector{Dict{Int,Vector{Int}}}, lps::Vector{Vector{UInt8}},
-        effect::Function, bindings_scratch::Dict{ExprVar, ExprEnv},
+        effect::Function, bindings_scratch::Bindings,
         pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
     k = length(sources)
     # The slab's width: the highest variable id any factor mentions. Bounded by the parser's
@@ -925,7 +925,7 @@ function _chain_proj_emit!(s, hps::Vector{Vector{UInt8}}, template_ees::Vector{E
     obuf = Vector{UInt8}(undef, 1 << 16)
     tspans = [Vector{UInt8}(expr_span(ee.base, Int(ee.offset) + 1)) for ee in template_ees]
     for (x0, xks) in reach, xk in xks
-        bind = Dict{ExprVar, ExprEnv}()
+        bind = Bindings()
         bind[(UInt8(0), UInt8(0))]      = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(x0))
         bind[(UInt8(0), UInt8(xk_idx))] = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(xk))
         for tsp in tspans

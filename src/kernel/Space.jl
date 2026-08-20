@@ -630,11 +630,11 @@ function space_query_multi(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     n_factors > 0 || error("pat_expr arity must be > 0")
 
     if n_factors == 1
-        effect(Dict{ExprVar, ExprEnv}(), pat_expr.buf)
+        effect(Bindings(), pat_expr.buf)
         return 1
     end
 
-    _bindings_scratch = Dict{ExprVar, ExprEnv}()
+    _bindings_scratch = Bindings()
     _pairs_scratch = Tuple{ExprEnv, ExprEnv}[]
 
     _space_query_multi_inner!(btm, pat_expr, pat_v, n_factors, effect,
@@ -674,11 +674,11 @@ function space_query_multi_at(btm::PathMap{UnitVal}, prefix::Vector{UInt8},
     n_factors > 0 || error("pat_expr arity must be > 0")
 
     if n_factors == 1
-        effect(Dict{ExprVar, ExprEnv}(), pat_expr.buf)
+        effect(Bindings(), pat_expr.buf)
         return 1
     end
 
-    _bindings_scratch = Dict{ExprVar, ExprEnv}()
+    _bindings_scratch = Bindings()
     _pairs_scratch = Tuple{ExprEnv, ExprEnv}[]
 
     _space_query_multi_inner!(btm, pat_expr, pat_v, n_factors, effect,
@@ -712,7 +712,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     n_factors > 0 || return 0
 
     if n_factors == 1
-        effect(Dict{ExprVar, ExprEnv}(), pat_expr.buf)
+        effect(Bindings(), pat_expr.buf)
         return 1
     end
 
@@ -734,7 +734,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     end
 
     candidate = 0
-    bindings_scratch = Dict{ExprVar, ExprEnv}()
+    bindings_scratch = Bindings()
     pairs_scratch = Tuple{ExprEnv, ExprEnv}[]
 
     # ── Case 1: all sources are grounded (no trie query needed) ──────
@@ -744,7 +744,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
             results = _grounded_call_no_args(src)
             for path in results
                 candidate += 1
-                effect(Dict{ExprVar, ExprEnv}(), path) || return candidate
+                effect(Bindings(), path) || return candidate
             end
         end
         return candidate
@@ -877,7 +877,7 @@ end
 
 """Call a GroundedSource after substituting trie-matched variable bindings."""
 function _grounded_call_with_bindings(src::GroundedSource,
-    bindings::Dict{ExprVar, ExprEnv})::Vector{Vector{UInt8}}
+    bindings::Bindings)::Vector{Vector{UInt8}}
     f = get(GROUNDED_REGISTRY, src.name, nothing)
     f === nothing && return Vector{UInt8}[]
     # Apply bindings to each argument before decoding
@@ -903,7 +903,7 @@ function _grounded_call_with_bindings(src::GroundedSource,
 end
 
 """Apply variable bindings to an Expr, returning a new Expr with variables replaced."""
-function _expr_apply_bindings(e::MORK.Expr, bindings::Dict{ExprVar, ExprEnv})::MORK.Expr
+function _expr_apply_bindings(e::MORK.Expr, bindings::Bindings)::MORK.Expr
     isempty(bindings) && return e
     # Walk bytes and substitute NewVar/VarRef bytes with bound expression bytes
     out = UInt8[]
@@ -961,7 +961,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     pat_v::UInt8,
     n_factors::Int,
     effect::Function,
-    bindings_scratch::Dict{ExprVar, ExprEnv},
+    bindings_scratch::Bindings,
     pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}};
     prefix::Vector{UInt8}=UInt8[])::Int
     # Rule of 64: warn if pattern exceeds practical source limit.
@@ -1718,14 +1718,24 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     # Pre-create persistent (accumulating) sinks for O-templates.
     # CountSink accumulates sources across all matches before finalizing once.
     # Other sinks are created fresh per match (persistent_sinks[k] = nothing).
+    # ⚠️ ELEMENT TYPE STATED AT CONSTRUCTION. `map` here yields `asink_new(...)` (declared
+    # `::AbstractSink`) or `nothing`, and the two `::Vector` assertions further down then DISCARDED
+    # whatever inference had — a bare `Vector` means element type `Any`, so every `sink_finalize!`
+    # became a runtime dispatch. JET named it directly (`report_opt` on the exec path:
+    # "runtime dispatch detected: sink_finalize!(%1231::Any, ...)" and
+    # "(A::Vector)[i::Int64]::Any"). Naming the union costs nothing and is what our own standing
+    # rule against `Any` in code means in practice.
     persistent_sinks = if no_sink
         nothing
     else
-        map(template_ees) do ee
+        out = Union{Nothing, AbstractSink}[]
+        sizehint!(out, length(template_ees))
+        for ee in template_ees
             tpl_span = expr_span(ee.base, Int(ee.offset) + 1)
             raw_bytes = Vector{UInt8}(tpl_span)
-            _is_accumulating_sink(raw_bytes) ? asink_new(MORK.Expr(raw_bytes)) : nothing
+            push!(out, _is_accumulating_sink(raw_bytes) ? asink_new(MORK.Expr(raw_bytes)) : nothing)
         end
+        out
     end
 
     # ADR-056 P4-B projection pushdown: a set-sink (`,`) exec whose pattern is a strict chain
@@ -1871,7 +1881,7 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
             else
                 # `O` template functor — apply each template then dispatch to sink.
                 # Accumulating sinks (CountSink) use persistent_sinks created before query.
-                ps = persistent_sinks::Vector
+                ps = persistent_sinks::Vector{Union{Nothing, AbstractSink}}
                 for (k, ee) in enumerate(template_ees)
                     ez = tpl_ezs[k];
                     ez.loc = 1
@@ -1913,7 +1923,7 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
 
     # Finalize accumulating sinks (CountSink etc.) once after all matches
     if !no_sink && persistent_sinks !== nothing
-        for sink in persistent_sinks::Vector
+        for sink in persistent_sinks::Vector{Union{Nothing, AbstractSink}}
             sink === nothing && continue
             changed = sink_finalize!(sink, sink_btm)
             changed && (any_new[] = true)
@@ -2398,7 +2408,7 @@ function space_token_bfs(
             (ExprEnv(UInt8(0), UInt8(0), UInt32(0), e),
             ExprEnv(UInt8(1), UInt8(0), UInt32(0), pattern))
         ]
-        scratch = Dict{ExprVar, ExprEnv}()
+        scratch = Bindings()
         if _expr_unify_inplace!(pairs, scratch) === true
             # Port of upstream MORK dbf9d50: compute child_count so the client
             # can decide whether further exploration from this token is fruitful.
@@ -2444,7 +2454,7 @@ function space_token_bfs(
                 (ExprEnv(UInt8(0), UInt8(0), UInt32(0), e),
                 ExprEnv(UInt8(1), UInt8(0), UInt32(0), pattern))
             ]
-            scratch = Dict{ExprVar, ExprEnv}()
+            scratch = Bindings()
             if _expr_unify_inplace!(pairs, scratch) === true
                 push!(res, (UInt8[], e, 0))
             end
@@ -2952,7 +2962,7 @@ precompile(
         MORK.Expr,
         Int,
         Function,
-        Dict{ExprVar, ExprEnv},
+        Bindings,
         Vector{Tuple{ExprEnv, ExprEnv}}
     )
 )
