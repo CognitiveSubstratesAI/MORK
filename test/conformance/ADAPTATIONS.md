@@ -300,6 +300,19 @@ hasher entirely under miri/riscv64 is the same fact from a third direction. What
 be is CONSISTENT and content-addressing within one engine; XXH3-128 is both, and is a real hash
 rather than the XOR stub upstream was actually running.
 
+⚠️ **"BUT PATHMAP HAS A GxHasher" — IT IS THE OTHER ONE.** `PathMap/src/pathmap/GxHash.jl` is a 1:1
+port with 11 passing tests, and reading its name as "we can match gxhash" is the mistake this
+paragraph exists to stop (made, and caught, on 2026-08-20). Upstream has **TWO** GxHashers and they
+are not interchangeable:
+
+    #[cfg(not(any(miri, target_arch="riscv64")))]  use gxhash;         // the REAL AES-NI crate
+    #[cfg(any(miri, target_arch="riscv64"))]       mod gxhash { ... }  // a ~20-line mixer
+
+Ours ports the **fallback mixer**, and it is PathMap-only — `merkleization.rs:56,79` /
+`morphisms.rs:242,255`, i.e. `map_hash`. It has nothing to do with MORK's `hash_expr`, which upstream
+now routes through the REAL crate. Having the fallback is not having gxhash, and the very existence
+of that two-way cfg is a third independent statement that these digests are per-target.
+
 **What it costs.** Any probe or program comparing a `hash_expr` digest against a post-06cdcf3
 upstream binary will differ, and content-addresses computed by the two engines are not
 interchangeable. It costs nothing where the hash is used as an identity within one engine, which is
