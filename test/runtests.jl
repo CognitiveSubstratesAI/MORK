@@ -4787,6 +4787,8 @@ const _MORK_TS = @testset "MORK" begin
     # reads as coverage. [[feedback_verify_the_oracle_runs]]
     include("integration/leapfrog_layer1.jl")
     include("integration/leapfrog_layer2.jl")
+    include("integration/leapfrog_layer3a.jl")
+    include("integration/leapfrog_layer3b.jl")
 
     # ── XXH3-128 differential vs the xxhash-rust crate (Expr::hash backing) ───
     include("unit_xxh3.jl")

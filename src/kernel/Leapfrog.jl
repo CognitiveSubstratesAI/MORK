@@ -38,7 +38,30 @@
 #   LAYER 1 ✅ the pure byte-scan and resumable subterm parser (119/119, incl. 82 assertions that
 #             the incremental state equals the from-scratch replay byte for byte)
 #   LAYER 2 ✅ the zipper subterm cursor — enumeration and leapfrog `seek` over the live trie
-#   LAYER 3 ⏳ the unification leapfrog join itself
+#   LAYER 3a ✅ the GROUND leapfrog join (upstream's own scaffolding step, recovered from
+#              `69393c7^` where it lived as `GroundJoin::leapfrog`)
+#   LAYER 3b 🟡 the UNIFICATION layer — PREDICATES DONE (is_wildcard_term · is_symbol_head ·
+#              column_matches_by_equality, with the byte ordering they rest on pinned exhaustively
+#              over all 256 bytes). The JOIN INTEGRATION is blocked on one thing, below.
+#
+#              🔴 3b's INTEGRATION AND THE PORT'S ONLY REAL GAP ARE THE SAME OBJECT — `Bindings`.
+#              Three findings from 2026-08-20 converge on it:
+#                · the port-inventory ratchet's only genuine missing pair is `expr/lib.rs`
+#                  `Bindings` + `SkippedSubterm` (the other 9 new types are leapfrog, nightly
+#                  sinks, and linalg)
+#                · the profile's top frame is `copy(Dict{Int,Vector{UInt8}})` at 448 B per
+#                  intermediate tuple per factor, against 64 B for a flat slab
+#                · the leapfrog binds PER CANDIDATE and unwinds on backtrack, so it needs
+#                  INCREMENTAL bind-with-undo. Ours (`_expr_unify_inplace!`, ExprAlg.jl:420) takes
+#                  a `Dict{ExprVar,ExprEnv}` and `empty!`s it — all-or-nothing, no trail, no marks.
+#                  Rebinding from scratch per candidate would reintroduce exactly the copy cost
+#                  this whole adoption exists to remove.
+#              ⇒ upstream's own sequence is the order to follow: `52f5fb7` (flat sorted vec, not a
+#              BTreeMap) -> `0a41fb9` (direct-indexed slab stacked on the trail) -> `cfa8abf`
+#              (bind candidates incrementally with an undo trail). Do `Bindings` FIRST; 3b's
+#              integration then has something to bind into, and the P5 path gets faster whether or
+#              not leapfrog ever dispatches.
+#   LAYER 3c ⏳ (was 3b integration) the wildcard branches in the descent, on top of Bindings
 #
 #             🔴 READ THIS BEFORE WRITING LAYER 3 — the soundness constraint, in upstream's words
 #             (`fill_lead_candidates`, leapfrog.rs:1758-1766). It is the one thing here that a
@@ -80,7 +103,11 @@
 module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar
-using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore,
+# ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
+# `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
+# plainly and take everything else by name.
+using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
+               read_zipper_at_path,
                zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
                zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
                zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
@@ -88,7 +115,9 @@ using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore,
 
 export subterm_parse_step, least_ge, is_complete, PARSE_START,
        SubtermCursor, cursor_first!, cursor_next!, cursor_key, cursor_seek!,
-       cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts
+       cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts,
+       GroundFactor, ground_leapfrog,
+       is_wildcard_term, is_symbol_head, column_matches_by_equality
 
 """
     PARSE_START
@@ -382,9 +411,33 @@ function cursor_descend_floor!(c::SubtermCursor)
     nothing
 end
 
-"Undo the most recent `cursor_descend_floor!`: the floor rises back, repositioned at the value it held."
+"""
+    cursor_ascend_floor!(c)
+
+Undo the most recent [`cursor_descend_floor!`]: the floor rises back to the enclosing column, which
+is repositioned at the value it held (still on the zipper's path), ready to advance via
+[`cursor_next!`].
+
+🔴 IT RESETS THE CURRENT COLUMN TO ITS FLOOR FIRST, AND UPSTREAM DOES NOT. Upstream states this as a
+CALLER PRECONDITION — "requires the zipper to be back at this column's floor plus that value, which
+holds because a fully-exhausted deeper column leaves its cursor at its own floor" — and in its own
+join that holds, because every exit path runs `reset_parts` before unwinding.
+
+⚠️ MEASURED 2026-08-20: relying on the caller is how this broke. The ground join's CATCH-UP consumes
+extra columns that are NOT part of the enumeration, and unwinding them popped a column while the
+deeper bytes were still on the zipper's path. The enclosing column's key then read DOUBLE its length
+(`|stack|=2` against `key_len=4`), and the next `cursor_next!` popped an empty parse stack —
+surfacing as `ArgumentError: array must be non-empty` in `retreat_parse!`, THREE FRAMES from its
+cause. Two speculative fixes failed before instrumenting the cursor state per step found it.
+
+Enforcing it here rather than documenting it is the Julia-idiomatic choice and removes a precondition
+that a correct-looking caller can silently violate. The reset is a no-op when the caller already
+satisfied it, so nothing is paid on upstream's own path.
+[[feedback_guarantee_not_convention]]
+"""
 function cursor_ascend_floor!(c::SubtermCursor)
     isempty(c.floor_stack) && error("cursor_ascend_floor! without a matching cursor_descend_floor!")
+    cursor_reset_to_floor!(c)          # bring the zipper back to THIS column's floor
     c.col = pop!(c.floor_stack)
     c.at_end = false
     nothing
@@ -564,6 +617,280 @@ function cursor_seek!(c::SubtermCursor, target::AbstractVector{UInt8})
             return nothing
         end
     end
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 3a — the GROUND leapfrog join.
+#
+# Ports upstream `GroundJoin::leapfrog` — which is UPSTREAM'S OWN SCAFFOLDING STEP, not something we
+# invented to make the port easier. It was added in `03dcdad` ("Add a worst-case-optimal
+# leapfrog-unification join") as `kernel/src/zipper_join.rs` and deleted in `69393c7` ("Reduce the
+# join to a compile-time feature and delete what it doesn't need") once the general unification join
+# subsumed it. The general version's own docstring still points at it: "This is the true leapfrog
+# intersection, modelled on [`GroundJoin::leapfrog`]". Recovered from `69393c7^`.
+#
+# 🔑 WHY THIS IS THE RIGHT SLICE TO DO FIRST. It is GROUND: every factor column is a plain variable
+# and the data holds no stored variables, so INTERSECTION IS EQUALITY and the wildcard soundness
+# constraint recorded in this file's header DOES NOT YET APPLY. That constraint is the one thing a
+# plausible WCO implementation gets wrong silently; separating it from the seek machinery means the
+# seek can be validated on its own, against an oracle, before anything subtle rests on it.
+#
+# THE ALGORITHM, in upstream's words: "seek each cursor to the running maximum subterm; when they
+# all agree, that value is in the intersection, so descend every cursor into it, recurse, ascend
+# back, and step the first cursor forward. Every exit resets the participating cursors to their
+# column floors so the parent can ascend past its own column cleanly."
+#
+# ⚠️ NO INTERMEDIATE IS MATERIALIZED — that is the entire difference from `_connected_join_emit!`.
+# There is no `nxt` array, no per-tuple `copy(Dict)`, no per-tuple `copy(Vector)`. The only
+# allocation in the loop is `max_buf`, reused, because `cursor_seek!` needs the target to outlive
+# the borrow of the cursor it was read from.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    GroundFactor
+
+One relation participating in a ground join: the byte prefix its facts live under, and which query
+variable occupies each successive column.
+
+`cols[j] == v` means column `j` of this factor is query variable `v`. A variable may occur in
+several factors and several times within one — that repetition IS the join.
+"""
+struct GroundFactor
+    prefix::Vector{UInt8}
+    cols::Vector{Int}
+end
+
+"""
+    ground_leapfrog(btm, factors, nvars, emit) -> Int
+
+Worst-case-optimal ground conjunctive join. Calls `emit(binding)` once per satisfying assignment,
+where `binding[v]` is the bytes bound to variable `v`. Returns the number of assignments emitted.
+
+Variables are scheduled `1:nvars` in order. At each level the participating factors are those whose
+CURRENT column is that variable, and their cursors leapfrog to a common value.
+
+⚠️ `emit` MUST NOT RETAIN `binding` — it is the join's live scratch and is mutated on return. Copy
+what you need. This mirrors upstream's contract, where the callback takes a borrow.
+"""
+function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
+                         nvars::Int, emit::Function)::Int
+    nf = length(factors)
+    nf == 0 && return 0
+
+    # One HELD cursor per factor, opened once at its relation prefix. Upstream: "Every consumed
+    # column value is descended in place and ascended on unwind, so no probe pays an O(path)
+    # re-descent from the trie root." Re-opening per probe is the cost this design exists to avoid.
+    cursors = SubtermCursor{UnitVal, GlobalAlloc}[]
+    for f in factors
+        z = read_zipper_at_path(btm, f.prefix)
+        push!(cursors, SubtermCursor(z))
+    end
+
+    next_col = ones(Int, nf)                     # 1-based: which column each factor is at
+    binding  = [UInt8[] for _ in 1:nvars]
+    max_buf  = UInt8[]
+    parts    = Int[]
+    emitted  = Ref(0)
+
+    reset_parts!(ps) = (for f in ps; cursor_reset_to_floor!(cursors[f]); end)
+
+    function recurse(i::Int)
+        if i > nvars
+            # Every column consumed and every cursor sits on a stored fact ⇒ an answer.
+            for f in 1:nf
+                cursor_has_value(cursors[f]) || return
+            end
+            emitted[] += 1
+            emit(binding)
+            return
+        end
+
+        # The factors whose CURRENT column is variable i. Rebuilt per level rather than cached:
+        # cheap, and a cache here would have to be unwound on every backtrack.
+        empty!(parts)
+        for f in 1:nf
+            c = next_col[f]
+            c <= length(factors[f].cols) && factors[f].cols[c] == i && push!(parts, f)
+        end
+        isempty(parts) && return
+
+        for f in parts
+            cursor_first!(cursors[f])
+            if cursors[f].at_end
+                reset_parts!(parts)
+                return
+            end
+        end
+
+        myparts = copy(parts)                    # `parts` is reused by deeper levels
+        while true
+            # Running maximum by VIEW comparison — no key is copied to find it.
+            max_f = myparts[1]
+            for f in myparts
+                if cursor_key(cursors[f]) > cursor_key(cursors[max_f])
+                    max_f = f
+                end
+            end
+            # Copied ONCE, because `cursor_seek!` mutates the cursor the view reads from.
+            empty!(max_buf); append!(max_buf, cursor_key(cursors[max_f]))
+
+            all_match = true
+            for f in myparts
+                if cursor_key(cursors[f]) != max_buf
+                    cursor_seek!(cursors[f], max_buf)
+                    if cursors[f].at_end
+                        reset_parts!(myparts)
+                        return
+                    end
+                    cursor_key(cursors[f]) != max_buf && (all_match = false)
+                end
+            end
+
+            if all_match
+                val = copy(max_buf)              # the recursion re-uses max_buf below this frame
+                for f in myparts
+                    cursor_descend_floor!(cursors[f])
+                    next_col[f] += 1
+                end
+                binding[i] = val
+
+                # ── CATCH-UP (upstream `UnifyJoin::catch_up`) ────────────────────────────────────
+                # 🔴 WITHOUT THIS, A REPEATED VARIABLE SILENTLY RETURNS NOTHING. The level loop
+                # schedules each variable ONCE, so a factor whose NEXT column is a variable that is
+                # already bound would never be advanced past it — it would sit mid-fact forever and
+                # `cursor_has_value` at the leaf would be false for every assignment.
+                # `(edge $x $x)` returned 0 where the diagonal has 2, and the ORACLE FOUND IT: the
+                # chain join, the clique4 shape, the empty case and the single-factor case all
+                # passed without it. A repeated variable is the cheapest possible join and it was
+                # the one shape the happy paths could not see.
+                # Seeking to the binding is exactly right here: the column must EQUAL the bound
+                # value, and in the ground case unifiability IS equality.
+                caught = Int[]                   # (factor, columns advanced) — for the unwind
+                ok = true
+                for f in 1:nf
+                    adv = 0
+                    while next_col[f] <= length(factors[f].cols)
+                        v = factors[f].cols[next_col[f]]
+                        isempty(binding[v]) && break        # still free ⇒ it gets scheduled later
+                        cursor_seek!(cursors[f], binding[v])
+                        if cursors[f].at_end || cursor_key(cursors[f]) != binding[v]
+                            # ⚠️ RESET BEFORE BAILING. `cursor_ascend_floor!` REQUIRES the zipper to
+                            # be back at the column's floor — upstream states it as a precondition
+                            # ("a fully-exhausted deeper column leaves its cursor at its own
+                            # floor"). A failed seek leaves the cursor positioned mid-key or
+                            # at_end, so the unwind below would pop a column whose parse stack no
+                            # longer matches the zipper's path, and the NEXT `cursor_next!` pops an
+                            # empty stack. That surfaced as `ArgumentError: array must be
+                            # non-empty` in `retreat_parse!` — a desync reported three frames away
+                            # from its cause.
+                            cursor_reset_to_floor!(cursors[f])
+                            ok = false; break
+                        end
+                        cursor_descend_floor!(cursors[f])
+                        next_col[f] += 1
+                        adv += 1
+                    end
+                    push!(caught, adv)
+                    ok || break
+                end
+
+                ok && recurse(i + 1)
+
+                # Unwind the catch-up in reverse, so each cursor's floor stack pops in order.
+                for f in length(caught):-1:1
+                    for _ in 1:caught[f]
+                        next_col[f] -= 1
+                        cursor_ascend_floor!(cursors[f])
+                    end
+                end
+
+                binding[i] = UInt8[]
+                for f in myparts
+                    next_col[f] -= 1
+                    cursor_ascend_floor!(cursors[f])
+                end
+            end
+
+            # Step the FIRST participant forward. Upstream steps `parts[0]`; any single participant
+            # works because the next round re-seeks the others to the new running maximum.
+            cursor_next!(cursors[myparts[1]])
+            if cursors[myparts[1]].at_end
+                reset_parts!(myparts)
+                return
+            end
+        end
+    end
+
+    recurse(1)
+    emitted[]
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 3b — the UNIFICATION predicates: schematic data, where stored variables act as wildcards.
+#
+# Ports upstream's "unification layer" (`69393c7^:kernel/src/zipper_join.rs:973-1006`). These three
+# predicates are what separate a RELATIONAL worst-case-optimal join from one that is sound over
+# MORK's encoding, and the file header's soundness constraint is stated in their terms.
+#
+# 🔴 THE ORDERING FACT THE WHOLE PRUNING RESTS ON, verified in OUR `byte_item` (Expr.jl:103) and
+# pinned by `leapfrog_layer3b.jl` so a re-encoding cannot silently make the join unsound:
+#
+#       Arity(a)       0b00aaaaaa   0x00..0x3F
+#       (reserved)                  0x40..0x7F   ⚠️ OUR byte_item THROWS here; upstream returns a
+#                                                non-match. Only reachable from a malformed trie.
+#       VarRef(i)      0b10iiiiii   0x80..0xBF
+#       NewVar         0b11000000   0xC0
+#       SymbolSize(s)  0b11ssssss   0xC1..0xFF   (s > 0)
+#
+# ⇒ EVERY SYMBOL BYTE SORTS ABOVE EVERY COMPOUND AND VARIABLE BYTE, so a cursor's ascending
+# enumeration of a column ends in a CONTIGUOUS RUN of ground symbols. That run is the only part an
+# exact-match intersection may prune, because over ground terms unifiability IS byte equality.
+# Everything before it — stored wildcards, and compounds that a schematic `(f $x)` unifies with
+# without equalling — must be pushed UNFILTERED.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    is_wildcard_term(k) -> Bool
+
+Whether a stored complete subterm is a bare variable — a one-byte `NewVar` or `VarRef`. Such a fact
+column unifies with ANY value, which is why it can never restrict an intersection.
+"""
+@inline function is_wildcard_term(k::AbstractVector{UInt8})::Bool
+    length(k) == 1 || return false
+    t = byte_item(k[1])
+    t isa ExprNewVar || t isa ExprVarRef
+end
+
+"""
+    is_symbol_head(k) -> Bool
+
+Whether a stored complete subterm is symbol-headed, hence GROUND and a leaf of the encoding.
+
+🔑 THIS IS THE PRUNABILITY TEST. Symbol-headed candidates are ground, and where the restrictor's
+column holds no stored variable only the same symbol unifies with them — a stored compound cannot
+unify with a symbol at all. Combined with the ordering above, the symbol-headed candidates form a
+SUFFIX of the enumeration, so pruning inside it skips nothing outside it.
+"""
+@inline is_symbol_head(k::AbstractVector{UInt8})::Bool = byte_item(k[1]) isa ExprSymbol
+
+"""
+    column_matches_by_equality(mask) -> Bool
+
+Whether a column whose trie children are `mask` can match a value ONLY by equality — i.e. it holds
+no stored variable at this position.
+
+A stored variable is a complete SINGLE-BYTE subterm, so its presence is exactly a variable tag among
+the column's children: any set bit in `[VarRef(0), NewVar]` = `[0x80, 0xC0]`. A column that offers
+one unifies with anything and must never restrict an intersection.
+
+⚠️ PURE BYTE ARITHMETIC, NO `byte_item` CALL — deliberately. Our `byte_item` THROWS on a reserved
+byte (0x40..0x7F) where upstream's returns a non-match; testing the mask numerically keeps this
+total, and a reserved byte answers "not equality-only", which is the conservative side either way.
+"""
+@inline function column_matches_by_equality(mask::ByteMask)::Bool
+    b = least_ge(mask, 0x80)              # item_byte(VarRef(0))
+    b === nothing && return true
+    b > 0xC0                              # item_byte(NewVar); anything above is a symbol
 end
 
 end # module Leapfrog
