@@ -135,6 +135,37 @@ end
         @test cand <= 60
     end
 
+    @testset "🔴 AN INVERTED FACTOR COSTS 100x — the acceptance criterion for RE-INDEXING" begin
+        # Upstream's `is_inverted` (leapfrog.rs:727) flags a factor whose columns mention variables
+        # OUT OF SCHEDULE ORDER and permutes them into a private re-indexed map so it can be SOUGHT
+        # rather than enumerated. We do not port that yet — the last documented omission.
+        #
+        # `(, (edge $x $y) (edge $z $x))`: `$z` is id 2, `$x` is id 0, so at `$x`'s level factor 2
+        # is NOT EVEN A PARTICIPANT — its current step is `$z`. It cannot be sought, so its whole
+        # column is enumerated once per `$x`.
+        #
+        # MEASURED 2026-08-21 on a 300-edge chain: ORDERED 900 candidates, INVERTED 90 600 — 100.7x,
+        # which is ~300 x 302. Answers are CORRECT either way (299 == engine); this is purely work.
+        #
+        # ⚠️ THIS TEST IS WRITTEN TO FAIL WHEN RE-INDEXING LANDS, like the `!occursin` pins beside
+        # it. If the ratio collapses, delete the inequality and pin the new number — do not widen it.
+        N = 300
+        chain = join(["(edge n$i n$(i + 1))" for i in 1:N], "\n") * "\n"
+        s = _rk_space(chain)
+
+        ordered = _rk_measure(s, "(, (edge \$x \$y) (edge \$x \$z))")
+        inverted = _rk_measure(s, "(, (edge \$x \$y) (edge \$z \$x))")
+
+        # ANSWERS FIRST, and anti-vacuity — a shape with no answers would "prove" anything.
+        @test ordered[1] == _rk_engine(s, "(, (edge \$x \$y) (edge \$x \$z))")
+        @test inverted[1] == _rk_engine(s, "(, (edge \$x \$y) (edge \$z \$x))")
+        @test inverted[1] > 0
+        @test ordered[1] > 0
+
+        # …and the cost, pinned. Currently ~100x; the assertion is deliberately conservative.
+        @test inverted[2] > 20 * ordered[2]
+    end
+
     @testset "ranking does not disturb the shapes the differential already pins" begin
         # A cheap re-run of the two cases most likely to break under reordering: a stored wildcard
         # (which must never be pruned) and a repeated variable (which needs catch_up).

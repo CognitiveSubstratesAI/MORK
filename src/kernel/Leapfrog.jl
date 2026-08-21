@@ -183,7 +183,9 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
        scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
        rank_parts!, partition_restrictors!, fill_lead_candidates!,
-       descend_restrictors!
+       descend_restrictors!,
+       RIItem, ri_span_len, ri_split_columns, ri_columns_to_items, ri_emit_reordered,
+       is_inverted, ri_col_min_var_pos
 
 """
     PARSE_START
@@ -1846,6 +1848,12 @@ function fill_lead_candidates!(st::UnifyJoinState, f::Int, restrictors::Abstract
             cursor_next!(c)
         end
         cursor_reset_to_floor!(c)
+        # ⚠️ COUNT ON THIS PATH TOO. This early return is taken whenever the level has ONE
+        # participant (no restrictors to intersect against) — and it skipped the counter, so an
+        # inverted-factor shape read 0 candidates while enumerating 300. TWO return paths, two
+        # increments: an instrument that observes only the branch you were thinking about is how a
+        # ratchet goes quietly blind.
+        _LF_TRACE[] && (_LF_CANDIDATES[] += length(cands))
         return (cands, confirmed_from)
     end
 
@@ -1893,6 +1901,13 @@ function fill_lead_candidates!(st::UnifyJoinState, f::Int, restrictors::Abstract
     for r in restrictors
         cursor_reset_to_floor!(st.cursors[r])
     end
+    # 🔴 COUNT HERE TOO, OR THE INSTRUMENT GOES BLIND EXACTLY WHERE THE WORK MOVED. `_LF_CANDIDATES`
+    # was incremented only in `uj_match_expr_at_current`'s free-variable branch. When `consume_lead`
+    # took over the lead enumeration, that branch stopped seeing it — the counter read ZERO on a
+    # 300-edge join, and `leapfrog_ranking.jl`'s `cand <= 60` passed by measuring NOTHING.
+    # A ratchet whose instrument stops observing the path it guards is worse than no ratchet: it is
+    # a green light wired to nothing. [[feedback_oracle_must_observe_the_defect_class]]
+    _LF_TRACE[] && (_LF_CANDIDATES[] += length(cands))
     (cands, confirmed_from)
 end
 
@@ -2225,6 +2240,203 @@ function parse_body_factors(body::MORKExpr)
         push!(factors, UnifyFactor(prefix, cols))
     end
     (factors, Int(intro))
+end
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+# LAYER 6 — RE-INDEXING AN INVERTED FACTOR. The last documented omission.
+#
+# Ports upstream `is_inverted` / `split_columns` / `columns_to_items` / `emit_reordered` /
+# `reindex_regions` / `fold_region_into_reindex` / `build_reindex`
+# (`kernel/src/leapfrog.rs:727-928`).
+#
+# 🔴 WHAT AN INVERTED FACTOR COSTS, MEASURED BEFORE PORTING (2026-08-21, 300-edge chain):
+#
+#     (, (edge $x $y) (edge $x $z))   ORDERED    900 candidates, 300 answers
+#     (, (edge $x $y) (edge $z $x))   INVERTED  90 600 candidates, 299 answers   ← 100.7x
+#
+# `$z` is id 2 and `$x` is id 0, so at `$x`'s level factor 2 is NOT EVEN A PARTICIPANT — its current
+# step is `$z`. It cannot be sought, so its whole column is enumerated once per `$x`. 90 600 ≈
+# 300 × 302. Answers are correct either way; this is purely work, which is why it was safe to leave
+# until the other two mechanisms landed — and why the measurement had to come first.
+#
+# THE FIX, and it is the standard worst-case-optimal answer to a cycle: copy the factor's facts into
+# a private PathMap with the columns PERMUTED into schedule order, so the join can SEEK it like any
+# compatible factor. Only the inverted factor pays the materialisation.
+#
+# ⚠️ TWO SUBTLETIES, EITHER OF WHICH SILENTLY CORRUPTS ANSWERS RATHER THAN ERRORING:
+#
+#  1. RENUMBERING. A stored fact is canonically numbered IN COLUMN ORDER, so moving columns changes
+#     which occurrence is the binder. `(e $u $u)` must stay COREFERENT after the permutation: the
+#     first reference in the NEW order becomes `NewVar` and later ones `VarRef` of its new index.
+#     Emitting the original bytes in a new order would make the second `$u` a dangling back-ref.
+#
+#  2. SCOPING SOUNDNESS. A parsed factor's prefix is the ARITY BYTE ALONE (the head stays column 0
+#     so a stored wildcard head still unifies), so "the factor's region" would otherwise be every
+#     same-arity fact in the space. Scoping to `prefix + head` is sound ONLY for a ground SYMBOL
+#     head: at that trie position a ground symbol unifies with the identical bytes or a stored
+#     wildcard, so the union of `prefix+head` and `prefix+w` for each wildcard byte `w` holds every
+#     fact the factor can match. 🔴 A ground COMPOUND head is DELIBERATELY NOT SCOPED — a stored
+#     compound head may carry variables (`(g $x)` unifies with `(g a)`) and lives outside
+#     `prefix + head bytes`. Getting that wrong drops facts, and the join reports fewer answers with
+#     no error at all.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+"""
+    RIItem
+
+One position in a re-emitted subterm: a literal byte, or a variable identified by its ORIGINAL id
+so the re-index can renumber it canonically in the new column order.
+
+⚠️ A CONCRETE TAGGED STRUCT, not a `Union{UInt8,Int}` — a union-typed vector boxes every element,
+and this is walked once per stored fact. [[feedback_no_any_typed_containers]]
+"""
+struct RIItem
+    is_var::Bool
+    byte::UInt8
+    var::Int
+end
+
+"Byte length of the one complete subterm starting at `bytes[from]` — the resumable parse run to (0,0)."
+function ri_span_len(bytes::AbstractVector{UInt8}, from::Int)::Int
+    (s, pay) = PARSE_START
+    i = from
+    n = length(bytes)
+    while i <= n
+        (s, pay) = subterm_parse_step(bytes[i], s, pay)
+        i += 1
+        (s == UInt32(0) && pay == UInt32(0)) && return i - from
+    end
+    error("ri_span_len: truncated subterm at offset $from")
+end
+
+"""
+    ri_split_columns(bytes, ncols) -> Vector{UnitRange{Int}}
+
+Split a fact's COLUMN BYTES (everything after the relation prefix) into its `ncols` subterm ranges.
+Ranges rather than copies: the caller only walks them.
+"""
+function ri_split_columns(bytes::AbstractVector{UInt8}, ncols::Int)
+    cols = Vector{UnitRange{Int}}(undef, ncols)
+    i = 1
+    for c in 1:ncols
+        len = ri_span_len(bytes, i)
+        cols[c] = i:(i + len - 1)
+        i += len
+    end
+    cols
+end
+
+"""
+    ri_columns_to_items(bytes, cols) -> Vector{Vector{RIItem}}
+
+Decode each column into items, tagging every variable with its ORIGINAL id: a `NewVar` takes the
+next id in encounter order ACROSS THE WHOLE FACT, and `VarRef(i)` refers to id `i`. That fact-global
+counter is what lets the re-index renumber a coreferent schematic fact correctly after its columns
+move — a per-column counter would make `(e \$u \$u)` two distinct variables.
+"""
+function ri_columns_to_items(bytes::AbstractVector{UInt8}, cols::Vector{UnitRange{Int}})
+    next_orig = 0
+    out = Vector{Vector{RIItem}}(undef, length(cols))
+    for (ci, rng) in enumerate(cols)
+        items = RIItem[]
+        i = first(rng)
+        while i <= last(rng)
+            b = bytes[i]
+            t = maybe_byte_item(b)
+            if t isa ExprArity
+                push!(items, RIItem(false, b, 0)); i += 1
+            elseif t isa ExprVarRef
+                push!(items, RIItem(true, 0x00, Int(t.idx))); i += 1
+            elseif t isa ExprNewVar
+                push!(items, RIItem(true, 0x00, next_orig)); next_orig += 1; i += 1
+            elseif t isa ExprSymbol
+                push!(items, RIItem(false, b, 0))            # the size tag…
+                for k in 1:Int(t.size)                        # …then its payload, verbatim
+                    push!(items, RIItem(false, bytes[i + k], 0))
+                end
+                i += 1 + Int(t.size)
+            else
+                error("ri_columns_to_items: reserved byte 0x$(string(b; base=16)) at $i")
+            end
+        end
+        out[ci] = items
+    end
+    out
+end
+
+"""
+    ri_emit_reordered(items_by_col, new_order) -> Vector{UInt8}
+
+Re-emit the columns in `new_order`, RENUMBERING variables so the first reference to each original id
+(in the new order) is a `NewVar` and later references are a `VarRef` of its NEW index. Produces a
+canonical, self-consistent encoding for the re-indexed key.
+
+🔴 THIS IS THE STEP THAT KEEPS `(e \$u \$u)` COREFERENT. A stored fact is numbered canonically in
+COLUMN order; permuting columns changes which occurrence is the binder. Emitting the original bytes
+in a new order would leave the second `\$u` a `VarRef` to an id that no longer precedes it.
+"""
+function ri_emit_reordered(items_by_col::Vector{Vector{RIItem}}, new_order::Vector{Int})
+    out = UInt8[]
+    renum = Dict{Int, Int}()
+    for c in new_order
+        for it in items_by_col[c]
+            if !it.is_var
+                push!(out, it.byte)
+            else
+                nid = get(renum, it.var, -1)
+                if nid >= 0
+                    push!(out, item_byte(ExprVarRef(UInt8(nid))))
+                else
+                    renum[it.var] = length(renum)
+                    push!(out, item_byte(ExprNewVar()))
+                end
+            end
+        end
+    end
+    out
+end
+
+"""
+    is_inverted(factor, var_pos) -> Bool
+
+Whether `factor`'s columns mention variables OUT OF SCHEDULE ORDER — the condition under which the
+join cannot seek the factor and must enumerate it instead.
+
+Ground columns are skipped: they constrain nothing about ordering.
+"""
+function is_inverted(f::UnifyFactor, var_pos::Vector{Int})::Bool
+    prev = -1
+    for col in f.cols
+        pos = ri_col_min_var_pos(col, var_pos)
+        pos == typemax(Int) && continue
+        prev >= 0 && prev > pos && return true
+        prev = pos
+    end
+    false
+end
+
+"The earliest SCHEDULE POSITION any variable in this column occupies; `typemax(Int)` if ground."
+function ri_col_min_var_pos(col::UnifyColumn, var_pos::Vector{Int})::Int
+    col.is_var && return var_pos[_vslot(col.v)]
+    best = typemax(Int)
+    buf = col.term.buf
+    intro = col.intro
+    i = 1
+    while i <= length(buf)
+        t = maybe_byte_item(buf[i])
+        if t isa ExprNewVar
+            best = min(best, var_pos[_vslot(Int(intro))]); intro += 0x01; i += 1
+        elseif t isa ExprVarRef
+            best = min(best, var_pos[_vslot(Int(t.idx))]); i += 1
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)
+        elseif t isa ExprArity
+            i += 1
+        else
+            break
+        end
+    end
+    best
 end
 
 end # module Leapfrog

@@ -4828,6 +4828,9 @@ const _MORK_TS = @testset "MORK" begin
     # RANKING — the leapfrog principle itself. Asserts a candidate COUNT, not a timing: the
     # skewed shape enumerated 303 candidates for 3 answers before `rank_parts!`, 6 after.
     include("integration/leapfrog_ranking.jl")
+    # RE-INDEXING — the pure column-permutation transform (layer 6). Round-trip tested: identity
+    # permutation must reproduce the original bytes exactly, over 200 randomised shapes.
+    include("integration/leapfrog_reindex.jl")
     include("integration/bindings_slab.jl")
 
     # JET dispatch ratchet — fails when a change ADDS runtime dispatch to the exec hot path.

@@ -168,7 +168,16 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # enumerated. Costs speed, not answers, and `scan_subterm`'s variable mask is DISCARDED
         # rather than stored precisely so a dead field cannot read as the feature being half-present.
         # When it lands this line fails and must flip, like the four before it.
-        @test !occursin("is_inverted", code)
+        # v5 (2026-08-21): the PURE TRANSFORM layer landed — `is_inverted` and the column
+        # permutation exist and are round-trip tested (`leapfrog_reindex.jl`, 253 assertions).
+        @test occursin("function is_inverted", code)
+        @test occursin("function ri_emit_reordered", code)
+        # 🔴 …and the JOIN DOES NOT USE THEM YET. `build_reindex` — which materialises the permuted
+        # map and hands the join a re-keyed factor — is the remaining half. Measured cost of the gap:
+        # an inverted factor enumerates 90 600 candidates where an ordered one takes 900 (100.7x,
+        # `leapfrog_ranking.jl`). Answers are correct either way. When the wiring lands this line
+        # fails, like the four flips before it.
+        @test !occursin("build_reindex", code)
     end
 
     @testset "🔴 REACHABLE from an entry point, but NOT on the default query path" begin
