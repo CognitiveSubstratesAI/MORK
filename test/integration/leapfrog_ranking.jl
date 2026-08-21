@@ -103,6 +103,38 @@ end
         @test n == 5                      # anti-vacuity
     end
 
+    @testset "🔑 THE MUTUAL-SEEK LEAP — the case ranking structurally CANNOT fix" begin
+        # `rank_parts` picks the smallest domain to lead. When BOTH domains are large and the
+        # INTERSECTION is tiny, there is no small domain to pick: whichever leads still enumerates
+        # its whole column. That is what `fill_lead_candidates` is for — seek each restrictor to the
+        # candidate and, when it answers with a LARGER value, leap the lead straight there instead
+        # of walking (and unifying, binding, unwinding) every value in between.
+        #
+        # MEASURED 2026-08-21 with ranking but WITHOUT the leap: 1000 candidates for 3 answers.
+        # The skewed shape above measured 6, so the two mechanisms address different shapes and
+        # neither subsumes the other.
+        #
+        # 🔴 SOUNDNESS — WHY THIS MAY PRUNE AT ALL. This join UNIFIES, so a stored value can MATCH a
+        # candidate without EQUALLING it, and an exact intersection would silently drop answers.
+        # Pruning is legal ONLY where unifiability IS equality: symbol-headed candidates are ground,
+        # and a restrictor's column holds no stored variable, so only the same symbol unifies there.
+        # Symbol bytes sort ABOVE every compound and variable byte, so those candidates form a
+        # SUFFIX — everything before it (wildcards, schematic compounds) is pushed UNFILTERED and
+        # the seek never skips over any of it. [[reference_wfs_bottom_propagation_semantics]]
+        N = 1000
+        src = join(["(pa n$i x)" for i in 1:N], "\n") * "\n" *
+              join(["(pb n$i y)" for i in (N - 2):(2N - 3)], "\n") * "\n"   # overlap = exactly 3
+        s = _rk_space(src)
+        body = "(, (pa \$x x) (pb \$x y))"
+
+        (n, cand) = _rk_measure(s, body)
+        @test n == _rk_engine(s, body)
+        @test n == 3                       # anti-vacuity: there really are 3 answers
+        # Was 1000 before the leap. The bound is loose enough not to pin an implementation detail
+        # and far below the domain size — if this regresses to ~1000 the leap stopped working.
+        @test cand <= 60
+    end
+
     @testset "ranking does not disturb the shapes the differential already pins" begin
         # A cheap re-run of the two cases most likely to break under reordering: a stored wildcard
         # (which must never be pruned) and a repeated variable (which needs catch_up).

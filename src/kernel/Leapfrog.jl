@@ -182,7 +182,8 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
        UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
        scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
-       rank_parts!
+       rank_parts!, partition_restrictors!, fill_lead_candidates!,
+       descend_restrictors!
 
 """
     PARSE_START
@@ -1759,6 +1760,222 @@ function rank_parts!(st::UnifyJoinState, parts::Vector{Int})
     nothing
 end
 
+"""
+    partition_restrictors!(st, parts) -> nr
+
+Stable-partition `parts[2:end]` so the factors whose current column matches ONLY BY EQUALITY come
+first, and return how many there are. Those are the ones [`fill_lead_candidates!`] may intersect the
+lead against; a factor holding a stored variable at this column unifies with anything and stays in
+the ordinary cascade.
+
+⚠️ THE EARLY-OUT IS NOT A MICRO-OPTIMISATION. Only symbol-headed lead values are prunable, so a lead
+column offering none — a column of compounds, say — has nothing to intersect: answer 0 off ONE mask
+read instead of scanning every other factor's.
+"""
+function partition_restrictors!(st::UnifyJoinState, parts::Vector{Int})
+    length(parts) < 2 && return 0
+    # `item_byte(ExprSymbol(1))` is the first symbol byte; nothing at or above it means the lead
+    # offers no ground symbol at all.
+    least_ge(cursor_floor_child_mask(st.cursors[parts[1]]), item_byte(ExprSymbol(0x01))) === nothing &&
+        return 0
+
+    nr = 0
+    for j in 2:length(parts)
+        if column_matches_by_equality(cursor_floor_child_mask(st.cursors[parts[j]]))
+            nr += 1
+            # Rotate the entry down to the end of the restrictor group, keeping BOTH groups'
+            # relative order — the same stability argument as `rank_parts!`'s sort.
+            v = parts[j]
+            for k in j:-1:(nr + 2)
+                parts[k] = parts[k - 1]
+            end
+            parts[nr + 1] = v
+        end
+    end
+    nr
+end
+
+"""
+    fill_lead_candidates!(st, f, restrictors) -> (candidates, confirmed_from)
+
+The lead's candidate values for a still-free join variable, and the 1-based index of the first one
+the mutual seek confirmed present in EVERY restrictor.
+
+🔑 THIS IS THE TRUE LEAPFROG INTERSECTION, and it is the piece `rank_parts!` cannot substitute for.
+Ranking picks the smallest domain to lead; when EVERY domain is large and the intersection is tiny,
+there is no small domain to pick. Here, each restrictor is sought to the candidate, and when one
+answers with a LARGER value the lead LEAPS straight there instead of walking — and unifying,
+binding, unwinding — every value in between.
+MEASURED on `test/integration/leapfrog_ranking.jl`'s both-large shape: 1000 candidates for 3
+answers before this, and the ranked-only path could not improve it.
+
+🔴 SOUNDNESS, WHICH IS THE WHOLE SUBTLETY. This join UNIFIES, so a stored value may MATCH a candidate
+without EQUALLING it, and an exact intersection would silently drop answers. A candidate is prunable
+ONLY where unifiability IS equality: [`is_symbol_head`] candidates are ground, and a restrictor's
+column holds no stored variable ([`column_matches_by_equality`], checked by
+[`partition_restrictors!`]), so at that column only the same symbol unifies with them — a stored
+compound cannot unify with a symbol at all.
+
+⚠️ AND SYMBOL BYTES SORT ABOVE EVERY COMPOUND AND VARIABLE BYTE, so those candidates form a SUFFIX of
+the enumeration. Everything before it — stored wildcards, and compounds a schematic `(f \$x)` unifies
+with without equalling — is pushed UNFILTERED, and the seek never skips over any of it. The surviving
+candidates are a subsequence of the unfiltered ones IN THE SAME ORDER, so the join's visit order is
+unchanged. That is why `confirmed_from` is returned rather than the buffer simply being filtered.
+"""
+function fill_lead_candidates!(st::UnifyJoinState, f::Int, restrictors::AbstractVector{Int})
+    c = st.cursors[f]
+    cands = Vector{Tuple{Vector{UInt8}, UInt8}}()
+
+    # ── the UNPRUNABLE PREFIX: everything up to the first symbol-headed value, pushed as-is ──────
+    cursor_first!(c)
+    while !c.at_end
+        k = cursor_key(c)
+        (k === nothing || is_symbol_head(k)) && break
+        (nv, _) = cursor_var_counts(c)
+        push!(cands, (Vector{UInt8}(k), nv))
+        cursor_next!(c)
+    end
+    confirmed_from = length(cands) + 1
+
+    if isempty(restrictors)
+        while !c.at_end
+            k = cursor_key(c)
+            k === nothing && break
+            (nv, _) = cursor_var_counts(c)
+            push!(cands, (Vector{UInt8}(k), nv))
+            cursor_next!(c)
+        end
+        cursor_reset_to_floor!(c)
+        return (cands, confirmed_from)
+    end
+
+    # ── the MUTUAL SEEK over the symbol-headed suffix ────────────────────────────────────────────
+    lead_max = UInt8[]
+    while !c.at_end
+        k = cursor_key(c)
+        k === nothing && break
+        empty!(lead_max); append!(lead_max, k)
+
+        leapt = false
+        bail = false
+        for r in restrictors
+            cr = st.cursors[r]
+            cursor_seek!(cr, lead_max)
+            if cr.at_end
+                # Nothing stored at or above the candidate. Every remaining candidate is a ground
+                # symbol at least as large, so none can match this factor — stop, do not continue.
+                bail = true
+                break
+            end
+            rk = cursor_key(cr)
+            if rk === nothing || rk != lead_max
+                # The restrictor's least value at or above the candidate is LARGER, so every lead
+                # value in between is a ground symbol absent from this factor. Leap there. The
+                # target is a symbol, so the lead lands on a symbol too and skips nothing outside
+                # the prunable suffix.
+                empty!(lead_max); rk !== nothing && append!(lead_max, rk)
+                cursor_seek!(c, lead_max)
+                leapt = true
+                break
+            end
+        end
+        bail && break
+        leapt && continue
+
+        # Confirmed in every restrictor. The candidate IS the lead cursor's current key, so its
+        # variable counts are too — no rescan.
+        (nv, _) = cursor_var_counts(c)
+        push!(cands, (copy(lead_max), nv))
+        cursor_next!(c)
+    end
+
+    cursor_reset_to_floor!(c)
+    for r in restrictors
+        cursor_reset_to_floor!(st.cursors[r])
+    end
+    (cands, confirmed_from)
+end
+
+"""
+    descend_restrictors!(st, restrictors, j, value, cont)
+
+Consume the confirmed column of each restrictor in turn, then continue.
+
+The mutual seek already established that `value` — a ground symbol — is stored at this column and
+that the column holds no stored variable. So [`uj_consume_col`] would seek to exactly this value,
+bind it with no intro of its own, and find no wildcard alternative: that is what happens here,
+WITHOUT the mask read and the ascend-then-re-descend the general path pays.
+
+⚠️ EVERY EXIT LEAVES THE CURSOR BACK AT ITS COLUMN FLOOR, which the ancestors' unwind requires — the
+same precondition whose violation cost two speculative fixes on `cursor_ascend_floor!`.
+"""
+function descend_restrictors!(st::UnifyJoinState, restrictors::AbstractVector{Int}, j::Int,
+                              value::AbstractVector{UInt8}, cont)
+    if j > length(restrictors)
+        cont()
+        return
+    end
+    r = restrictors[j]
+    cr = st.cursors[r]
+    cursor_seek!(cr, value)
+    k = cursor_key(cr)
+    if cr.at_end || k === nothing || k != value
+        # Unreachable given the mutual seek's agreement; treated as "no match", which is what the
+        # general path would conclude from the same probe.
+        cursor_reset_to_floor!(cr)
+        return
+    end
+    cursor_descend_floor!(cr)
+    st.next_step[r] += 1
+    try
+        descend_restrictors!(st, restrictors, j + 1, value, cont)
+    finally
+        st.next_step[r] -= 1
+        cursor_ascend_floor!(cr)
+        cursor_reset_to_floor!(cr)
+    end
+    nothing
+end
+
+"""
+    uj_consume_lead(st, bindings, parts, nr, v, i)
+
+The lead level for a still-free join variable: `parts[1]` offers its column's values and the
+remaining participants match against each accepted value.
+
+`parts[2:1+nr]` are the equality-matching restrictors, which the mutual seek has ALREADY intersected
+the lead against over the ground-symbol candidates. For those candidates their columns are consumed
+right here — the only possible match is that exact value, already located — and the cascade handles
+only the rest. Every other candidate goes through the full cascade over all of `parts[2:end]`, so
+stored wildcards and schematic compounds keep the unchanged path.
+"""
+function uj_consume_lead(st::UnifyJoinState, bindings::Bindings, parts::Vector{Int},
+                         nr::Int, v::Int, i::Int)
+    st.stopped && return
+    f = parts[1]
+    pattern = query_var_env(v)
+    restr_all = view(parts, 2:(1 + nr))
+    (cands, confirmed_from) = fill_lead_candidates!(st, f, restr_all)
+
+    for (ci, (bytes, nv)) in enumerate(cands)
+        st.stopped && break
+        # A candidate BEFORE `confirmed_from` was pushed unfiltered, so it has NOT been intersected
+        # and must take the full cascade. Getting this backwards would skip restrictor checks for
+        # exactly the wildcard/compound candidates that need them.
+        (restrictors, rest) = ci >= confirmed_from ?
+            (restr_all, view(parts, (2 + nr):length(parts))) :
+            (view(parts, 1:0), view(parts, 2:length(parts)))
+        rest_v = collect(rest)
+        s0 = st.next_step[f]
+        uj_match_candidate(st, bindings, f, pattern, bytes, nv, function (nb)
+            uj_at_step(st, f, s0 + 1, () ->
+                descend_restrictors!(st, restrictors, 1, bytes,
+                                     () -> uj_consume_var_parts(st, nb, rest_v, 1, v, i)))
+        end)
+    end
+    nothing
+end
+
 "Schedule the next variable: intersect the factors sitting on it, or emit if none are left."
 function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int)
     st.stopped && return
@@ -1787,10 +2004,16 @@ function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::In
     # Rank ONLY when the variable is still free. If an earlier level already bound it, every
     # participant seeks to that one value and there is no lead to choose — upstream branches the
     # same way, and ranking there would pay the round-robin scan for nothing.
+    # 🔑 FREE vs BOUND, and upstream branches the same way. If an earlier level already bound the
+    # variable, every participant simply seeks to that one value — there is no lead to choose and
+    # nothing to intersect, so ranking and the mutual seek would both be paid for nothing.
     if ee_var_opt(uj_deref(bindings, query_var_env(v))) !== nothing
-        rank_parts!(st, parts)
+        rank_parts!(st, parts)                       # smallest domain leads
+        nr = partition_restrictors!(st, parts)       # …and which of the rest can prune it
+        uj_consume_lead(st, bindings, parts, nr, v, i)
+    else
+        uj_consume_var_parts(st, bindings, parts, 1, v, i)
     end
-    uj_consume_var_parts(st, bindings, parts, 1, v, i)
 end
 
 """

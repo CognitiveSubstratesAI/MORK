@@ -151,13 +151,24 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
             @test occursin(f * "(", code)          # genuinely called from layer 4's body
         end
 
-        # 🔴 AND THE HONEST OTHER HALF: these two are built, tested, and STILL NOT CALLED. They are
-        # the soundness guard for the leapfrog's pruning (`fill_lead_candidates` / `rank_parts`),
-        # which layer 4 deliberately does not yet do — see the section header. When that lands these
-        # lines fail and must flip, exactly as the previous version of this testset did.
-        for f in ("column_matches_by_equality", "is_symbol_head")
-            @test !occursin(f * "(", code)
+        # 🔑 THE SOUNDNESS GUARDS ARE NOW CALLED — this pair has flipped FOUR times, which is the
+        # entire reason it is a test and not a comment:
+        #   v1 nothing called the layers · v2 only LeapfrogEntry did · v3 Space.jl routes (gated)
+        #   v4 (here) the WCO layer landed, so the PRUNING guards are live.
+        # They gate `fill_lead_candidates!`'s mutual seek: pruning is legal only where unifiability
+        # IS equality, and these two are what establish that.
+        for f in ("column_matches_by_equality", "is_symbol_head", "fill_lead_candidates!",
+                  "partition_restrictors!", "rank_parts!")
+            @test occursin(f * "(", code)
         end
+
+        # 🔴 THE LAST DOCUMENTED OMISSION, still absent: RE-INDEXING. Upstream's `is_inverted`
+        # detects a factor mentioning variables OUT OF SCHEDULE ORDER — `(, (edge $x $y) (edge $z
+        # $x))` — and permutes its columns into a private map so it can still be SOUGHT rather than
+        # enumerated. Costs speed, not answers, and `scan_subterm`'s variable mask is DISCARDED
+        # rather than stored precisely so a dead field cannot read as the feature being half-present.
+        # When it lands this line fails and must flip, like the four before it.
+        @test !occursin("is_inverted", code)
     end
 
     @testset "🔴 REACHABLE from an entry point, but NOT on the default query path" begin
