@@ -50,8 +50,20 @@
 # from the `expr-opt` PR merged at 06cdcf3 and both in the occurs path:
 #   1. `ExprEnv::ground_skip: u16` — a GROUND STAMP. Upstream skips the occurs walk outright when
 #      the subterm holds no variable (`dt2.ground_skip == 0 && step!(occurs vx, dt2)`). Our ExprEnv
-#      has no such field, so we walk terms upstream never looks at. Sound for us too: a genuinely
-#      ground subterm cannot contain the checked variable under any dereference.
+#      has no such field, so we walk terms upstream never looks at.
+#      🔴 DO NOT PORT THE SKIP BEFORE READING WHAT *SETS* THE STAMP. The soundness argument — "a
+#      genuinely ground subterm cannot contain the checked variable under any dereference" — is a
+#      claim about what `ground_skip` MEANS, and it holds only if the stamp means "contains no
+#      variable" rather than "ground as far as this traversal needed to look".
+#      ⚠️ OUR OCCURS CHECK IS DEREF-AWARE AND UPSTREAM'S IS NOT, and that difference is LOAD-BEARING:
+#      it was a soundness fix (ADR-057, the BFC `exec(3 3)` over-generation) forced by our pair
+#      generation being recursive `ee_args!` child-pairing where upstream's is `match2`-based, so
+#      upstream catches cross-namespace cycles by BINDING ORDER that we cannot rely on. A stamp
+#      written under upstream's assumptions and consumed under our different order could discard
+#      exactly the check ADR-057 added — and the failure would present as a malformed proof
+#      ACCEPTED, with no error, which is how that defect presented the first time.
+#      ⇒ Establish the stamp's invariant from `expr/src/lib.rs` (it is written around :2066/:2086
+#        and read at :2441/:2447) BEFORE porting the skip, not after.
 #   2. upstream's `occurs` is an ALLOCATION-FREE `traverseh!` fold; ours builds `ExprEnv[]` per
 #      compound node, recursively, per call — which is why `_occurs_check` tops the allocation
 #      profile. The cost is the child vector, not the occurs logic.
