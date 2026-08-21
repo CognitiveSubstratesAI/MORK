@@ -4749,6 +4749,10 @@ const _MORK_TS = @testset "MORK" begin
     # ── Differential conformance vs the built upstream Rust `mork` binary ──────
     # (guarded on the binary being present; catches default-engine divergence)
     include("integration/upstream_conformance.jl")
+    # PURE-OP DIFFERENTIAL — 355 ops at the EDGES of their input domains vs the upstream binary.
+    # The harness existed since 2026-07-28 and had no caller; this is it. Needs a generated corpus
+    # (see the file header); FAILS CLOSED without one, deliberately.
+    include("integration/pure_ops_differential.jl")
 
     # ── PORT INVENTORY ratchet — the instrument the above CANNOT be ────────────
     # `upstream_conformance.jl` compares BEHAVIOUR, so both sides must be able to express the
