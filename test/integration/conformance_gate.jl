@@ -54,6 +54,9 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     for (engine, on) in (("ProductZipper (shipped default)", false), ("LEAPFROG JOIN", true))
         prev = MORK.LEAPFROG_DISPATCH[]
         MORK.LEAPFROG_DISPATCH[] = on
+        MORK.LEAPFROG_ROUTED[] = 0
+        MORK.LEAPFROG_DECLINED[] = 0
+        empty!(MORK.LEAPFROG_DECLINED_BODIES)
         try
         passing, total, orphans = conformance_results()
         # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
@@ -76,6 +79,26 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
         isempty(improved) || @info(
             "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
             improved)
+            # ── 🔴 THE DECLINE RATE IS AN INVARIANT, NOT A STATISTIC ────────────────────────
+            # `space_query_multi_leapfrog` returns `nothing` for a body it cannot represent, and the
+            # dispatch then falls back. Upstream refuses to have that branch at all: "a violation is
+            # a bug in the producer and should surface as one, NOT AS A SILENT DETOUR TO A DIFFERENT
+            # ENGINE." We keep the fallback but make it AUDIBLE and pin the rate at ZERO here.
+            #
+            # ⚠️ THE COUNT ALONE WAS MISLEADING, WHICH IS WHY THE BODIES ARE PRINTED. First measured
+            # 2026-08-21: ROUTED 404 / DECLINED 4, read as "the fallback is load-bearing". Capturing
+            # the bodies showed all four were `(,)` — the empty conjunction, a case skipped on
+            # purpose rather than anything the frontend does oddly. Handling it (as upstream and our
+            # own stock arm do) took DECLINED to 0 and ROUTED to 408.
+            if on
+                if MORK.LEAPFROG_DECLINED[] != 0
+                    for b in MORK.LEAPFROG_DECLINED_BODIES
+                        println("  🔴 DECLINED BODY: ", MORK.expr_serialize2(b))
+                    end
+                end
+                @test MORK.LEAPFROG_DECLINED[] == 0
+                @test MORK.LEAPFROG_ROUTED[] > 0     # anti-vacuity: the join really answered
+            end
         finally
             MORK.LEAPFROG_DISPATCH[] = prev    # a thrown probe must not leave the engine switched
         end

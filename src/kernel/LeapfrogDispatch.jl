@@ -60,6 +60,22 @@ const LEAPFROG_ROUTED = Ref(0)
 const LEAPFROG_DECLINED = Ref(0)
 
 """
+    LEAPFROG_DECLINED_BODIES
+
+The first few bodies the parse handed back as unroutable, so a non-zero `LEAPFROG_DECLINED` can be
+ACTED ON rather than merely noted.
+
+🔴 MEASURED 2026-08-21 over the 285-probe conformance corpus: ROUTED 404, DECLINED 4. The counter's
+own docstring set the rule — "if it is NON-zero, our frontend emits bodies upstream's does not, and
+the detour is load-bearing: then say WHICH bodies, and why, rather than keeping a silent branch."
+A count alone would have let the branch stay on the strength of the number being non-zero, which is
+exactly the reasoning that leaves silent fallbacks in place for a year.
+
+Bounded at 16: this is a diagnostic, not a log.
+"""
+const LEAPFROG_DECLINED_BODIES = Vector{Vector{UInt8}}()
+
+"""
     warn_top_level_variable(s) -> Bool
 
 Warn if the space holds a fact that is NOTHING BUT A VARIABLE, and return whether one was found.

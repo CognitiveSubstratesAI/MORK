@@ -1869,9 +1869,21 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                     LEAPFROG_ROUTED[] += 1
                     return r::Int
                 end
-                # Counted, not silent: upstream PANICS here rather than detouring. See
-                # `LEAPFROG_DECLINED` for why this branch is on probation.
+                # 🔴 MEASURED 2026-08-21 over the 285-probe conformance corpus: ROUTED 408,
+                # DECLINED 0 — this branch NEVER FIRES. It is kept only because the parse can
+                # still reject a non-conjunction body, which the STOCK path rejects too.
+                # ⚠️ A DECLINE IS NOW AUDIBLE. It was silent, and the count alone read as
+                # "load-bearing" until the BODIES were captured and turned out to be four
+                # copies of `(,)` — a case skipped on purpose, now handled. If this warns,
+                # the producer emitted something neither engine expects: read the body.
                 LEAPFROG_DECLINED[] += 1
+                length(LEAPFROG_DECLINED_BODIES) < 16 &&
+                    push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
+                @warn "leapfrog dispatch DECLINED a body — falling back to the ProductZipper. " *
+                      "Measured decline rate over the conformance corpus is ZERO, so this is " *
+                      "a shape neither engine was written for." maxlog=4
+                length(LEAPFROG_DECLINED_BODIES) < 16 &&
+                    push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
             end
             space_query_multi_at(btm, prefix, pat, v, f)
         end

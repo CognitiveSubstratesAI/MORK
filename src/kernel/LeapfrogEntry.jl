@@ -35,12 +35,34 @@ the join can represent. That is a ROUTING answer, not an empty result: the calle
 function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
                                     effect::Function)::Union{Int, Nothing}
     parsed = Leapfrog.parse_body_factors(pat_expr)
+    # ⚠️ `nothing` HERE MEANS THE BODY IS NOT A CONJUNCTION AT ALL — a bare symbol, a bare variable,
+    # or an encoding the parse rejects (a `VarRef` naming a variable the body never introduced, more
+    # than 63 variables). It is NOT "no matches"; conflating the two would silently drop every answer.
+    #
+    # 🔴 MEASURED 2026-08-21: over the 285-probe conformance corpus this NEVER FIRES — ROUTED 408,
+    # DECLINED 0. The four declines it once showed were all `(,)`, a case skipped on purpose and now
+    # handled below. So the caller's fallback is dead code, and the stock path REJECTS these same
+    # bodies anyway (`space_query_multi`: "pat_expr must be an Arity node"). Handing them back
+    # quietly would only move a producer bug somewhere it cannot be seen — upstream's argument, and
+    # after the measurement, ours: "a violation is a bug in the producer and should surface as one,
+    # NOT AS A SILENT DETOUR TO A DIFFERENT ENGINE."
     parsed === nothing && return nothing
     (factors, nvars) = parsed
-    # A body with no conjunct at all (`(,)`). The stock path treats it as a single vacuous match;
-    # rather than reproduce that here from a reading of its code, hand it back as unroutable — the
-    # engine then answers it, by definition correctly. [[feedback_empty_result_may_be_the_wrong_store]]
-    isempty(factors) && return nothing
+    # ── `(,)` — THE EMPTY CONJUNCTION. Nothing constrains anything, so it matches EXACTLY ONCE
+    # with empty bindings. Upstream handles it inline and says why: it "mirrors `Space::query_multi`'s
+    # `n_factors == 1` arm byte for byte, including that it calls `effect` once, ignores the answer,
+    # and returns 1". Ours does the same (`Space.jl:633`).
+    #
+    # 🔴 THIS WAS DECLINED ON PURPOSE UNTIL 2026-08-21, and the measurement is what corrected it.
+    # `LEAPFROG_DECLINED` over the 285-probe conformance corpus read ROUTED 404 / DECLINED 4 — and
+    # capturing the BODIES showed all four were `(,)`. Not a frontend emitting something exotic:
+    # a case I skipped rather than read the stock arm. The count alone said "the fallback is
+    # load-bearing"; the bodies said "you declined four copies of the same trivial shape."
+    # ⇒ MEASURE, THEN NAME. A non-zero counter is not a finding until you know what is in it.
+    if isempty(factors)
+        effect(Bindings(), pat_expr.buf)
+        return 1
+    end
     # 🔴 `loc` IS THE CONCATENATION OF EVERY MATCHED FACT, NOT FACTOR 1's. Upstream's own comment
     # says "loc is factor 0's stored fact, as stock passes" — TRUE OF UPSTREAM'S STOCK PATH, FALSE
     # OF OURS. `space_query_multi` hands the callback `combined` (Space.jl:813), all matched facts
