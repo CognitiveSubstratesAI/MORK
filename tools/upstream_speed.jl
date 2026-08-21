@@ -11,15 +11,27 @@
 #     g1_hash_ctl_eg_fixpoint  upstream 0.024s   ours 0.125s    5.2x    (leapfrog helps: 2.5x)
 #     meta_ana_coalgebra       upstream 0.012s   ours 0.023s    2.0x    (leapfrog helps: 0.7x)
 #
-# 🔴 THE LEAPFROG IS 1.83x SLOWER THAN OUR OWN ProductZipper on mm1_forward_full_proof — 3.30x the
-# allocation, identical answers (1598 atoms both ways). Profiled: `_occurs_check` (ExprAlg.jl:498,
-# :501) is the dominant allocator, inside `expr_unify`, which `unified_bindings` calls ONCE PER
-# CANDIDATE re-solving every equation from scratch. That is the pre-trail design ported on purpose;
-# upstream replaced it in `cfa8abf` and measured the old one at "11.6x the ProductZipper's
-# unification work" on big.metta. ⇒ the undo trail is the next real lever, and
-# `leapfrog_end_to_end.jl`'s cyclic-capture tests are its acceptance criterion (they pass TODAY
-# because re-solving everything sees a chain-borne occurs violation; a trail loses that and needs
-# upstream's explicit `cycled` check).
+# 🔴 DO NOT QUOTE A TIME RATIO FROM THIS TOOL — USE `tools/engine_work.jl` INSTEAD.
+# Two repeated n=9 runs of mm1 disagreed on whether the leapfrog:ProductZipper TIME gap survives its
+# own spread (one "SPREAD EXCEEDS GAP", the next "gap survives spread"). Every leapfrog time ratio
+# ever quoted here — 1.83x, 2.37x, 1.99x, 2.26x — is inside that noise. What IS deterministic, at
+# spread 0.0 over 9 runs and machine-independent by construction, is occurs INVOCATIONS and
+# allocated BYTES; `engine_work.jl` ranks the whole corpus on those and needs only n=1.
+#
+# ⇒ THE DETERMINISTIC RESULT: mm1 is leapfrog:ProductZipper 18.19x occurs invocations and 2.59x
+# allocation, answers identical. It is a TRUE ISOLATED OUTLIER — the next program in 267 is 2.00x —
+# so its position at the head of this tail is real and not an artifact of one sample. Upstream's
+# comparable ratio is 11.6x, so we are ~1.57x less economical than upstream on the same unit.
+#
+# ⚠️ TWO PREDICTIONS THAT STOOD HERE WERE WRONG, AND BOTH WERE WRITTEN AS FACT:
+#   1. "the undo trail is the next real lever" — the trail landed (cfa8abf ported). Result: -20%
+#      allocation, time FLAT. That AGREES with upstream, whose own before/after was 0.821/0.816.
+#      The 11.6x was never a trail speedup: it is a CROSS-ENGINE ratio. Misreading it as before/after
+#      produced a hunt for a missing win that was never promised.
+#   2. "a trail loses [chain-visible occurs] and needs upstream's explicit `cycled` check" — the
+#      cyclic-capture tests ALL PASS with the trail live. The stub that predicted otherwise removed
+#      prior bindings entirely; the trail keeps the map LIVE, so derefs still see the chain. The
+#      stub modelled something strictly weaker than the thing it was predicting about.
 #
 # ⚠️ WHY PER-PROGRAM AND NOT AN AGGREGATE. Julia loses to Rust on constant factors, and averaging
 # that over 285 programs is unactionable. A DISPROPORTIONATE gap on ONE program is the signature of

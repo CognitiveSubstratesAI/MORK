@@ -11,7 +11,7 @@
 # next enumeration reads a key from the wrong floor — the failure mode that cost two speculative
 # fixes on `cursor_ascend_floor!` and surfaced three frames from its cause.
 
-using MORK, Test
+using MORK, Test, Random
 const _L4 = MORK.Leapfrog
 
 _l4_expr(s::AbstractString) = MORK.sexpr_to_expr(s)
@@ -102,6 +102,117 @@ end
                                     nb -> (seen2[] += 1))
         @test got2 === nothing
         @test seen2[] == 0                                     # cont must NOT run on a miss
+    end
+
+    # ═════════════════════════════════════════════════════════════════════════════════════════════
+    # 🔑 THE UNDO TRAIL'S DIFFERENTIAL ORACLE (added 2026-08-21, when the trail took the live path).
+    #
+    # `match_candidate!` no longer calls `unified_bindings`; it solves the ONE new equation against a
+    # LIVE map and unwinds by removal. That is only correct if it agrees with a FROM-SCRATCH MGU, and
+    # `unified_bindings` IS the from-scratch MGU — so it stops being the implementation and becomes
+    # the oracle. This is the reason it is not deleted as dead code.
+    #
+    # ⚠️ WHY ANSWER-LEVEL TESTS DO NOT COVER THIS. `leapfrog_differential.jl` (603) and
+    # `leapfrog_wiring.jl` (330) compare ANSWER COUNTS against the stock engine. An incremental
+    # binder that diverged on a binding no answer projects would pass every one of them — the same
+    # blindness that let a wrong `loc` survive 1000+ assertions, because a wrong `loc` changes no
+    # count. So compare BINDINGS, and compare them BY DEREFERENCE: the solved form's SHAPE may
+    # legitimately differ (path compression, which end of a var-var equation survived) while the
+    # closure may not. [[feedback_assert_the_contract_not_the_representation]]
+    @testset "🔑 UNDO TRAIL == FROM-SCRATCH MGU, by deref (the oracle for `match_candidate!`)" begin
+        # ⚠️ A SHALLOW DEREF IS NOT A NORMAL FORM, and a first draft of this testset used one: it
+        # followed top-level variable chains and keyed the result BY THE MAP'S OWN KEYS. It reported
+        # 11 divergences, all spurious, in the two shapes this comment exists to rule out:
+        #
+        #   (a) WHICH END OF A VAR-VAR EQUATION SURVIVED — live bound (0,2), the oracle bound (0,0),
+        #       both to an unbound variable. Keying by map keys makes that a difference; it is not.
+        #   (b) EAGER vs LAZY SUBSTITUTION — `unified_bindings` re-solves everything, so it
+        #       substitutes INTO terms and yields `(rel a)`; the trail leaves `(rel $w)` with
+        #       `$w -> a` recorded separately. A shallow deref cannot see through the compound.
+        #
+        # Both are exactly what "compare derefs, not maps" is supposed to permit — so the draft was
+        # asserting the representation while its own comment said not to. The normal form must
+        # RECURSE INTO COMPOUNDS and rename unbound variables CANONICALLY (by first occurrence over
+        # a FIXED probe order), which is the only reading under which the two are comparable at all.
+        function _d_norm(b, e, names::Dict{MORK.ExprVar, Int}, fuel::Int)
+            fuel <= 0 && return "CYCLE"          # a bound cycle: terminate rather than hang
+            v = MORK.ee_var_opt(e)
+            if v !== nothing
+                nxt = get(b, v, nothing)
+                # an UNBOUND variable is a hole; its identity is its FIRST-OCCURRENCE index, so two
+                # solutions that differ only in which representative survived compare equal.
+                nxt === nothing && return "_" * string(get!(names, v, length(names) + 1))
+                return _d_norm(b, nxt, names, fuel - 1)
+            end
+            # ⚠️ `ee_subsexpr` RETURNS THE REST OF THE BUFFER, not this item's span. A second draft
+            # rendered a symbol with it and reported 4 divergences that were the TAIL leaking into
+            # the head: `(rel $w)` showed as bytes `[rel 0xC0]` against `(rel a)`'s `[rel a]`, while
+            # the arg that actually mattered had already resolved to `a` on BOTH sides. Slice the
+            # symbol by its own declared size.
+            tag = MORK.byte_item(e.base.buf[Int(e.offset) + 1])
+            if !(tag isa MORK.ExprArity)
+                tag isa MORK.ExprSymbol || return "TAG:" * string(typeof(tag))
+                lo = Int(e.offset) + 1
+                return string(Vector{UInt8}(e.base.buf[lo:lo + Int(tag.size)]))
+            end
+            args = MORK.ExprEnv[]
+            MORK.ee_args!(e, args)
+            "(" * join([_d_norm(b, a, names, fuel - 1) for a in args], " ") * ")"
+        end
+
+        "What the join can OBSERVE: the query variables, normalised, in a fixed order under one
+         shared renaming. Not the map."
+        _d_closure(b) = (names = Dict{MORK.ExprVar, Int}();
+                         String[_d_norm(b, _L4.query_var_env(i), names, 64) for i in 0:3])
+
+        rng   = MersenneTwister(0xB13F)
+        terms = ["a", "b", "(rel a)", "(rel \$w)", "(pair a b)", "\$u"]
+        eq(r) = rand(r, Bool) ? _L4.query_var_env(rand(r, 0:3)) :
+                                _l4_env(rand(r, 1:3), rand(r, terms))
+
+        nbound = 0        # trials where the oracle really bound something
+        nfailed = 0       # trials where the two agreed on a CONTRADICTION
+        nrestored = 0     # trials where an unwind was exercised
+
+        for _ in 1:300
+            oracle = MORK.Bindings()
+            live   = MORK.Bindings()
+            trail  = MORK.ExprVar[]
+
+            for _ in 1:rand(rng, 1:4)
+                lhs, rhs = eq(rng), eq(rng)
+                mark = length(trail)
+                before = _d_closure(live)
+
+                nb = _L4.unified_bindings(oracle, lhs, rhs)
+                r  = MORK.expr_unify_into!(live,
+                        Tuple{MORK.ExprEnv, MORK.ExprEnv}[(lhs, rhs)], trail)
+                failed = r isa MORK.UnificationFailure
+
+                # 🔴 AGREEMENT ON FAILURE FIRST. An incremental binder that merely failed LESS often
+                # would look like an improvement and be a wrong answer.
+                @test (nb === nothing) == failed
+                if failed
+                    nfailed += 1
+                    # ⚠️ the map is DIRTY after a failed solve — a contradiction may insert before it
+                    # contradicts. Unwinding must restore it exactly, or the NEXT candidate in the
+                    # real join is solved against corruption, silently.
+                    MORK.expr_unify_unwind!(live, trail, mark)
+                    @test _d_closure(live) == before
+                    nrestored += 1
+                    break
+                end
+                oracle = nb
+                @test _d_closure(live) == _d_closure(oracle)   # ⇐ the property this testset exists for
+                length(live) > 0 && (nbound += 1)
+            end
+        end
+
+        # ⚠️ ANTI-VACUITY. Without these, a generator that only ever produced trivially-equal or
+        # instantly-contradictory pairs would satisfy every assertion above while testing nothing.
+        @test nbound   > 100
+        @test nfailed  > 10
+        @test nrestored == nfailed
     end
 
     @testset "candidate_intro_delta counts the candidate's OWN NewVars" begin

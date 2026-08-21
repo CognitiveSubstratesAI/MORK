@@ -158,7 +158,8 @@ module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
               ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
-              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item, UNIT_VAL
+              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item, UNIT_VAL,
+              expr_unify_into!, expr_unify_unwind!
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
@@ -1083,8 +1084,14 @@ end
 #
 # That is O(|bindings|) work and one full unification PER CANDIDATE, and it is exactly why upstream
 # later replaced it with an undo trail (`cfa8abf` "Bind candidates incrementally with an undo
-# trail"). We follow THIS version first, deliberately: it is upstream's own sequence, it is simple
+# trail"). We followed THIS version first, deliberately: it is upstream's own sequence, it is simple
 # enough to validate, and the trail is a separate optimization with its own correctness argument.
+#
+# 🔑 THE TRAIL IS NOW LIVE (2026-08-21). `match_candidate!` solves the ONE new equation against a
+# LIVE `Bindings` and unwinds by removal; `unified_bindings` IS NO LONGER CALLED BY THE JOIN. It is
+# retained as the port record of `69393c7^` AND as the trail's differential ORACLE — the two must
+# agree on every deref, and `leapfrog_layer3d.jl` asserts exactly that. Do not delete it without
+# replacing the oracle: it is the only from-scratch MGU the incremental path can be checked against.
 #
 # ⚠️ WE NEED NO `bound[f]` MIRROR. This older upstream keeps `bound[f]` as a byte-for-byte copy of
 # the cursor's path and `debug_assert`s they agree ("held cursor drifted from prefix+bound"). The
@@ -1129,7 +1136,15 @@ when they do not unify.
 ⚠️ EVERY EXISTING BINDING IS RE-STATED AS AN EQUATION, not carried. That is upstream's shape and it
 is what makes the result a genuine MGU over the whole system rather than a local extension — a new
 pair can force an existing binding to refine, and an incremental `setindex!` would miss that.
-The cost is the reason the trail exists; the correctness is the reason we start here.
+
+🔑 NOT ON THE LIVE PATH SINCE 2026-08-21 — the join uses the undo trail (`match_candidate!`). This
+is kept for two reasons, and the second is the load-bearing one:
+  1. the port record of `69393c7^`, upstream's own earlier sequence;
+  2. THE TRAIL'S DIFFERENTIAL ORACLE. The incremental path is only correct if it agrees with a
+     from-scratch MGU on every dereference, and this is the from-scratch MGU. `leapfrog_layer3d.jl`
+     asserts that agreement directly. Deleting this as dead code would delete the oracle — the
+     failure mode being that an incremental binder can look right on answers while diverging on
+     bindings that no test observes. [[feedback_green_suite_hides_unwired_correct_code]]
 """
 function unified_bindings(bindings::Bindings, lhs::ExprEnv, rhs::ExprEnv)::Union{Bindings, Nothing}
     pairs = Vector{Tuple{ExprEnv, ExprEnv}}()
@@ -1179,12 +1194,36 @@ ground term none — and it advances the factor's namespace so a later candidate
 cannot collide with variables this one introduced.
 """
 function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::UInt8,
-                          pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function)
+                          pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function;
+                          trail::Vector{ExprVar} = ExprVar[],
+                          stack::Vector{Tuple{ExprEnv, ExprEnv}} = Tuple{ExprEnv, ExprEnv}[])
     data = data_env_for(f, intro, bytes)
-    nb = unified_bindings(bindings, pattern, data)
-    nb === nothing && return nothing
-    with_bound_bytes!(c, bytes, () -> cont(nb))
-    nb
+    # 🔑 THE UNDO TRAIL (upstream `cfa8abf`). Solve the ONE new equation against the LIVE map and
+    # unwind by removal, instead of cloning the map and re-solving every prior equation per
+    # candidate. The derefs consult the live map, so an earlier binding constrains exactly as if its
+    # equation were re-asserted — that is the whole trade.
+    #
+    # ⚠️ `cont` NOW RECEIVES THE SAME OBJECT, MUTATED, not a fresh map. The signature is unchanged
+    # and that is the hazard: a caller that RETAINED the binding set across candidates used to be
+    # safe and no longer is. Nothing in the join does — every use is inside the continuation, below
+    # the unwind.
+    #
+    # ⚠️ UNWIND ON BOTH PATHS. A failed solve may insert before it contradicts, so the map is left
+    # DIRTY on failure; `test/integration/expr_unify_trail.jl` pins exactly that case.
+    mark = length(trail)
+    empty!(stack)
+    push!(stack, (pattern, data))
+    r = expr_unify_into!(bindings, stack, trail)
+    if r isa UnificationFailure
+        expr_unify_unwind!(bindings, trail, mark)
+        return nothing
+    end
+    try
+        with_bound_bytes!(c, bytes, () -> cont(bindings))
+    finally
+        expr_unify_unwind!(bindings, trail, mark)
+    end
+    bindings
 end
 
 "The NewVars a candidate introduces — upstream `expr_from_bytes(bytes).newvars()`."
@@ -1389,14 +1428,20 @@ end
 """
     UnifyJoinState
 
-The join's live state. `bindings` are NOT here: they are threaded through the recursion as values,
-because [`unified_bindings`] rebuilds the whole set per candidate anyway.
+The join's live state. `bindings` are NOT here: they are threaded through the recursion.
 
-⚠️ That threading is a DEVIATION FROM UPSTREAM'S SHAPE and it is deliberate. Upstream mutates one
-map and unwinds by trail, with `debug_assert`s that the unwind restored it. Rebuilding is O(|b|)
-per candidate — measurably worse, and the reason upstream replaced it — but it makes save/restore
-UNREPRESENTABLE rather than merely asserted. The trail is a later commit with its own correctness
-argument; adopting it and the assembly at once would leave a failure ambiguous between them.
+🔑 SINCE THE TRAIL (2026-08-21) THE THREADED OBJECT IS ONE LIVE MAP, MUTATED AND UNWOUND — not a
+fresh value per candidate. The `trail` field below is its undo log. The signature did not change,
+which is the hazard: a caller that RETAINED a binding set across candidates was safe before and is
+not now. Every use in the join is inside the continuation, below the unwind.
+
+⚠️ THIS NO LONGER DEVIATES FROM UPSTREAM. It did until 2026-08-21: rebuilding the map per candidate
+made save/restore UNREPRESENTABLE rather than merely asserted, which was worth its O(|b|) cost while
+the assembly itself was unproven — adopting the trail and the assembly at once would have left a
+failure ambiguous between them. With the assembly validated, the trail landed and we now do what
+upstream does: mutate one map, unwind by trail. What upstream asserts with `debug_assert`s that the
+unwind restored the map, we assert in `test/integration/expr_unify_trail.jl` — INCLUDING the failure
+path, where a contradiction may insert before it fails and leave the map dirty.
 """
 mutable struct UnifyJoinState{V, A, F}
     cursors::Vector{SubtermCursor{V, A}}
@@ -1417,6 +1462,14 @@ mutable struct UnifyJoinState{V, A, F}
     # only) but which `fact_bytes` must put back to reconstruct the stored fact.
     reindex_order::Vector{Vector{Int}}
     prefixes::Vector{Vector{UInt8}}
+    # The undo trail: ONE per join, marked and unwound per candidate.
+    trail::Vector{ExprVar}
+    # 🔑 THE EQUATION STACK IS POOLED, NOT ALLOCATED PER CANDIDATE — upstream's `unify_stack`, which
+    # it `clear()`s and `mem::take`s across candidates. Allocating a fresh one-element vector here
+    # costs one allocation per candidate, and `match_candidate!` runs 61 913 times on a single
+    # `mm1_forward_full_proof` step. Found by DIFFING cfa8abf's `UnifyJoin` fields against ours, not
+    # by reading our own code.
+    unify_stack::Vector{Tuple{ExprEnv, ExprEnv}}
 end
 
 "Query variable ids are 0-BASED (upstream's numbering); array slots are 1-based. One helper, so the
@@ -1455,7 +1508,8 @@ function uj_match_candidate(st::UnifyJoinState, bindings::Bindings, f::Int, patt
     intro = st.data_intro[f]
     st.data_intro[f] = intro + newvars
     try
-        match_candidate!(st.cursors[f], bindings, f, intro, pattern, bytes, cont)
+        match_candidate!(st.cursors[f], bindings, f, intro, pattern, bytes, cont;
+                         trail = st.trail, stack = st.unify_stack)
     finally
         st.data_intro[f] = intro
     end
@@ -2136,7 +2190,7 @@ function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
     steps = Vector{Step}[factor_steps(UnifyFactor(UInt8[], c)) for c in eff_cols]
     st = UnifyJoinState(cursors, steps, ones(Int, nf), zeros(UInt8, nf),
                         var_order, var_pos, nvars, nf, emit, false, 0,
-                        reindex_order, prefixes)
+                        reindex_order, prefixes, ExprVar[], Tuple{ExprEnv, ExprEnv}[])
     uj_catch_up(st, Bindings(), 1, 1)
     st.emitted
 end

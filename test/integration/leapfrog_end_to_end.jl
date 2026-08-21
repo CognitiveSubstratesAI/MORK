@@ -105,12 +105,20 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # Upstream names this exactly ("the join-propagated capture builds x0 = (k (k x0))") and
         # drops such a row at emit with an explicit `cycled` check.
         #
-        # 🔴 WE HAVE NO SUCH CHECK AND STILL AGREE — because `unified_bindings` re-states EVERY
-        # existing binding as an equation and re-solves from scratch per candidate, so the occurs
-        # check sees the whole chain. That is a property of the SLOW path we deliberately ported.
-        # ⇒ WHEN THE INCREMENTAL UNDO TRAIL IS ADOPTED (upstream `cfa8abf`), THAT PROPERTY IS LOST
-        # AND THE `cycled` CHECK BECOMES MANDATORY. These cases are what will catch it: they pass
-        # now, and they are the reason the trail is not a drop-in swap.
+        # 🔴 WE HAVE NO SUCH CHECK AND STILL AGREE. The reason, and it is NOT the one this comment
+        # asserted until 2026-08-21: the occurs check sees the whole chain because DEREFERENCING
+        # CONSULTS THE ACCUMULATED MAP, not because any particular caller re-states the equations.
+        #
+        # ⚠️ THIS BLOCK PREVIOUSLY PREDICTED THE OPPOSITE — "when the undo trail is adopted that
+        # property is LOST and `cycled` becomes MANDATORY" — on the strength of a stub experiment.
+        # THE TRAIL IS NOW ADOPTED (`cfa8abf`, `match_candidate!`) AND ALL OF THESE STILL PASS,
+        # WITHOUT `cycled`. The prediction was wrong because THE STUB SIMULATED SOMETHING STRICTLY
+        # WEAKER THAN THE TRAIL: it removed the prior bindings ENTIRELY, so `expr_unify` solved from
+        # an empty map and could see only the local edge. The trail keeps the map LIVE and unwinds
+        # by REMOVAL, so an earlier binding constrains exactly as if its equation were re-asserted.
+        # ⇒ The stub was a valid probe of CHAIN-VISIBILITY and an invalid model of THE TRAIL.
+        # Whether `cycled` is needed for some shape these cases do not reach remains OPEN — upstream
+        # ships it, and no test here forces it. Absence of a failure is not proof it is dead code.
         mk(rel, c1, c2) = _E2E.UnifyFactor(UInt8[_E2E_ARITY3],
             [_E2E.unify_term_col(MORK.sexpr_to_expr(rel)),
              c1 isa Int ? _E2E.unify_var_col(c1) : _E2E.unify_term_col(MORK.sexpr_to_expr(c1[1]), c1[2]),
@@ -133,12 +141,14 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         @test _e2e_engine(s3, "(, (edge \$x \$y) (link \$y (f \$x)))") == 0
         @test _e2e_unify(s3, two, 2) == 0
 
-        # 🔴 THE SHAPES THE CURRENT DESIGN MAKES UNREACHABLE — added 2026-08-21 after a STUB
-        # EXPERIMENT. Weakening `unified_bindings` to state only the LOCAL edge (exactly what a
-        # trail's occurs check sees) made all three assertions above fail, so they DO exercise
-        # chain-visibility. But every one of them closes its cycle across ADJACENT columns. The
-        # dangerous case for a trail is a cycle closing through a variable bound TWO OR MORE COLUMNS
-        # BACK: the local edge looks innocent, and only the accumulated chain is contradictory.
+        # 🔴 THE SHAPES THE ADJACENT-COLUMN CASES CANNOT REACH — added 2026-08-21 after a STUB
+        # EXPERIMENT. Weakening the binder to state only the LOCAL edge made all three assertions
+        # above fail, so they DO exercise chain-visibility. (⚠️ That stub is NOT a model of the
+        # trail — see above; it is strictly weaker. It proves what these cases TEST, not what the
+        # trail DOES.) Every one of them closes its cycle across ADJACENT columns. The interesting
+        # case is a cycle closing through a variable bound TWO OR MORE COLUMNS BACK, where the local
+        # edge looks innocent and only the accumulated chain is contradictory — the shape that would
+        # distinguish a live trail from a broken one.
         #
         # ⚠️ THESE ARE NOT REACHABLE BY EITHER GENERATOR. `leapfrog_differential.jl` and
         # `leapfrog_wiring.jl` build spaces from `(rel arg arg)` lines and bodies from two-column

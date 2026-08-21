@@ -415,6 +415,37 @@ UnificationFailure(::Val{:max_iter}, n::Int) =
 const MAX_UNIFY_ITER = 1000
 
 """
+    OCCURS_CALLS
+
+Number of `_occurs_check` entries since the last reset. A DETERMINISTIC, MACHINE-INDEPENDENT
+measure of unification work — unlike a time or an allocation figure, this is identical on every
+box and every run, so a later session can compare against it without owning this laptop.
+
+🔑 IT IS THE DIRECT ANALOGUE OF UPSTREAM'S HEADLINE NUMBER. `cfa8abf` reports "the re-solving cost
+11.6x the ProductZipper's unification work (1,423,278 occurs calls vs 122,933 at 2000 axioms)" —
+that is a CROSS-ENGINE ratio, leapfrog:ProductZipper, NOT a before/after-trail figure. Reading it as
+a trail speedup is a mistake I made and had to withdraw: upstream's own before/after was
+0.821/0.816, flat. So the comparable to compute here is leapfrog:ProductZipper occurs calls on OUR
+corpus, post-trail — which is what `tools/upstream_speed.jl` records.
+
+⚠️ Counting is unconditional: one increment on a hot path, no branch, so no run is "uninstrumented"
+and no result is a special build. Reset with `occurs_calls_reset!()` before a measured region.
+"""
+const OCCURS_CALLS = Ref{Int}(0)
+
+"Recursive node visits inside the occurs walk. OURS ONLY — upstream has no comparable figure, since
+its `occurs` is a single non-recursive fold. Use [`OCCURS_CALLS`] for any upstream comparison."
+const OCCURS_NODES = Ref{Int}(0)
+
+"Reset [`OCCURS_CALLS`] and return its previous value."
+function occurs_calls_reset!()
+    prev = OCCURS_CALLS[]
+    OCCURS_CALLS[] = 0
+    OCCURS_NODES[] = 0
+    prev
+end
+
+"""
     _expr_unify_inplace!(pairs, bindings) → Union{Bool, UnificationFailure}
 
 Internal scratch-Dict variant: clears `bindings`, fills it in-place, returns
@@ -533,6 +564,12 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
     # depending on replicating its exact pair-generation order. A depth guard treats an
     # already-cyclic chain as "occurs" (safety; bindings are acyclic before the checked insert).
     function _occurs_check(xvar::ExprVar, e::ExprEnv, depth::Int=0)::Bool
+        # ⚠️ TOP-LEVEL ONLY. Upstream's unit is one `occurs` MACRO INVOCATION (a single `traverseh!`
+        # fold), NOT a node visit. Ours recurses, so counting every entry measures a different
+        # quantity and is NOT comparable to cfa8abf's 1,423,278 — a first draft of this counter did
+        # exactly that and produced a ratio in the wrong unit. `depth == 0` is the invocation.
+        depth == 0 && (OCCURS_CALLS[] += 1)
+        OCCURS_NODES[] += 1
         depth > MAX_UNIFY_ITER && return true
         ev = ee_var_opt(e)
         if ev !== nothing
@@ -1707,4 +1744,5 @@ export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
 export expr_unify_into!, expr_unify_unwind!   # the undo trail (upstream cfa8abf)
+export OCCURS_CALLS, OCCURS_NODES, occurs_calls_reset!      # deterministic unification-work counter
 export expr_apply, ee_show
