@@ -157,7 +157,19 @@ fail=0
 rows=0
 printf "%-4s %-30s %s\n" "mut" "suite" "verdict"
 for M in M1 M2 M3; do
+  # 🔴 VERIFY THE MUTANT ACTUALLY CHANGED THE SOURCE, per mutant, before spending four suites on it.
+  # `rows` below counts ITERATIONS COMPLETED, so it catches a run that dies partway — the case that
+  # actually happened — but NOT a mutant whose edit was a no-op: that produces a full 12 rows, all
+  # "SURVIVED", and passes every other guard while looking like a complete result. Strictly worse
+  # than the failure `rows` does catch, because it reads as an answer. `--check` already knows how to
+  # detect it; this is the same md5 comparison, inline, at no extra suite cost.
+  _pre=$(md5sum src/expr/ExprAlg.jl src/kernel/Leapfrog.jl)
   if ! apply $M; then echo "🔴 $M FAILED TO APPLY — anchor moved, results would be meaningless"; exit 1; fi
+  if [ "$_pre" = "$(md5sum src/expr/ExprAlg.jl src/kernel/Leapfrog.jl)" ]; then
+    echo "🔴 $M APPLIED BUT SOURCE UNCHANGED — a no-op mutant. Every row below would read SURVIVED"
+    echo "   for a reason that has nothing to do with the tests. Fix the mutant before believing it."
+    exit 1
+  fi
   for f in $FILES; do
     if ./tools/run_tests.sh "$f" >/dev/null 2>&1; then v="SURVIVED 🔴"; fail=1; else v="killed"; fi
     printf "%-4s %-30s %s\n" "$M" "$(basename "$f")" "$v"
