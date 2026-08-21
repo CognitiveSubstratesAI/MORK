@@ -77,6 +77,20 @@ const UP = get(ENV, "MORK_UPSTREAM_BIN",
 const DIRS = [joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
               for d in ("space", "sinks")]
 const STEPS = 2000
+#
+# ✅ THE RUNS ARE STEP-ALIGNED WITH UPSTREAM. Upstream's `metta_calculus` is a DO-WHILE —
+# `while { BODY; done < steps } { done += 1 }` (`space.rs:1945`) evaluates the body INSIDE the
+# condition, so it performs steps+1 interprets while REPORTING steps. Ours matched it on 2026-08-19:
+# `Space.jl` is now `while true` with the TEST BEFORE THE INCREMENT, which is where the ordering
+# lives. Reporting is unchanged (`metta_calculus(N)` still returns N); one more exec is interpreted.
+# ⚠️ RECORDED BECAUSE A STALE INDEX SAYS OTHERWISE. `workflows/CODEMAP.md` still carried this as
+# "NOT FIXED ... surfaced for a decision", written the SAME DAY the fix landed, and it was reported
+# as an open decision on 2026-08-21 before the code was read. CODEMAP's own row warns that a row is
+# a MEASUREMENT AT A TIME; this is that failure. Read `Space.jl` before re-opening this.
+# 🔑 It was invisible on any program reaching fixpoint below the cap — both engines leave through the
+# same arm — which is why 96 of 104 passed with it live. MEASURED 2026-08-21 across all 285 corpus
+# programs: EVERY ONE converges by 50 steps (0 programs step-sensitive at caps 50/60/100/200), so
+# STEPS=2000 was never near the boundary.
 
 isfile(UP) || error("no upstream binary at $UP — the comparison has no oracle")
 
