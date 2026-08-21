@@ -26,8 +26,22 @@
 # an ALGORITHMIC divergence — which is how the 1182x intermediate blowup was found. The median is
 # the language tax; the outliers are the bugs.
 #
+# ─── PROVENANCE — WITHOUT THIS, 0.057s IS NOT COMPARABLE TO ANYTHING MEASURED LATER ─────────────
+#   upstream   06cdcf3  (2026-08-17, "Merge pull request #146 from trueagi-io/expr-opt")
+#   binary     target/release/mork built 2026-08-20 11:28
+#   machine    Intel i7-3630QM @ 2.40GHz, 4 cores, 23 GiB, Julia 1.12.7
+#   steps      2000
+# Re-state these whenever the numbers above are refreshed; a ratio to an unnamed baseline is a
+# number, not a measurement.
+#
 # ⚠️ NEEDS THE BOX QUIET, and compares RATIOS so moderate contention affects both sides alike.
 # A 45%-off figure was once reported here from hand-rolled timing under load.
+#
+# ⚠️ AND REPEAT BEFORE QUOTING A MAGNITUDE. mm1's ratio was quoted as 1.83x from one run and 2.37x
+# from another — the same workload measured 0.572s and 0.748s ~30% apart. Over n=9: median 1.81x,
+# min/min 2.21x, max/max 2.55x, and the SPREAD EXCEEDS THE GAP, so no single figure is quotable.
+# What IS robust is that the distributions do not OVERLAP (min-on 1.226s > max-off 0.793s): the
+# DIRECTION is certain, the magnitude is a range (~1.55x-3.6x). Report direction, bound magnitude.
 #
 # 🔴 THE AGGREGATE IS THE WRONG QUESTION. Julia will lose to Rust on constant factors — GC, boxing,
 # dispatch — and averaging that over 285 programs tells us nothing we can act on. What IS actionable
@@ -101,6 +115,24 @@ for d in DIRS, f in sort(readdir(d))
     n = our_time(p, true);  n === nothing && continue
     u < 1e-4 && continue                                     # too fast to compare meaningfully
     push!(rows, (o / u, n / u, u, o, basename(f)))
+end
+
+# 🔴 AN EMPTY RESULT SET IS A HARD FAILURE, NOT A QUIET ZERO. The first run of this tool produced
+# ZERO rows and exited 0 — every program had been silently skipped because `run` is shadowed by the
+# MORK test REPL's `run(src)` helper, so `run(pipeline(...))` threw MethodError into a bare `catch`.
+# Fixing the shadowing was NOT the fix: the DEFECT was that nothing-measured reported as success.
+# The next cause will be different — a moved binary, a renamed corpus, a permissions change — and it
+# must announce itself the same way. So: assert the row count against the PROGRAM count, and name
+# what was dropped rather than averaging over what survived. [[feedback_verify_the_oracle_runs]]
+n_programs = sum(count(f -> endswith(f, ".mm2"), readdir(d)) for d in DIRS)
+if isempty(rows)
+    error("upstream_speed: ZERO programs timed out of $n_programs — the comparison measured " *
+          "NOTHING. Check the binary at $UP, and remember `run` is shadowed: use `Base.run`.")
+end
+if length(rows) < n_programs
+    @warn "upstream_speed: not every program produced a timing — the tail may be missing the " *
+          "very outlier this tool exists to find" timed = length(rows) programs = n_programs \
+          dropped = n_programs - length(rows)
 end
 
 sort!(rows; by = first, rev = true)

@@ -132,6 +132,28 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         s3 = _e2e_space("(edge \$w \$w)\n(link \$u \$u)\n")
         @test _e2e_engine(s3, "(, (edge \$x \$y) (link \$y (f \$x)))") == 0
         @test _e2e_unify(s3, two, 2) == 0
+
+        # 🔴 THE SHAPES THE CURRENT DESIGN MAKES UNREACHABLE — added 2026-08-21 after a STUB
+        # EXPERIMENT. Weakening `unified_bindings` to state only the LOCAL edge (exactly what a
+        # trail's occurs check sees) made all three assertions above fail, so they DO exercise
+        # chain-visibility. But every one of them closes its cycle across ADJACENT columns. The
+        # dangerous case for a trail is a cycle closing through a variable bound TWO OR MORE COLUMNS
+        # BACK: the local edge looks innocent, and only the accumulated chain is contradictory.
+        #
+        # ⚠️ THESE ARE NOT REACHABLE BY EITHER GENERATOR. `leapfrog_differential.jl` and
+        # `leapfrog_wiring.jl` build spaces from `(rel arg arg)` lines and bodies from two-column
+        # conjuncts; neither can produce a three-hop capture. Hand-written or unobserved.
+        three = [mk("edge", 0, 1), mk("link", 1, 2), mk("rel", 2, ("(f \$x)", 0))]
+        s4 = _e2e_space("(edge \$w \$w)\n(link \$u \$u)\n(rel \$v \$v)\n")
+        b4 = "(, (edge \$x \$y) (link \$y \$z) (rel \$z (f \$x)))"
+        @test _e2e_engine(s4, b4) == 0            # the oracle rejects the three-hop capture
+        @test _e2e_unify(s4, three, 3) == 0       # …and so must we, with `$x` bound TWO levels back
+
+        # ANTI-VACUITY for the three-hop shape: a space that genuinely satisfies it must answer,
+        # or the assertion above is satisfied by a join that never emits at depth 3.
+        s5 = _e2e_space("(edge a b)\n(link b c)\n(rel c (f a))\n")
+        @test _e2e_engine(s5, b4) == 1
+        @test _e2e_unify(s5, three, 3) == 1
     end
 
     @testset "the layers the assembly made reachable are now CALLED" begin
