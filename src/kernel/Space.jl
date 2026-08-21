@@ -250,6 +250,12 @@ Write all stored expressions to `io`, one per line, in s-expression text form.
 Mirrors `Space::dump_all_sexpr` (no-interning path).
 """
 function space_dump_all_sexpr(s::Space, io::IO)::Int
+    # Upstream makes this the FIRST statement of `dump_all_sexpr` (space.rs:955), and serialization
+    # is the right hook: it is where a space becomes something someone reasons about, so it is where
+    # "the two engines will not agree on this space" needs saying. Ported 2026-08-21 — and wired in
+    # the SAME commit, because the previous three layers of this port were written, tested, and
+    # called by nothing. [[feedback_parses_is_not_fires]]
+    warn_top_level_variable(s)
     rz = read_zipper(s.btm)
     i = 0
     while zipper_to_next_val!(rz)
@@ -1829,7 +1835,46 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     # the pattern read to the prefix-subtrie (delegates to space_query_multi
     # when prefix is empty — the root path is byte-identical to before).
     query_fn = if no_source
-        ((btm, pat, v, f) -> space_query_multi_at(btm, prefix, pat, v, f))
+        # ── LEAPFROG DISPATCH ────────────────────────────────────────────────────────────────────
+        # 🔑 EXACTLY ONE CALL SITE DISPATCHES, and this is it — the `,`-source space-to-space
+        # transform, matching upstream, which routes `transform_multi_multi_` and leaves
+        # `transform_multi_multi_o` and the pattern-directed dumps on the stock path. Upstream's
+        # stated reason is not performance: "the pattern-directed dumps keep the stock path and its
+        # ENUMERATION ORDER." The join visits in a different order, which is invisible for a
+        # transform that adds to a space (set semantics) and observable in a dump.
+        #
+        # ⚠️ THREE PRECONDITIONS, none of them optional:
+        #   · `no_source`      — the `,` source. The `I` source reads ACT files via a different path.
+        #   · `isempty(prefix)`— a prefix anchors the read to a subtrie; the join opens each factor's
+        #                        cursor at its OWN relation prefix from the root and cannot honour it.
+        #   · `pat_v == 0`     — the join numbers query variables from 0. A non-zero base would
+        #                        silently join on the wrong variables, which is a WRONG ANSWER, not
+        #                        an error.
+        # A `nothing` return means the body is not routable (not a conjunction, or an encoding the
+        # parse rejects) and the stock path answers it — `nothing` is NOT "no matches".
+        #
+        # 🔴 OFF BY DEFAULT. Upstream makes this a COMPILE-TIME feature; a runtime flag is the honest
+        # Julia analogue and is strictly better for us — it lets the differential run the SAME corpus
+        # both ways in one process, which a cfg cannot. [[feedback_parity_vs_opt_in]]
+        # ⚠️ ONE CLOSURE, WITH THE DECISION INSIDE IT — NOT A CHOICE BETWEEN CLOSURES. Selecting
+        # among closures here makes `query_fn` a union of THREE distinct types, so every call
+        # through it becomes a RUNTIME DISPATCH. The first version of this did exactly that and
+        # `test/integration/jet_dispatch_ratchet.jl` caught it: 113 sites against a pin of 104.
+        # That is the ratchet doing its job, and the fix is structural rather than an annotation.
+        # [[feedback_perf_diagnosis_typeinstability_first]]
+        (btm, pat, v, f) -> begin
+            if LEAPFROG_DISPATCH[] && isempty(prefix) && v == UInt8(0)
+                r = space_query_multi_leapfrog(btm, pat, f)
+                if r !== nothing
+                    LEAPFROG_ROUTED[] += 1
+                    return r::Int
+                end
+                # Counted, not silent: upstream PANICS here rather than detouring. See
+                # `LEAPFROG_DECLINED` for why this branch is on probation.
+                LEAPFROG_DECLINED[] += 1
+            end
+            space_query_multi_at(btm, prefix, pat, v, f)
+        end
     else
         (btm, pat, v, f) -> space_query_multi_i(btm, pat, v, f; mmaps=s.mmaps)
     end

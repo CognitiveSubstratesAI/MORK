@@ -18,6 +18,19 @@ const PM = PathMap.PathMap
 # inert oracles that motivated it. Captured into `_MORK_TS` and checked AFTER the suite.
 include("inert_testset_guard.jl")
 
+# ── ENGINE SWITCH ────────────────────────────────────────────────────────────────────────────────
+# `MORK_LEAPFROG_DISPATCH=1 tools/run_tests.sh` runs the ENTIRE suite with the `,`-source transform
+# answered by the leapfrog join instead of the ProductZipper. That is the measurement that decides
+# whether the join can be the live path: same corpus, same assertions, different engine.
+#
+# ⚠️ SET HERE, NOT AS A PRECOMPILED DEFAULT. A `const` initialised from `ENV` at module load would be
+# BAKED INTO THE PRECOMPILE CACHE — the first build's value would silently persist across runs with
+# a different env, which is the kind of frozen fact this repo has been bitten by before.
+if lowercase(get(ENV, "MORK_LEAPFROG_DISPATCH", "")) in ("1", "true", "yes", "on")
+    MORK.LEAPFROG_DISPATCH[] = true
+    @info "LEAPFROG DISPATCH ENABLED — the `,`-source transform is answered by the leapfrog join"
+end
+
 const _MORK_TS = @testset "MORK" begin
     if _HAS_AQUA
         @testset "Aqua quality" begin

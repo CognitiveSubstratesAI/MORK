@@ -105,6 +105,9 @@ include("kernel/Leapfrog.jl")
 # The engine-facing entry (upstream `query_multi_leapfrog`). Separate file because it sits ABOVE the
 # Leapfrog module and below Space.jl's contract — it is routing, not join machinery.
 include("kernel/LeapfrogEntry.jl")
+# The dispatch flag + the one space shape on which the two engines disagree. AFTER the entry point
+# it routes to, and after Space.jl whose transform consults it.
+include("kernel/LeapfrogDispatch.jl")
 using .Leapfrog: subterm_parse_step, least_ge, is_complete
 
 # ── DyckZipper (experiments/expr/dyck/) ──────────────────────────────────────

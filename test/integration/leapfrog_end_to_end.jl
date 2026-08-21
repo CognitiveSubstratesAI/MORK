@@ -185,9 +185,19 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # ⚠️ AND A DISPATCH IS NOT A SWAP. Our own P5 measurement says a wrong gate makes queries
         # SLOWER, not merely different, so the gate has to be earned on measured shapes — which is
         # why wiring the entry point and choosing when to use it are deliberately separate commits.
+        # 🔑 THIS ASSERTION PAIR HAS NOW FLIPPED TWICE, WHICH IS THE POINT OF WRITING IT AS A TEST.
+        # v1: nothing in src/ called the join.        v2: only LeapfrogEntry.jl did.
+        # v3 (here): `Space.jl`'s `,`-source transform ROUTES to it — but only behind a flag that is
+        # OFF by default, so the stock engine still answers unless a caller opts in.
         sp = read(joinpath(srcdir, "kernel", "Space.jl"), String)
         spcode = join([l for l in split(sp, '\n') if !startswith(strip(l), "#")], '\n')
-        @test !occursin("space_query_multi_leapfrog", spcode)
-        @test !occursin("Leapfrog.", spcode)
+        @test occursin("space_query_multi_leapfrog", spcode)       # the route exists…
+        @test occursin("LEAPFROG_DISPATCH", spcode)                # …and it is gated
+        @test MORK.LEAPFROG_DISPATCH[] == false                    # …and the gate is SHUT by default
+
+        # The divergence warning is wired to the same place upstream puts it — the serialization
+        # entry point — rather than merely defined. Three layers of this port were defined and
+        # called by nothing; that is what this line is guarding against.
+        @test occursin("warn_top_level_variable(s)", spcode)
     end
 end
