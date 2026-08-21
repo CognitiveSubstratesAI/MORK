@@ -204,7 +204,13 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         spcode = join([l for l in split(sp, '\n') if !startswith(strip(l), "#")], '\n')
         @test occursin("space_query_multi_leapfrog", spcode)       # the route exists…
         @test occursin("LEAPFROG_DISPATCH", spcode)                # …and it is gated
-        @test MORK.LEAPFROG_DISPATCH[] == false                    # …and the gate is SHUT by default
+        # …and the gate is SHUT BY DEFAULT — asserted against the SOURCE, not the runtime value.
+        # ⚠️ This read `MORK.LEAPFROG_DISPATCH[] == false` and FAILED under
+        # `MORK_LEAPFROG_DISPATCH=1 tools/run_tests.sh` — the very run that compares the join against
+        # the upstream binary. A test that breaks when you exercise the thing it guards is testing
+        # the harness, not the invariant. The invariant is what SHIPS.
+        dispatch_src = read(joinpath(srcdir, "kernel", "LeapfrogDispatch.jl"), String)
+        @test occursin("const LEAPFROG_DISPATCH = Ref(false)", dispatch_src)
 
         # The divergence warning is wired to the same place upstream puts it — the serialization
         # entry point — rather than merely defined. Three layers of this port were defined and

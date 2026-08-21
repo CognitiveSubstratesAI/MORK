@@ -31,25 +31,53 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     end
 
     expected = Set{String}(strip(l) for l in eachline(baseline_path) if !isempty(strip(l)))
-    passing, total, orphans = conformance_results()
-    # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
-    # corpus count look healthy while a probe silently does nothing.
-    isempty(orphans) || @info "conformance: .mm2 with NO .expected (inert, never run)" orphans
-    @test isempty(orphans)
 
-    @test total > 0
-    @info "conformance corpus" total passing = length(passing) baseline = length(expected)
+    # ── 🔴 BOTH ENGINES, EVERY RUN. THIS IS THE GATE, NOT AN EXTRA. ──────────────────────────────
+    #
+    # The upstream binary is the ONLY oracle this port has. Until 2026-08-21 it ran against ONE
+    # engine — whichever `LEAPFROG_DISPATCH` happened to select — and that flag SHIPS OFF. So the
+    # entire leapfrog join could be written, rewritten and optimised WITHOUT UPSTREAM EVER SEEING
+    # IT, while a green suite said otherwise.
+    #
+    # MEASURED THAT DAY: `rank_parts` and the mutual-seek leap were built, verified against 603
+    # generated shapes and 330 generated bodies — all judged by OUR OWN ProductZipper — and declared
+    # done. The upstream differential had touched neither. The user asked "did you compare with
+    # upstream?" and the honest answer was no. It had to be ASKED, because nothing failed.
+    #
+    # ⚠️ THE SUBSTITUTE LOOKS IDENTICAL TO THE REAL THING. That is the failure mode: a differential
+    # against our own second engine produces the same green as one against upstream, and costs
+    # nothing to reach for. An env-gated oracle is an OPTIONAL oracle.
+    #
+    # Cost: the ~70s corpus runs twice. That is the price of a flag never again deciding whether the
+    # port gets checked at all.
+    # [[feedback_differential_vs_upstream_binary]] · [[feedback_enforcement_works_prose_memory_does_not]]
+    for (engine, on) in (("ProductZipper (shipped default)", false), ("LEAPFROG JOIN", true))
+        prev = MORK.LEAPFROG_DISPATCH[]
+        MORK.LEAPFROG_DISPATCH[] = on
+        try
+        passing, total, orphans = conformance_results()
+        # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
+        # corpus count look healthy while a probe silently does nothing.
+        isempty(orphans) || @info "conformance: .mm2 with NO .expected (inert, never run)" orphans
+        @test isempty(orphans)
 
-    # (1) RATCHET — nothing that matched upstream may stop matching.
-    regressed = sort(collect(setdiff(expected, passing)))
-    if !isempty(regressed)
-        @error "CONFORMANCE REGRESSION — these probes matched upstream and no longer do" regressed
+        @test total > 0
+        @info "conformance corpus" engine total passing = length(passing) baseline = length(expected)
+
+        # (1) RATCHET — nothing that matched upstream may stop matching.
+        regressed = sort(collect(setdiff(expected, passing)))
+        if !isempty(regressed)
+            @error "CONFORMANCE REGRESSION — these probes matched upstream and no longer do" engine regressed
+        end
+        @test isempty(regressed)
+
+        # (2) IMPROVEMENTS — informational, never a failure. Tighten the baseline when they appear.
+        improved = sort(collect(setdiff(passing, expected)))
+        isempty(improved) || @info(
+            "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
+            improved)
+        finally
+            MORK.LEAPFROG_DISPATCH[] = prev    # a thrown probe must not leave the engine switched
+        end
     end
-    @test isempty(regressed)
-
-    # (2) IMPROVEMENTS — informational, never a failure. Tighten the baseline when they appear.
-    improved = sort(collect(setdiff(passing, expected)))
-    isempty(improved) || @info(
-        "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
-        improved)
 end

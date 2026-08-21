@@ -143,4 +143,32 @@ export GROUNDED_REGISTRY, register_grounded!, is_grounded
 # PrecompileTools workload — caches hot method instances during Pkg.precompile().
 include("precompile.jl")
 
+"""
+    __init__()
+
+Read `MORK_LEAPFROG_DISPATCH` at LOAD time so EVERY entry point can route the `,`-source transform
+through the leapfrog join — not just `test/runtests.jl`.
+
+🔴 WHY THIS IS NOT COSMETIC. The flag was honoured in the TEST HARNESS ONLY, so our other upstream
+comparisons — `workflows/mork_gold_corpus.sh` (upstream's own 44-program `differential/` runner) and
+`workflows/mm2_xcheck.sh` — could not exercise the join AT ALL. The differential coverage of a whole
+engine was structurally limited to one file, and that limit was invisible: those scripts ran, passed,
+and compared the ProductZipper every time.
+
+⚠️ IN `__init__`, NOT A `const` INITIALISER, AND THE DIFFERENCE IS LOAD-BEARING. A
+`const X = Ref(get(ENV, …))` is evaluated at PRECOMPILE time, so the FIRST build's value gets baked
+into the cache and silently persists into later runs with a different environment — a frozen fact of
+exactly the kind this repo has been bitten by. `__init__` runs on every load.
+
+Default stays OFF; an unset variable must never change behaviour.
+"""
+function __init__()
+    if lowercase(get(ENV, "MORK_LEAPFROG_DISPATCH", "")) in ("1", "true", "yes", "on")
+        LEAPFROG_DISPATCH[] = true
+        @info "MORK: LEAPFROG DISPATCH ENABLED via MORK_LEAPFROG_DISPATCH — the `,`-source \
+               transform is answered by the leapfrog join"
+    end
+    nothing
+end
+
 end # module MORK

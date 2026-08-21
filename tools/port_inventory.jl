@@ -388,19 +388,85 @@ function read_baseline(p::PortProfile = MORK_PROFILE)
     sort!(collect(rows); by = first)
 end
 
+# ── ALIAS RESOLUTION — the gate that stops a NAME DIFF being reported as a PORT GAP ───────────────
+#
+# 🔴 THIS FILE USED TO *MENTION* THE ALIAS TABLE INSTEAD OF READING IT. `main` printed
+# "check the alias table before acting on any row: workflows/PORT_NAME_MAP.tsv" — a reminder to a
+# human, in a tool whose entire output is a list of names a human then acts on. Prose that must be
+# REMEMBERED is not a gate, and the table's own header says so, having been written after
+# `merkleize -> map_hash` was asserted UNPORTED twice by two different routes.
+#
+# MEASURED COST, 2026-08-21: this tool reported "89 functions / 34 types missing" and that number
+# was relayed to the user as a port gap. It counted `execute_loop`/`execute_loop_truncated`
+# (ported as `expr_traverseh`), `_unify`/`unify_into` (`expr_unify`), `AntiUnifyResult`/`AuVar`/
+# `PairTraversal` (`expr_anti_unify`), the four `transform_multi_multi_*` (our four
+# `space_transform_*!` wrappers), ~10 Rust container-plumbing names Julia supplies natively, and
+# `linalg`'s 51 — a scope DECISION, not a gap. The alias table already held rows for these, and
+# `PORT_NAME_MAP.tsv`'s own header records the SAME class of error being made the day before.
+#
+# ⚠️ STATUS DECIDES, AND NOT EVERY ROW MEANS "PRESENT". A row is only a refutation of absence when it
+# says the capability EXISTS somewhere:
+#     PORTED / RENAMED / MOVED / RETIRED  -> not a gap (resolved; MOVED means another package,
+#                                            RETIRED means upstream deprecated it)
+#     PARTIAL / ABSENT                    -> STILL MISSING, deliberately. `merkleize` is PARTIAL:
+#                                            the hashing half is ported, the structural-dedup half
+#                                            is not. Counting it present would hide a real gap —
+#                                            the exact opposite failure.
+# Unknown statuses are treated as NOT resolving, so a typo in the table cannot silently erase a gap.
+const _ALIAS_TSV = normpath(joinpath(HERE, "..", "workflows", "PORT_NAME_MAP.tsv"))
+const _ALIAS_RESOLVES = Set(["PORTED", "RENAMED", "MOVED", "RETIRED"])
+
+"""
+    alias_map() -> Dict{String, Tuple{String, String}}
+
+`upstream name => (ours, status)` from `workflows/PORT_NAME_MAP.tsv`.
+
+Returns an EMPTY map if the table is absent — and that is the safe direction: without it every
+alias re-appears as missing, which is noisy but never claims a gap is closed when it is not.
+"""
+function alias_map()
+    m = Dict{String, Tuple{String, String}}()
+    isfile(_ALIAS_TSV) || return m
+    for line in eachline(_ALIAS_TSV)
+        (isempty(strip(line)) || startswith(line, "#")) && continue
+        parts = split(line, '\t')
+        length(parts) >= 3 || continue
+        m[String(strip(parts[1]))] = (String(strip(parts[2])), String(strip(parts[3])))
+    end
+    m
+end
+
+"Whether the alias table refutes the absence of `name` — see `_ALIAS_RESOLVES`."
+function alias_resolves(name::AbstractString, aliases::Dict{String, Tuple{String, String}})
+    haskey(aliases, name) || return false
+    aliases[name][2] in _ALIAS_RESOLVES
+end
+
 "Return (missing_fns, missing_tys) per file, plus totals. Pure — the test wraps this."
 function coverage(p::PortProfile = MORK_PROFILE)
     ours_names, ours_tys = julia_symbols(p.our_src, p.runtime_syms)
     rows = read_baseline(p)
+    aliases = alias_map()
     report = Pair{String, Tuple{Vector{String}, Vector{String}}}[]
     tf = tfm = tt = ttm = 0
+    # Raw (name-diff-only) counts are kept alongside the resolved ones so the alias table's EFFECT is
+    # visible. A gate that silently shrinks a number is indistinguishable from one that is broken.
+    raw_fm = raw_tm = 0
+    resolved = Tuple{String, String, String}[]        # (upstream, ours, status)
     for (file, (fns, tys)) in rows
-        fm = sort([n for n in fns if !port_has(n, ours_names)])
-        tm = sort([n for n in tys if !(n in ours_tys)])
+        fm_raw = [n for n in fns if !port_has(n, ours_names)]
+        tm_raw = [n for n in tys if !(n in ours_tys)]
+        raw_fm += length(fm_raw); raw_tm += length(tm_raw)
+        for n in vcat(fm_raw, tm_raw)
+            alias_resolves(n, aliases) && push!(resolved, (n, aliases[n][1], aliases[n][2]))
+        end
+        fm = sort([n for n in fm_raw if !alias_resolves(n, aliases)])
+        tm = sort([n for n in tm_raw if !alias_resolves(n, aliases)])
         push!(report, file => (fm, tm))
         tf += length(fns); tfm += length(fm); tt += length(tys); ttm += length(tm)
     end
-    (; report, fns_total = tf, fns_missing = tfm, tys_total = tt, tys_missing = ttm)
+    (; report, fns_total = tf, fns_missing = tfm, tys_total = tt, tys_missing = ttm,
+       fns_missing_raw = raw_fm, tys_missing_raw = raw_tm, alias_resolved = sort(resolved))
 end
 
 function main(args)
@@ -434,7 +500,17 @@ function main(args)
     # as `map_hash`, a name sharing no substring. Reading this column alone produced exactly that wrong
     # claim, twice, on 2026-08-07 and 2026-08-14.
     println("\n🔴  A NAME HERE IS NOT A VERDICT. Semantic renames are invisible to port_has —")
-    println("    check the alias table before acting on any row:  workflows/PORT_NAME_MAP.tsv")
+    # The alias table is now CONSULTED, not recommended. Report its effect so the resolution is
+    # auditable rather than a silently smaller number.
+    if !isempty(c.alias_resolved)
+        println("\n  ALIAS-RESOLVED (name differs, capability EXISTS — not gaps):")
+        for (up, ours, st) in c.alias_resolved
+            println("    ", rpad(up, 28), " -> ", rpad(ours, 24), "  [", st, "]")
+        end
+    end
+    println("\n  raw name-diff: fns=", c.fns_missing_raw, " tys=", c.tys_missing_raw,
+            "   after alias resolution: fns=", c.fns_missing, " tys=", c.tys_missing)
+    println("    PARTIAL/ABSENT rows stay MISSING deliberately — see workflows/PORT_NAME_MAP.tsv")
     println("    e.g. merkleize -> map_hash (hashing PORTED; only the dedup half is really absent).")
 end
 

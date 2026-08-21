@@ -103,7 +103,26 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # 105 -> 98 on 2026-08-20 (upstream bumped 5464713 -> 06cdcf3, inventory re-extracted 647 -> 701
     # symbols). TIGHTENED even though upstream GREW by 56 symbols, because the re-extraction also
     # resolved names the Jul-30 baseline counted missing. The tool asked for the lower pin; taken.
-    PIN_FNS = 98
+    #   78 — 2026-08-21. NOT a porting sprint: `tools/port_inventory.jl` now CONSULTS
+    #        `workflows/PORT_NAME_MAP.tsv` instead of printing "check the alias table". The count
+    #        fell 98 -> 89 (measurement) -> 78 (alias resolution) with ZERO code ported.
+    #
+    #   🔴 THE NUMBER WAS WRONG, AND IT REACHED THE USER AS A PORT GAP. It counted
+    #   `execute_loop`/`execute_loop_truncated` (ported as `expr_traverseh` — CLAUDE.md's OWN worked
+    #   example of a false absence, reported missing AGAIN by this very ratchet the day before),
+    #   `_unify`/`unify_into` (`expr_unify`), `AntiUnifyResult`/`AuVar`/`PairTraversal`
+    #   (`expr_anti_unify`), the four `transform_multi_multi_*` (our `space_transform_*!` wrappers),
+    #   and ~11 Rust container-plumbing names Julia supplies natively.
+    #
+    #   ⚠️ AND THE TABLE ITSELF WAS INCOMPLETE — invisibly, because nothing read it. Verifying the
+    #   gate found `execute_loop` had a row while its sibling `execute_loop_truncated` did not, and
+    #   that the `contains_key` row described a CLASS of 11 names while only one had an entry. An
+    #   unread table costs nothing to leave broken. Eleven rows added in the same commit.
+    #
+    #   ⚠️ PARTIAL/ABSENT ROWS STILL COUNT AS MISSING, deliberately — `merkleize` is PARTIAL (hashing
+    #   ported, structural dedup not) and resolving it would hide a real gap, the opposite failure.
+    #   Verified in both directions: merkleize/gxhash128/periodic_merkleize resolve=false.
+    PIN_FNS = 78
     # ⚠️ The TYPE figure is NOT an actionable gap measure and must not be treated as one. A first cut
     # reported 35% and named `ASink`, `ASource`, `AFactor`, `HeadTailSink`, `ParDataParser`,
     # `SourceItem` and `Tag` as unported — ALL SEVEN ARE PRESENT, as `const X = Union{…}` dispatch
@@ -146,7 +165,8 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     #      redesign to ADOPT, not a defect to fix — and it is the same object as our standing
     #      optimization target #1 (`Bindings` O(n^2), risk HIGH, guarded). Nothing behavioural depends
     #      on it: the two-engine differential is 98/99 and conformance 274/274 without it.
-    PIN_TYS = 38
+    #   30 — 2026-08-21, same alias-resolution change as PIN_FNS above (was 38, measured 34).
+    PIN_TYS = 30
 
     @test c.fns_missing <= PIN_FNS
     @test c.tys_missing <= PIN_TYS
