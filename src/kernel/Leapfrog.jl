@@ -181,7 +181,8 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
        Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
        UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
-       scan_subterm, parse_body_factors, fact_bytes
+       scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
+       rank_parts!
 
 """
     PARSE_START
@@ -1254,6 +1255,19 @@ end
 # everywhere else a stored value can MATCH a candidate without EQUALLING it.
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+# Opt-in counter of CANDIDATES ENUMERATED — the number `rank_parts` exists to reduce.
+#
+# 🔑 WHY A COUNT AND NOT A TIMING. "The join got faster" is a claim about wall clock, which varies
+# with GC and the box; "the join enumerated 3000 candidates where 3 would do" is the MECHANISM, and
+# it is deterministic. A ranking change must move THIS number or it did nothing — a timing that
+# improved while this stayed flat would mean the win came from somewhere else.
+# [[feedback_run_the_check_before_making_the_claim]] · [[feedback_no_perf_attribution_without_profiling]]
+#
+# Off by default; one branch per enumerated column when off.
+#   MORK.Leapfrog._LF_TRACE[] = true; MORK.Leapfrog._LF_CANDIDATES[] = 0
+const _LF_TRACE = Ref(false)
+const _LF_CANDIDATES = Ref(0)
+
 const STEP_VAR      = 0x00
 const STEP_SYM      = 0x01
 const STEP_COMPOUND = 0x02
@@ -1476,6 +1490,7 @@ function uj_match_expr_at_current(st::UnifyJoinState, bindings::Bindings, f::Int
             cursor_next!(c)
         end
         cursor_reset_to_floor!(c)
+        _LF_TRACE[] && (_LF_CANDIDATES[] += length(cands))
         for (bytes, nv) in cands
             st.stopped && break
             # ⚠️ Upstream has a GROUND FAST BIND here (a free variable against a ground candidate
@@ -1674,6 +1689,76 @@ function uj_consume_var_parts(st::UnifyJoinState, bindings::Bindings, parts::Vec
     uj_consume_col(st, bindings, f, v, nb -> uj_consume_var_parts(st, nb, parts, pi + 1, v, i))
 end
 
+"""
+    rank_parts!(st, parts)
+
+Order the participating factors by domain size, SMALLEST FIRST, so `parts[1]` leads.
+
+🔑 THE COUNT IS A ROUND ROBIN, and that is the whole design. Every participating cursor is stepped
+ONE value per round, and counting stops at the end of the round in which some cursor runs out. That
+cursor's count is its EXACT domain size, so a tiny domain wins the lead even against a domain of
+millions. Upstream replaced a per-factor count-to-32 with this because the cap scored every domain
+above it equal and left the choice to syntactic order — "a 100k-value factor beat a 100-value one
+and the join enumerated 100k candidates to keep 100."
+
+⚠️ THE SCAN IS SELF-FINANCING, not a heuristic budget. It costs `length(parts) * (min_domain + 1)`
+cursor steps, and the level then enumerates the lead's `min_domain` candidates against every other
+participant — at least `min_domain * (length(parts) - 1)` steps. So the estimate stays within a
+constant factor of the enumeration it is choosing, and it NEVER scales with the space: nothing here
+reads more than the SMALLEST participating domain plus one step per larger one. That is why a full
+`val_count` (O(subtree), growing with the whole relation) is still refused.
+
+MEASURED on `test/integration/leapfrog_ranking.jl`'s skewed shape: 303 candidates enumerated for 3
+answers BEFORE this, 6 after — because `sel` (3 values) leads instead of `big` (300).
+"""
+function rank_parts!(st::UnifyJoinState, parts::Vector{Int})
+    length(parts) < 2 && return nothing
+    # ⚠️ A LOCAL, NOT A MODULE CONST — deliberately. Revise reloads method bodies but strands new
+    # const bindings under 1.12's world-partitioned globals, and this file is iterated against a
+    # warm server. [[reference_revise_binding_bugs_and_world_partitioning]]
+    hard_rounds = 512
+
+    n = length(parts)
+    counts = zeros(Int, n)
+    done = falses(n)
+    for f in parts
+        cursor_first!(st.cursors[f])
+    end
+
+    round = 0
+    while true
+        round += 1
+        alive = false
+        exhausted = false
+        for j in 1:n
+            done[j] && continue
+            c = st.cursors[parts[j]]
+            if c.at_end
+                done[j] = true
+                exhausted = true            # …and we stop at the END of this round, not instantly
+                continue
+            end
+            counts[j] += 1
+            cursor_next!(c)
+            alive = true
+        end
+        # `hard_rounds` only stops a level whose EVERY domain is huge from an unbounded pre-scan;
+        # such a level is about to enumerate at least that many candidates anyway.
+        (!alive || exhausted || round >= hard_rounds) && break
+    end
+
+    for f in parts
+        cursor_reset_to_floor!(st.cursors[f])
+    end
+
+    # 🔴 STABLE, EXPLICITLY. An exhausted cursor carries its exact domain size and one still alive
+    # carries the round count — strictly larger — so exact counts always sort first. Equal counts
+    # must keep syntactic factor order, or the join's visit order would depend on a sort's
+    # internals and a passing differential could reorder tomorrow for no visible reason.
+    permute!(parts, sortperm(counts; alg = MergeSort))
+    nothing
+end
+
 "Schedule the next variable: intersect the factors sitting on it, or emit if none are left."
 function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int)
     st.stopped && return
@@ -1698,6 +1783,12 @@ function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::In
     if isempty(parts)
         uj_catch_up(st, bindings, i + 1, 1)      # nothing mentions it at this level
         return
+    end
+    # Rank ONLY when the variable is still free. If an earlier level already bound it, every
+    # participant seeks to that one value and there is no lead to choose — upstream branches the
+    # same way, and ranking there would pay the round-robin scan for nothing.
+    if ee_var_opt(uj_deref(bindings, query_var_env(v))) !== nothing
+        rank_parts!(st, parts)
     end
     uj_consume_var_parts(st, bindings, parts, 1, v, i)
 end

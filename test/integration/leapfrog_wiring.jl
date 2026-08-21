@@ -106,6 +106,38 @@ end
         end
     end
 
+    @testset "🔴 KNOWN DIVERGENCE: a TOP-LEVEL VARIABLE fact is invisible to the join" begin
+        # A fact that is NOTHING BUT A VARIABLE sits at the trie root under no arity prefix. It
+        # unifies with every conjunct of every query, and the join — which opens each factor's
+        # cursor AT a prefix — cannot see it. Upstream states this and does NOT fix it; it emits a
+        # warning instead (`Space::warn_top_level_variable`, space.rs:938):
+        #
+        #   "it unifies with every conjunct of every query, and the leapfrog join cannot see it,
+        #    so the two engines will not agree on this space."
+        #
+        # MEASURED HERE 2026-08-21: engine 3, leapfrog 2. Ours diverges the same way upstream's does.
+        #
+        # ⚠️ NEITHER DIFFERENTIAL CAN SEE THIS. `leapfrog_differential.jl` and the generated-body
+        # testset below both build spaces from `(rel arg arg)` lines, so a bare-variable atom is
+        # structurally impossible in them. A gap a generator cannot reach needs a hand-written
+        # case, or it is not covered — it is merely unobserved.
+        # [[feedback_oracle_must_observe_the_defect_class]] · [[feedback_found_a_defect_is_not_a_scope_change]]
+        #
+        # 🔴 THIS IS A BLOCKER FOR ANY DISPATCH. The moment `space_query_multi` routes to the join,
+        # such a space silently answers differently. Porting `warn_top_level_variable` (an O(1) root
+        # child-mask probe) belongs WITH that change, not after it.
+        control = _w_space("(edge a b)\n(edge b c)\n")
+        @test _w_leapfrog(control, "(, (edge \$x \$y))") == _w_engine(control, "(, (edge \$x \$y))")
+
+        loose = _w_space("(edge a b)\n(edge b c)\n\$loose\n")
+        @test occursin("\$", MORK.space_dump_all_sexpr(loose))   # anti-vacuity: it really is stored
+        eng = _w_engine(loose, "(, (edge \$x \$y))")
+        ours = _w_leapfrog(loose, "(, (edge \$x \$y))")
+        @test eng == 3                     # the engine sees the loose variable as a third match
+        @test ours == 2                    # the join cannot; pinned so a silent change is visible
+        @test ours != eng                  # ⇐ the divergence itself, asserted rather than implied
+    end
+
     @testset "ENGINE PARITY on generated bodies — the parse included" begin
         rng = MersenneTwister(0x21ce)
         syms = ["a", "b", "c"]
@@ -144,6 +176,9 @@ end
             @test ours !== nothing && ours == eng
         end
 
+        # ⚠️ THIS PARITY IS SCOPED TO SPACES WITHOUT A TOP-LEVEL VARIABLE FACT — the generator
+        # builds only `(rel arg arg)` lines, so it cannot produce one. See the known-divergence
+        # testset above for the case it structurally cannot reach.
         # Anti-vacuity, both directions: the generator must produce real answers, and the parse must
         # actually route them rather than falling back to `nothing` and trivially "agreeing".
         @test nonempty >= 40
