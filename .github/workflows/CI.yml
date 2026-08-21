@@ -16,6 +16,27 @@ jobs:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    # 🔴 CI CANNOT BUILD THE DIFFERENTIAL ORACLE, AND MUST SAY SO RATHER THAN PRETEND.
+    # Two suites compare our port against the upstream RUST binary — `upstream_conformance.jl`
+    # (277 probes) and `pure_ops_differential.jl` (2711 points over 355 ops). Both are FAIL-CLOSED
+    # by design: `upstream_conformance.jl`'s header says the absence "must be LOUD", because a
+    # tree with no binary once "ran this file to completion, printed one @info, and reported GREEN
+    # — with ZERO differential coverage".
+    #
+    # This runner has no Rust toolchain and no `~/JuliaAGI/dev-zone` checkout, so the oracle is
+    # genuinely unavailable here — which is exactly the case the escape hatch was written for
+    # ("for environments that genuinely cannot build Rust"). Setting it DELIBERATELY is the whole
+    # contract: an UNSET variable must never buy silence ([[feedback_guarantee_not_convention]]).
+    #
+    # ⚠️ WHAT THIS COSTS: CI green means "the Julia port is self-consistent", NOT "it matches
+    # upstream". The differential runs only on a dev tree that has the binary, where it is full
+    # strength (2707/2711 agree; the 4 are one-ULP libm differences). Do not read a green badge as
+    # port conformance.
+    #
+    # ⚠️ AND THIS FIXES A PRE-EXISTING BREAKAGE, not one introduced with the pure-op gate:
+    # `upstream_conformance.jl` has been fail-closed since before it, with no opt-out set here.
+    env:
+      MORK_ALLOW_MISSING_ORACLE: '1'
     strategy:
       fail-fast: false
       matrix:
