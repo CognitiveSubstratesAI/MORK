@@ -18,6 +18,14 @@
 # must unwind on BOTH paths. That case is tested here too, because it is the one a happy-path test
 # would miss and the one that corrupts silently.
 
+# ⚠️ SCOPE — THIS FILE TESTS THE PRIMITIVES, NOT THE JOIN'S USE OF THEM. Its name overpromises:
+# a reader scanning the suite list will assume trail coverage lives here, and a JOIN-side unwind bug
+# is structurally outside it. MEASURED by mutation (2026-08-21): deleting the unwind from
+# `match_candidate!`'s SUCCESS path survives this file and is killed by `leapfrog_layer3d.jl`;
+# deleting it from the FAILURE path survives BOTH plus the differential and end-to-end suites.
+# ⇒ For join-side trail cases see `leapfrog_layer3d.jl`; for the mutation matrix and what each
+#   mutant kills, see `tools/mutation_trail.sh`.
+
 using MORK, Test, Random
 
 _t_env(n, s) = MORK.ExprEnv(UInt8(n), UInt8(0), UInt32(0), MORK.sexpr_to_expr(s))

@@ -1215,6 +1215,39 @@ function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::U
     push!(stack, (pattern, data))
     r = expr_unify_into!(bindings, stack, trail)
     if r isa UnificationFailure
+        # 🔴 WHY A MUTANT DELETING THE UNWIND BELOW SURVIVES — and the answer is STRUCTURAL, not a
+        # coverage gap. Measured over the whole corpus (2026-08-21), then attributed per case:
+        #     2 programs reach this branch at all — `s6_cycle_join`, `s6_cycle_selfocc`, once each.
+        #     BOTH ARE OCCURS VIOLATIONS. An occurs check fires BEFORE inserting, so it cannot be
+        #     dirty. 0 dirty is not luck.
+        # ⚠️ AND THE OTHER CANDIDATE MECHANISM NEVER ARRIVES. A repeated-variable contradiction
+        # (`(d \$x \$x)` meeting `(d aa ab)`) WOULD insert then fail — and that shape is ABUNDANT:
+        # 591 distinct repeated-variable terms across 269 corpus files. It produces ZERO failures
+        # here, because the join resolves the coreference on the TRIE DESCENT (`descend_to_check`)
+        # and the binder is handed an already-consistent equation.
+        # ⇒ SO THE DIRTY CASE NEEDS A CONTRADICTION FOUND *AFTER* A PARTIAL INSERT, which neither
+        #   mechanism that actually produces failures here can generate. `leapfrog_layer3d.jl`
+        #   constructs it by calling `match_candidate!` DIRECTLY with a pattern the join would not
+        #   hand it: a legitimate unit test of THIS FUNCTION'S contract, but NOT evidence of a
+        #   reachable join-level state. Do not upgrade it to one.
+        # ⚠️ TWO EARLIER READINGS STOOD HERE AND BOTH WERE WRONG — recorded, not deleted, because
+        # each was written as a finding: (a) "unreachable, candidate enumeration pre-filters by byte
+        # prefix", a mechanism story told from ONE zero on mm1 — the branch runs; (b) "a
+        # repeated-variable candidate inserts first, and the test constructs exactly that" — it does
+        # not arrive here at all, per the coreference note above.
+        # ⇒ KEEP THE UNWIND AND THE COUNTERS ANYWAY. Absent-here is a property of the corpus and of
+        #   the current column scheduling, neither of which is a guarantee.
+        UNIFY_FAILURES[] += 1
+        if length(trail) > mark
+            UNIFY_FAILURES_DIRTY[] += 1
+            # 🔑 SURFACE THE FIRST ONE. Measured absent on every corpus program, so its APPEARANCE is
+            # news: a workload shape that no test but the hand-written one covers has arrived, and
+            # the unwind below is now load-bearing rather than merely correct. Warn once — waiting
+            # for someone to run `engine_work.jl` makes a live signal into a static claim.
+            UNIFY_FAILURES_DIRTY[] == 1 && @warn "leapfrog: a candidate INSERTED then contradicted — \
+                the failure-path unwind is now doing real work. Absent from the whole corpus as of \
+                2026-08-21; see tools/mutation_trail.sh (mutant M2)."
+        end
         expr_unify_unwind!(bindings, trail, mark)
         return nothing
     end
@@ -1225,6 +1258,36 @@ function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::U
     end
     bindings
 end
+
+"""
+    UNIFY_FAILURES / UNIFY_FAILURES_DIRTY
+
+How often a candidate reached [`match_candidate!`] and FAILED to unify, and how many of those had
+already inserted a binding before contradicting (so the failure-path unwind had work to do).
+
+MEASURED 2026-08-21 over the corpus, then ATTRIBUTED PER CASE — which changed the conclusion twice:
+  - the branch is reached by exactly **2 programs** (`s6_cycle_join`, `s6_cycle_selfocc`), once each,
+    and **both are OCCURS violations**. An occurs check fires BEFORE inserting, so it CANNOT be
+    dirty. `0 dirty` is structural, not luck.
+  - the sweep first said "4", which was those 2 counted twice by the tool's own warm-up pass.
+  - the repeated-variable shape that WOULD insert-then-fail is abundant (591 distinct terms in 269
+    files) and produces ZERO failures: the join settles coreference on the trie descent, so the
+    binder receives an already-consistent equation.
+
+⚠️ VOLUME IS NOT THE DENOMINATOR HERE, SHAPE IS. "64 538 candidates" sounds like coverage and is not
+— 61 913 of them are one program, and running one program's shapes 61 913 times does not sample new
+ones. The question "has the dirty case been exercised" is answered by body shape, not candidate
+count.
+
+⚠️ DO NOT PROMOTE THIS TO "the branch is dead" OR TO A MECHANISM. An earlier note claimed prefix
+filtering made it unreachable, extrapolated from ONE zero on mm1; the corpus figure refutes the
+"unreachable" half. The dirty case needs a candidate that unifies structurally and THEN contradicts
+on a repeated variable (`(pair \$x \$x)` vs `(pair a b)`) — hand-constructed in
+`leapfrog_layer3d.jl`, absent from every corpus program. Re-read these counters on any new workload
+before concluding anything.
+"""
+const UNIFY_FAILURES = Ref{Int}(0)
+const UNIFY_FAILURES_DIRTY = Ref{Int}(0)
 
 "The NewVars a candidate introduces — upstream `expr_from_bytes(bytes).newvars()`."
 @inline candidate_intro_delta(bytes::AbstractVector{UInt8})::UInt8 =

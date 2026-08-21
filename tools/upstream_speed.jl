@@ -20,8 +20,10 @@
 #
 # ⇒ THE DETERMINISTIC RESULT: mm1 is leapfrog:ProductZipper 18.19x occurs invocations and 2.59x
 # allocation, answers identical. It is a TRUE ISOLATED OUTLIER — the next program in 267 is 2.00x —
-# so its position at the head of this tail is real and not an artifact of one sample. Upstream's
-# comparable ratio is 11.6x, so we are ~1.57x less economical than upstream on the same unit.
+# so its position at the head of this tail is real and not an artifact of one sample.
+# ⚠️ Upstream's 11.6x is over a DIFFERENT WORKLOAD (big.metta self-join at 2000 axioms, vs our mm1
+# at 2000 steps) and the ratio is workload-dependent — 18.19x to 1.00x across our own 267. No
+# "less economical than upstream" conclusion follows; see `engine_work.jl`. COMPARISON OPEN.
 #
 # ⚠️ TWO PREDICTIONS THAT STOOD HERE WERE WRONG, AND BOTH WERE WRITTEN AS FACT:
 #   1. "the undo trail is the next real lever" — the trail landed (cfa8abf ported). Result: -20%

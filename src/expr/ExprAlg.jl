@@ -428,20 +428,24 @@ a trail speedup is a mistake I made and had to withdraw: upstream's own before/a
 0.821/0.816, flat. So the comparable to compute here is leapfrog:ProductZipper occurs calls on OUR
 corpus, post-trail — which is what `tools/upstream_speed.jl` records.
 
-⚠️ Counting is unconditional: one increment on a hot path, no branch, so no run is "uninstrumented"
-and no result is a special build. Reset with `occurs_calls_reset!()` before a measured region.
+⚠️ ONE BRANCH AND A CONDITIONAL INCREMENT, always on, so no run is "uninstrumented" and no result
+is a special build. Reset with `occurs_calls_reset!()` before a measured region.
+
+⚠️ ITS WALL-CLOCK COST IS UNMEASURED AND UNATTRIBUTED — DO NOT CLAIM IT IS CHEAP. A first version
+also counted recursive node visits; three timings of essentially the same configuration came out
+0.992s, 2.698s and 1.270s, and the middle one was ATTRIBUTED to counter overhead. That attribution
+was withdrawn: the second version does MORE work than the first (a branch plus an increment), so
+"the counter cost it" cannot explain a figure that fell when instrumentation grew. Wall clock on
+this corpus is inside its own spread — see `tools/engine_work.jl`. The node-visit counter was
+removed from the hot path rather than defended; its one measured figure is recorded there.
 """
 const OCCURS_CALLS = Ref{Int}(0)
 
-"Recursive node visits inside the occurs walk. OURS ONLY — upstream has no comparable figure, since
-its `occurs` is a single non-recursive fold. Use [`OCCURS_CALLS`] for any upstream comparison."
-const OCCURS_NODES = Ref{Int}(0)
 
 "Reset [`OCCURS_CALLS`] and return its previous value."
 function occurs_calls_reset!()
     prev = OCCURS_CALLS[]
     OCCURS_CALLS[] = 0
-    OCCURS_NODES[] = 0
     prev
 end
 
@@ -569,7 +573,6 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
         # quantity and is NOT comparable to cfa8abf's 1,423,278 — a first draft of this counter did
         # exactly that and produced a ratio in the wrong unit. `depth == 0` is the invocation.
         depth == 0 && (OCCURS_CALLS[] += 1)
-        OCCURS_NODES[] += 1
         depth > MAX_UNIFY_ITER && return true
         ev = ee_var_opt(e)
         if ev !== nothing
@@ -1744,5 +1747,5 @@ export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
 export expr_unify_into!, expr_unify_unwind!   # the undo trail (upstream cfa8abf)
-export OCCURS_CALLS, OCCURS_NODES, occurs_calls_reset!      # deterministic unification-work counter
+export OCCURS_CALLS, occurs_calls_reset!      # deterministic unification-work counter
 export expr_apply, ee_show

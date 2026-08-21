@@ -83,6 +83,14 @@ EOF
 #
 # Override:       MORK_TEST_MEM_MAX=12G tools/run_tests.sh
 # Escape hatch:   MORK_TEST_MEM_MAX=none tools/run_tests.sh
+# 🔴 DOCSTRING `$` LINT — BEFORE the suite, because this defect breaks PRECOMPILE: the module never
+# loads, so the suite cannot report it and you get a stacktrace instead of a test failure. FOURTH
+# occurrence on 2026-08-21. Local grep by choice — `Core/bin/health` has the correct shared lint, but
+# coupling two repos for a thirty-line check is the wrong trade at this count.
+if ! python3 "$(dirname "$0")/lint_docstring_interp.py" "$(dirname "$0")/../src"; then
+  echo "run_tests.sh: docstring interpolation lint FAILED — fix before running the suite." >&2
+  exit 1
+fi
 MEM_MAX="${MORK_TEST_MEM_MAX:-8G}"
 HEAP_HINT="${MORK_TEST_HEAP_HINT:-6G}"
 JL=(julia --project=. --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="$HEAP_HINT"

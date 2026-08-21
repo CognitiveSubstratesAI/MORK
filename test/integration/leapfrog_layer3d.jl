@@ -215,6 +215,70 @@ end
         @test nrestored == nfailed
     end
 
+    # ═════════════════════════════════════════════════════════════════════════════════════════════
+    # 🔴 THE FAILURE PATH, WHICH NOTHING REACHED. Added 2026-08-21 after a MUTATION EXPERIMENT:
+    # deleting the unwind from `match_candidate!`'s failure branch SURVIVED ALL FOUR trail suites —
+    # layer3d, expr_unify_trail, leapfrog_differential, leapfrog_end_to_end — and the full 8153.
+    #
+    # The reason is not subtle test weakness: instrumenting the join showed `expr_unify_into!`
+    # returns a failure ZERO times inside `match_candidate!` on the corpus. The branch is
+    # UNREACHABLE there, because candidate enumeration pre-filters by byte prefix — by the time a
+    # candidate is unified it already matches. So the mutant was unreachable code, not undetected
+    # corruption.
+    #
+    # ⚠️ WHAT THIS TEST DOES AND DOES NOT ESTABLISH. Attribution over the corpus (2026-08-21): the
+    # branch is reached by 2 programs, both via OCCURS violations, which fire BEFORE inserting and so
+    # can never be dirty. The repeated-variable shape that WOULD insert-then-fail is abundant in the
+    # corpus (591 terms, 269 files) but never reaches the binder — the join settles coreference on
+    # the trie descent. So the case below is constructed by calling `match_candidate!` DIRECTLY with
+    # a pattern the join would not hand it.
+    # ⇒ It is a legitimate UNIT test of this function's documented contract, and it KILLS the mutant.
+    #   It is NOT evidence that the join can reach this state, and must not be cited as such.
+    #   Unreachable-here remains a property of the CORPUS and of the current column scheduling, not a
+    #   guarantee [[feedback_unexplained_behaviour_is_not_a_contract]] — which is why the unwind and
+    #   its counters stay.
+    @testset "🔴 match_candidate! RESTORES after a candidate that INSERTS then CONTRADICTS" begin
+        sp, c = _l4_cursor(["(rel a b)"])
+        trail = MORK.ExprVar[]
+        b = MORK.Bindings()
+
+        # `(pair $x $x)` against the data `(pair a b)`: unification binds $x := a, then meets $x
+        # against b and CONTRADICTS — a failure that has already inserted. This is the shape
+        # `expr_unify_trail.jl` pins at the primitive level; here it goes through the join's binder.
+        pat  = _l4_env(0, "(pair \$x \$x)")
+        data = MORK.sexpr_to_expr("(pair a b)").buf
+
+        seen = Ref(0)
+        got = _L4.match_candidate!(c, b, 0, 0x00, pat, data, _ -> (seen[] += 1); trail = trail)
+
+        @test got === nothing            # it really did fail…
+        @test seen[] == 0                # …and the continuation never ran
+        # ⇐ THE ASSERTIONS THE MUTANT BREAKS: a failed solve may insert before it contradicts, so
+        # the binder must unwind on the failure path too, or this map and trail stay dirty.
+        @test isempty(trail)
+        @test isempty(b)
+
+        # ⚠️ ANTI-VACUITY, TWO WAYS. Without these the test above is satisfied by a binder that
+        # simply never binds anything — which is exactly what "unreachable branch" looked like.
+        b2 = MORK.Bindings(); trail2 = MORK.ExprVar[]
+        inner = Ref(0)
+        _L4.match_candidate!(c, b2, 0, 0x00, _l4_env(0, "(pair \$x \$y)"),
+                             MORK.sexpr_to_expr("(pair a b)").buf,
+                             _ -> (inner[] += 1); trail = trail2)
+        @test inner[] == 1               # the SAME shape, non-contradictory, DOES run cont
+        @test isempty(trail2)            # …and still restores afterwards
+
+        # and the insert-then-contradict really does insert: solving it against a live map directly
+        # (no unwind) must leave the map non-empty, or the failure path had nothing to restore.
+        probe = MORK.Bindings(); ptrail = MORK.ExprVar[]
+        pr = MORK.expr_unify_into!(probe,
+                Tuple{MORK.ExprEnv, MORK.ExprEnv}[(pat,
+                    MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.sexpr_to_expr("(pair a b)")))],
+                ptrail)
+        @test pr isa MORK.UnificationFailure
+        @test !isempty(ptrail)           # ⇐ proves the branch has something to unwind
+    end
+
     @testset "candidate_intro_delta counts the candidate's OWN NewVars" begin
         # A stored wildcard introduces one variable; a ground term none. Getting this wrong lets a
         # later candidate in the same factor collide with variables an earlier one introduced.

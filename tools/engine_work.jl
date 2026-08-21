@@ -33,8 +33,20 @@
 #     allocated bytes      leapfrog 500.7 MiB : 193.1 MiB         =   2.59x     (spread 0.0)
 #     answers              127 886 chars BOTH engines — identical
 #
-# 🔴 WE DO 18.19x WHERE UPSTREAM DOES 11.6x, on the same unit. Ours is ~1.57x less economical, and
-# that gap is the actionable finding — not the wall clock. Two upstream mechanisms we lack, both
+# 🔴🔴 THE 18.19x AND UPSTREAM'S 11.6x ARE OVER DIFFERENT WORKLOADS — THE COMPARISON IS OPEN.
+# Ours is `mm1_forward_full_proof` at 2000 STEPS; upstream's is a big.metta self-join at 2000
+# AXIOMS. A first version of this header concluded "~1.57x less economical", which does not follow:
+# THE RATIO IS A PROPERTY OF THE WORKLOAD, and this tool's own sweep shows it spanning 18.19x down
+# to 1.00x across 267 programs. Resolving the pair and the unit is not enough while the PROGRAM is
+# still unresolved — that is the same error one level up.
+# ⚠️ AND IT IS NOT CHEAPLY CLOSED: upstream's tree has NO harness for that measurement. The only
+# trace of it is the prose at `kernel/src/leapfrog.rs:2294`; `kernel/resources/big.metta` is 100 001
+# `(axiom (= ...))` lines with no accompanying self-join query, so the figure came from an ad-hoc
+# instrumented run that cannot be replayed. To close it, replicate the query — do not compare across.
+#
+# What DOES stand without the cross-workload step: on mm1 the leapfrog does 18.19x the
+# ProductZipper's occurs invocations for identical answers, and that is the actionable finding —
+# not the wall clock. Two upstream mechanisms we lack, both
 # from the `expr-opt` PR merged at 06cdcf3 and both in the occurs path:
 #   1. `ExprEnv::ground_skip: u16` — a GROUND STAMP. Upstream skips the occurs walk outright when
 #      the subterm holds no variable (`dt2.ground_skip == 0 && step!(occurs vx, dt2)`). Our ExprEnv
@@ -63,7 +75,23 @@ function work(path, on::Bool)
     prev = MORK.LEAPFROG_DISPATCH[]
     MORK.LEAPFROG_DISPATCH[] = on
     try
+        # ⚠️ WARM FIRST, UNTIMED. Allocation is deterministic WITHIN a harness, not across them: an
+        # unwarmed first touch absorbs JIT allocation. This tool printed 522.9 MiB for mm1 where a
+        # warmed probe printed 500.7 MiB — a 4% gap that is pure harness, and it was quoted as a
+        # machine-independent result. Counts are immune (identical either way); bytes are not.
+        _wf, _wd = MORK.Leapfrog.UNIFY_FAILURES[], MORK.Leapfrog.UNIFY_FAILURES_DIRTY[]
+        let s = MORK.new_space()
+            MORK.space_add_all_sexpr!(s, read(path, String))
+            MORK.space_metta_calculus!(s, STEPS)
+            MORK.space_dump_all_sexpr(s)
+        end
+        # ⚠️ THE WARM-UP MUST NOT COUNT. These accumulate across the whole sweep, so a warmed
+        # program contributed its failures TWICE — which is exactly how "4 failures" was really
+        # 2 events double-counted. Snapshot across the warm pass.
+        MORK.Leapfrog.UNIFY_FAILURES[] = _wf
+        MORK.Leapfrog.UNIFY_FAILURES_DIRTY[] = _wd
         MORK.occurs_calls_reset!()
+        on && (MORK.LEAPFROG_ROUTED[] = 0)
         local chars = 0
         bytes = @allocated begin
             s = MORK.new_space()
@@ -71,7 +99,7 @@ function work(path, on::Bool)
             MORK.space_metta_calculus!(s, STEPS)
             chars = length(MORK.space_dump_all_sexpr(s))
         end
-        (MORK.OCCURS_CALLS[], bytes / 2^20, chars)
+        (MORK.OCCURS_CALLS[], bytes / 2^20, chars, on ? MORK.LEAPFROG_ROUTED[] : 0)
     catch
         nothing
     finally
@@ -81,14 +109,33 @@ end
 
 rows = Tuple{Float64, Int, Int, Float64, Float64, String}[]
 disagree = String[]
+# 🔴 IS `match_candidate!`'s FAILURE BRANCH EVER TAKEN? A mutant deleting its unwind survived all
+# four trail suites and the full 8153 — because on mm1 the branch is never reached. Accumulate
+# across the WHOLE corpus so the answer is a measurement rather than a mechanism story.
+# ⚠️ Ref, NOT a bare global. `x += 1` inside a TOP-LEVEL `for` rebinds a global from soft scope and
+# throws UndefVarError — which is precisely how the corpus reachability probe earlier today ran every
+# program, threw at the counter, and reported 0 through a bare `catch`. Hit again writing this line.
+const routed_programs = Ref(0)
+const routed_bodies = Ref(0)
+MORK.Leapfrog.UNIFY_FAILURES[] = 0
+MORK.Leapfrog.UNIFY_FAILURES_DIRTY[] = 0
+errored = String[]
 for d in DIRS, f in sort(readdir(d))
     endswith(f, ".mm2") || continue
     p = joinpath(d, f)
-    off = work(p, false); off === nothing && continue
-    on  = work(p, true);  on  === nothing && continue
+    # ⚠️ NO BARE `catch`. A reachability probe run earlier today swallowed every program's error and
+    # printed a count as though it had measured them — the third swallowed-error incident in one
+    # session. `work` returns nothing on failure and the name is RECORDED, never silently dropped.
+    off = work(p, false); off === nothing && (push!(errored, basename(f)); continue)
+    on  = work(p, true);  on  === nothing && (push!(errored, basename(f)); continue)
     # 🔴 ANSWERS MUST MATCH. A work ratio between engines that disagree is meaningless, and a
     # cheaper engine that answers differently is a DEFECT reported as an improvement.
     off[3] == on[3] || push!(disagree, basename(f))
+    # 🔑 THE DENOMINATOR FOR THE FAILURE-BRANCH COUNT BELOW. `UNIFY_FAILURES` only increments inside
+    # `match_candidate!`, which only runs when the leapfrog is DISPATCHED — so "4 failures across 267
+    # programs" would be a much weaker statement than it sounds if most programs never route. Most of
+    # this corpus does single-digit occurs invocations, i.e. barely touches the join at all.
+    on[4] > 0 && (routed_programs[] += 1; routed_bodies[] += on[4])
     off[1] == 0 && continue                          # no unification work: nothing to compare
     push!(rows, (on[1] / off[1], on[1], off[1], on[2], off[2], basename(f)))
 end
@@ -110,3 +157,19 @@ for r in first(rows, 15)
 end
 @printf("\n%d programs compared, answers identical on all. Ratios are DETERMINISTIC: n=1 suffices.\n",
         length(rows))
+isempty(errored) || @printf("⚠️ %d programs ERRORED and were excluded: %s\n",
+                            length(errored), join(first(errored, 8), ", "))
+# 🔑 THREE DENOMINATORS, BECAUSE ONLY THE THIRD IS THE REAL ONE. Programs that route says how BROAD
+# the exercise is; bodies says how many joins ran; CANDIDATES REACHING THE BINDER says how many
+# chances the failure branch actually had. One occurs invocation == one candidate through
+# `match_candidate!`, so the leapfrog column sums to exactly that.
+# ⚠️ AND IT IS CONCENTRATED: mm1 alone is 61 913 of them. A broad routing count can still describe a
+# corpus whose unification volume lives in one program.
+total_cands = sum(r[2] for r in rows)
+@printf("🔑 match_candidate! FAILURE BRANCH: %d failures, %d dirty — over %d/%d programs routing \
+(%d bodies, %d candidates through the binder; mm1 alone is %d of them).\n",
+        MORK.Leapfrog.UNIFY_FAILURES[], MORK.Leapfrog.UNIFY_FAILURES_DIRTY[],
+        routed_programs[], length(rows), routed_bodies[], total_cands, rows[1][2])
+MORK.Leapfrog.UNIFY_FAILURES[] == 0 &&
+    println("   ⇒ NEVER TAKEN on this corpus. The unwind there is exercised ONLY by the " *
+            "hand-written case in leapfrog_layer3d.jl. Dead-but-correct, and now labelled.")
