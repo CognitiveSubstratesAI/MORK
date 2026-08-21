@@ -162,8 +162,12 @@ end
         @test inverted[1] > 0
         @test ordered[1] > 0
 
-        # …and the cost, pinned. Currently ~100x; the assertion is deliberately conservative.
-        @test inverted[2] > 20 * ordered[2]
+        # ✅ CRITERION MET 2026-08-21 — re-indexing landed and this assertion FLIPPED, exactly as
+        # it was written to. It read `inverted[2] > 20 * ordered[2]` and pinned a 100.7x penalty
+        # (90 600 candidates vs 900). Measured after: 897 vs 900 — 1.0x. An inverted factor now
+        # costs what an ordered one costs, because `build_reindex` permutes its columns into
+        # schedule order and the join SEEKS it instead of enumerating it.
+        @test inverted[2] <= 2 * ordered[2]
     end
 
     @testset "ranking does not disturb the shapes the differential already pins" begin

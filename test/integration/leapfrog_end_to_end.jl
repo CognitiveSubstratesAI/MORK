@@ -172,12 +172,17 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # permutation exist and are round-trip tested (`leapfrog_reindex.jl`, 253 assertions).
         @test occursin("function is_inverted", code)
         @test occursin("function ri_emit_reordered", code)
-        # 🔴 …and the JOIN DOES NOT USE THEM YET. `build_reindex` — which materialises the permuted
-        # map and hands the join a re-keyed factor — is the remaining half. Measured cost of the gap:
-        # an inverted factor enumerates 90 600 candidates where an ordered one takes 900 (100.7x,
-        # `leapfrog_ranking.jl`). Answers are correct either way. When the wiring lands this line
-        # fails, like the four flips before it.
-        @test !occursin("build_reindex", code)
+        # ✅ v6 — THE WIRING LANDED, and this pin flipped for the SIXTH time. The sequence is the
+        # whole argument for writing reachability as a test rather than a comment:
+        #   v1 nothing called the layers · v2 only LeapfrogEntry · v3 Space.jl routes (gated)
+        #   v4 the pruning guards went live · v5 the transform existed, unused · v6 the join uses it
+        # Measured effect: an inverted factor went 90 600 -> 897 candidates (100.7x -> 1.0x).
+        @test occursin("build_reindex(", code)
+        @test occursin("is_inverted(", code)
+
+        # 🔴 NOTHING DOCUMENTED REMAINS UNWIRED. Every deliberate omission named in the layer
+        # headers — rank_parts, fill_lead_candidates, re-indexing — is now called from the join.
+        # If a future omission is added, pin it HERE, the way these six were.
     end
 
     @testset "🔴 REACHABLE from an entry point, but NOT on the default query path" begin

@@ -158,13 +158,13 @@ module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
               ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
-              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item
+              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item, UNIT_VAL
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
 # plainly and take everything else by name.
 using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
-               read_zipper_at_path,
+               read_zipper_at_path, set_val_at!, zipper_to_next_val!,
                zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
                zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
                zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
@@ -185,7 +185,8 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
        rank_parts!, partition_restrictors!, fill_lead_candidates!,
        descend_restrictors!,
        RIItem, ri_span_len, ri_split_columns, ri_columns_to_items, ri_emit_reordered,
-       is_inverted, ri_col_min_var_pos
+       is_inverted, ri_col_min_var_pos,
+       reindex_regions, fold_region_into_reindex!, build_reindex, ri_invert_order
 
 """
     PARSE_START
@@ -1409,6 +1410,13 @@ mutable struct UnifyJoinState{V, A, F}
     emit::F
     stopped::Bool
     emitted::Int
+    # ── RE-INDEXING (layer 6) ────────────────────────────────────────────────────────────────────
+    # `reindex_order[f]` is EMPTY for a factor read from the live map, and otherwise the permutation
+    # `new_order[j] = original column at re-indexed position j`. `prefixes[f]` is the factor's own
+    # trie prefix, which a re-indexed cursor no longer carries (its private map holds column bytes
+    # only) but which `fact_bytes` must put back to reconstruct the stored fact.
+    reindex_order::Vector{Vector{Int}}
+    prefixes::Vector{Vector{UInt8}}
 end
 
 "Query variable ids are 0-BASED (upstream's numbering); array slots are 1-based. One helper, so the
@@ -2043,8 +2051,28 @@ place, so the zipper's own path IS `prefix ++ every column consumed` — the com
 Upstream needs a real reconstruction only for a RE-INDEXED factor, whose columns were permuted into
 a private map; we do not re-index, so this stays a copy.
 """
-@inline fact_bytes(st::UnifyJoinState, f::Int)::Vector{UInt8} =
-    Vector{UInt8}(zipper_path(st.cursors[f].z))
+function fact_bytes(st::UnifyJoinState, f::Int)::Vector{UInt8}
+    # 🔴 `zipper_path` IS RELATIVE TO THE ZIPPER'S ROOT, NOT ABSOLUTE. The cursor was opened AT the
+    # factor's prefix, so its path is the COLUMN BYTES ONLY and the prefix must be prepended.
+    #
+    # ⚠️ THIS SHIPPED WRONG IN 8d02787 AND NO TEST COULD SEE IT. `loc` came back as
+    # `[0xc4 'edge' …]` where the stored atom is `[0x03 0xc4 'edge' …]` — the arity byte missing.
+    # Every leapfrog test compares ANSWER COUNTS, and a truncated `loc` changes no count; the
+    # conformance corpus passed 274/274 on this engine with the defect present. Found only by
+    # accident, while debugging the re-index region walk, which failed loudly on the SAME wrong
+    # assumption (`reserved byte: 0x6e` — a symbol payload read as a tag).
+    # `test/integration/leapfrog_loc.jl` is the test that would have caught it: it compares the loc
+    # BYTES against the stock engine, not the counts. [[feedback_assert_the_contract_not_the_representation]]
+    path = Vector{UInt8}(zipper_path(st.cursors[f].z))
+    ord = st.reindex_order[f]
+    isempty(ord) && return vcat(st.prefixes[f], path)   # live map: prefix ++ consumed columns
+    # 🔴 RE-INDEXED: the path is the PERMUTED key. `loc` must be the ORIGINAL stored fact, so undo
+    # the permutation and put the prefix back. Returning the permuted bytes would hand the caller a
+    # well-formed atom that is NOT in the space — a wrong answer with no error.
+    cols = ri_split_columns(path, length(ord))
+    items = ri_columns_to_items(path, cols)
+    vcat(st.prefixes[f], ri_emit_reordered(items, ri_invert_order(ord)))
+end
 
 """
     unify_leapfrog(btm, factors, nvars, emit) -> Int
@@ -2069,18 +2097,46 @@ function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
                         nvars::Int, emit::Function)::Int
     nf = length(factors)
     nf == 0 && return 0
-    cursors = SubtermCursor{UnitVal, GlobalAlloc}[]
-    for f in factors
-        push!(cursors, SubtermCursor(read_zipper_at_path(btm, f.prefix)))
-    end
-    steps = Vector{Step}[factor_steps(f) for f in factors]
+
+    # var_pos FIRST — `is_inverted` needs the schedule to decide anything.
     var_order = collect(0:(nvars - 1))
     var_pos = zeros(Int, max(nvars, 1))
     for (lvl, v) in enumerate(var_order)
         var_pos[_vslot(v)] = lvl
     end
+
+    # ── RE-INDEX THE INVERTED FACTORS (layer 6) ──────────────────────────────────────────────────
+    # A factor whose columns mention variables OUT OF SCHEDULE ORDER cannot be SOUGHT — at the
+    # relevant level it is not even a participant, so its whole column gets enumerated once per
+    # binding. MEASURED: 90 600 candidates where an ordered factor takes 900 (100.7x).
+    # ⚠️ `reindex_maps` is a LOCAL and must stay one: the cursors hold zippers INTO these maps, and
+    # the whole join runs synchronously inside this call, so the binding keeps them alive. Upstream
+    # builds them outside its join state for the same reason (a zipper into a map owned by the state
+    # would be a self-reference); here it is lifetime, not borrowck, but the shape is identical.
+    reindex_maps = PathMap{UnitVal}[]
+    cursors = SubtermCursor{UnitVal, GlobalAlloc}[]
+    eff_cols = Vector{UnifyColumn}[]
+    reindex_order = Vector{Int}[]
+    prefixes = Vector{UInt8}[]
+    for f in factors
+        push!(prefixes, copy(f.prefix))
+        if length(f.cols) > 1 && is_inverted(f, var_pos)
+            (rmap, new_cols, new_order) = build_reindex(btm, f, var_pos)
+            push!(reindex_maps, rmap)
+            push!(cursors, SubtermCursor(read_zipper_at_path(rmap, UInt8[])))
+            push!(eff_cols, new_cols)
+            push!(reindex_order, new_order)
+        else
+            push!(cursors, SubtermCursor(read_zipper_at_path(btm, f.prefix)))
+            push!(eff_cols, f.cols)
+            push!(reindex_order, Int[])
+        end
+    end
+
+    steps = Vector{Step}[factor_steps(UnifyFactor(UInt8[], c)) for c in eff_cols]
     st = UnifyJoinState(cursors, steps, ones(Int, nf), zeros(UInt8, nf),
-                        var_order, var_pos, nvars, nf, emit, false, 0)
+                        var_order, var_pos, nvars, nf, emit, false, 0,
+                        reindex_order, prefixes)
     uj_catch_up(st, Bindings(), 1, 1)
     st.emitted
 end
@@ -2437,6 +2493,124 @@ function ri_col_min_var_pos(col::UnifyColumn, var_pos::Vector{Int})::Int
         end
     end
     best
+end
+
+"""
+    reindex_regions(btm, factor) -> Union{Nothing, Vector{Vector{UInt8}}}
+
+The regions of the source map a factor's re-index must walk, or `nothing` when no sound scoping
+exists and the whole same-arity prefix has to be read.
+
+A parsed factor's `prefix` is the ARITY BYTE ALONE — the relation head is kept as column 0 on
+purpose, so a stored WILDCARD head still unifies under a ground query head — so "the factor's
+region" is otherwise EVERY same-arity fact in the space, unrelated relations included.
+
+🔑 SCOPING IS SOUND EXACTLY WHEN THE HEAD COLUMN IS A GROUND SYMBOL. At that trie position a ground
+symbol query column unifies only with the identical symbol bytes or with a stored wildcard, so the
+union of `prefix ++ head` and `prefix ++ w` for every wildcard byte `w` present there holds every
+fact the factor can ever match, and nothing outside it is reachable. Re-emitting preserves each
+column's shape, so no excluded fact can re-enter through the permuted key either.
+
+🔴 A GROUND COMPOUND HEAD IS DELIBERATELY NOT SCOPED. A stored compound head may carry variables
+inside it — `(g \$x)` unifies with `(g a)` — and would live OUTSIDE `prefix ++ head bytes`. Scoping
+it would drop facts, and the join would report fewer answers with no error at all.
+"""
+function reindex_regions(btm::PathMap{UnitVal}, factor::UnifyFactor)
+    isempty(factor.cols) && return nothing
+    head = factor.cols[1]
+    head.is_var && return nothing
+    hb = head.term.buf
+    isempty(hb) && return nothing
+    t = maybe_byte_item(hb[1])
+    t isa ExprSymbol || return nothing          # compound / variable head: NOT scopable
+
+    head_bytes = hb[1:(1 + Int(t.size))]        # the symbol IS tag + payload
+    regions = Vector{UInt8}[vcat(factor.prefix, head_bytes)]
+    mask = zipper_child_mask(read_zipper_at_path(btm, factor.prefix))
+    for w in stored_wildcard_bytes(mask)
+        push!(regions, vcat(factor.prefix, UInt8[w]))
+    end
+    regions
+end
+
+"""
+    fold_region_into_reindex!(btm, region, plen, ncols, new_order, reindex)
+
+Fold every fact under `region` into `reindex`, permuted by `new_order`. `plen` is the factor's
+prefix length, so the column bytes start at `plen` of the absolute path regardless of how deep
+`region` reaches.
+
+⚠️ A FACT STORED EXACTLY AT THE REGION ROOT NEEDS FOLDING EXPLICITLY — `zipper_to_next_val!` starts
+strictly BELOW the root. Only a single-column factor can reach that, and a single-column factor is
+never inverted, but the walk stays total either way rather than relying on that argument.
+"""
+function fold_region_into_reindex!(btm::PathMap{UnitVal}, region::Vector{UInt8}, plen::Int,
+                                   ncols::Int, new_order::Vector{Int},
+                                   reindex::PathMap{UnitVal})
+    _ins(colbytes) = begin
+        cols = ri_split_columns(colbytes, ncols)
+        items = ri_columns_to_items(colbytes, cols)
+        set_val_at!(reindex, ri_emit_reordered(items, new_order), UNIT_VAL)
+    end
+    # ⚠️ `zipper_path` IS RELATIVE to `region`, so the column bytes are
+    # `region-beyond-the-prefix` ++ `the zipper's own path`. Slicing the zipper path by `plen`
+    # instead — which assumed an absolute path — cut into the middle of a symbol and threw
+    # `reserved byte: 0x6e` (an ASCII payload byte read as a tag). Upstream reads `origin_path()`
+    # here for exactly this reason.
+    head = length(region) > plen ? region[(plen + 1):end] : UInt8[]
+    rz = read_zipper_at_path(btm, region)
+    zipper_is_val(rz) && !isempty(head) && _ins(head)
+    while zipper_to_next_val!(rz)
+        _ins(vcat(head, Vector{UInt8}(zipper_path(rz))))
+    end
+    nothing
+end
+
+"""
+    build_reindex(btm, factor, var_pos) -> (map, new_cols, new_order)
+
+Re-index an inverted factor: copy its facts into a FRESH PathMap with the columns permuted into
+schedule-position order (variables renumbered to stay canonical). Returns that map, the permuted
+column list — now non-decreasing, so the join seeks it like any compatible factor — and the
+permutation itself, so a leaf can reconstruct the stored fact's ORIGINAL bytes.
+
+This is the one partial materialisation the inverted case needs, and ONLY the inverted factor pays
+it. Re-keying into another attribute order is the standard worst-case-optimal answer to a cycle.
+
+Ground columns sort FIRST (they constrain nothing about ordering and seek trivially); the rest sort
+by the earliest schedule position any of their variables occupies, ties broken by original position
+so the permutation is deterministic.
+"""
+function build_reindex(btm::PathMap{UnitVal}, factor::UnifyFactor, var_pos::Vector{Int})
+    ncols = length(factor.cols)
+    keyed = [(ri_col_min_var_pos(factor.cols[c], var_pos) == typemax(Int) ? (0, 0, c) :
+              (ri_col_min_var_pos(factor.cols[c], var_pos), 1, c), c) for c in 1:ncols]
+    sort!(keyed; by = first)
+    new_order = Int[c for (_, c) in keyed]
+    new_cols = UnifyColumn[factor.cols[c] for c in new_order]
+
+    reindex = PathMap{UnitVal}()
+    plen = length(factor.prefix)
+    regions = reindex_regions(btm, factor)
+    regions === nothing && (regions = Vector{UInt8}[copy(factor.prefix)])
+    for region in regions
+        fold_region_into_reindex!(btm, region, plen, ncols, new_order, reindex)
+    end
+    (reindex, new_cols, new_order)
+end
+
+"""
+    ri_invert_order(new_order) -> Vector{Int}
+
+The permutation that undoes `new_order`: `inv[new_order[j]] = j`. Used to reconstruct a re-indexed
+factor's ORIGINAL stored bytes from its permuted key, which is what `loc` must be.
+"""
+function ri_invert_order(new_order::Vector{Int})
+    inv = zeros(Int, length(new_order))
+    for (j, c) in enumerate(new_order)
+        inv[c] = j
+    end
+    inv
 end
 
 end # module Leapfrog

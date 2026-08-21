@@ -41,6 +41,24 @@ function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # rather than reproduce that here from a reading of its code, hand it back as unroutable — the
     # engine then answers it, by definition correctly. [[feedback_empty_result_may_be_the_wrong_store]]
     isempty(factors) && return nothing
-    Leapfrog.unify_leapfrog(btm, factors, nvars,
-                            (bindings, st) -> effect(bindings, Leapfrog.fact_bytes(st, 1)))
+    # 🔴 `loc` IS THE CONCATENATION OF EVERY MATCHED FACT, NOT FACTOR 1's. Upstream's own comment
+    # says "loc is factor 0's stored fact, as stock passes" — TRUE OF UPSTREAM'S STOCK PATH, FALSE
+    # OF OURS. `space_query_multi` hands the callback `combined` (Space.jl:813), all matched facts
+    # end to end. Matching UPSTREAM's contract here instead of OURS would make this a drop-in
+    # replacement for a different engine than the one it replaces.
+    #
+    # ⚠️ MEASURED, because reading either engine's prose would have got it wrong:
+    #     stock    [edge a b][edge b c]   (20 bytes, two atoms)
+    #     leapfrog [edge a b]             (10 bytes)  ← before this
+    # A truncated `loc` changes no ANSWER COUNT, so the 603-shape differential, the 330-body wiring
+    # suite and the 274/274 conformance corpus were all blind to it. `leapfrog_loc.jl` compares the
+    # BYTES. [[feedback_verify_code_body_not_comments]]
+    nfac = length(factors)
+    Leapfrog.unify_leapfrog(btm, factors, nvars, function (bindings, st)
+        loc = Leapfrog.fact_bytes(st, 1)
+        for f in 2:nfac
+            append!(loc, Leapfrog.fact_bytes(st, f))
+        end
+        effect(bindings, loc)
+    end)
 end

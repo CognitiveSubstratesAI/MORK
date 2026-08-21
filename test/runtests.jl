@@ -4831,6 +4831,11 @@ const _MORK_TS = @testset "MORK" begin
     # RE-INDEXING — the pure column-permutation transform (layer 6). Round-trip tested: identity
     # permutation must reproduce the original bytes exactly, over 200 randomised shapes.
     include("integration/leapfrog_reindex.jl")
+    # `loc` — the SECOND callback argument — compared BYTE FOR BYTE against the stock engine.
+    # Every other leapfrog test compares COUNTS, and a wrong `loc` changes no count: two real
+    # defects (a missing prefix byte, and returning only factor 1 instead of all matched facts)
+    # survived 603 differential shapes, 330 wiring bodies and a 274/274 conformance run.
+    include("integration/leapfrog_loc.jl")
     include("integration/bindings_slab.jl")
 
     # JET dispatch ratchet — fails when a change ADDS runtime dispatch to the exec hot path.
