@@ -427,7 +427,7 @@ Public callers use `expr_unify` which allocates a fresh Dict.
 function _expr_unify_inplace!(pairs::Vector{Tuple{ExprEnv, ExprEnv}},
     bindings::Bindings)::Union{Bool, UnificationFailure}
     empty!(bindings)
-    result = _expr_unify_core!(pairs, bindings)
+    result = _expr_unify_core!(pairs, bindings, ExprVar[])
     result isa UnificationFailure ? result : true
 end
 
@@ -442,14 +442,62 @@ function expr_unify(
     stack::Vector{Tuple{ExprEnv, ExprEnv}}
 )::Union{Bindings, UnificationFailure}
     bindings = Bindings()
-    result = _expr_unify_core!(stack, bindings)
+    result = _expr_unify_core!(stack, bindings, ExprVar[])
     result isa UnificationFailure ? result : bindings
 end
 
-# Shared implementation: fills `bindings` (which must already be empty/cleared).
+"""
+    expr_unify_into!(bindings, stack, trail) -> Union{Bindings, UnificationFailure}
+
+Unify `stack` against a LIVE `bindings` map that already holds a solved form, recording every key
+INSERTED on `trail` so the caller can unwind to a mark.
+
+Ports upstream `unify_into` (`cfa8abf`, expr/src/lib.rs:2244). This is what lets the join bind one
+candidate INCREMENTALLY instead of cloning the map and re-solving every prior equation per
+candidate.
+
+🔑 WHY AN EARLIER BINDING STILL CONSTRAINS. The derefs consult the LIVE MAP, so a prior binding
+restricts the new equation exactly as if its own equation had been re-asserted — without paying to
+re-solve it. That is the whole trade.
+
+🔑 WHY UNWINDING IS JUST REMOVAL. An insert target is ALWAYS a previously-unbound key (the solver
+only writes where `_deref` ended at a free variable), so deleting the trailed keys restores the map
+exactly. `test/integration/expr_unify_trail.jl` asserts that round trip rather than assuming it.
+
+⚠️ THE SOLVED FORM'S SHAPE MAY DIFFER from a from-scratch solve — path compression, and which end of
+a var-var equation survived. Upstream states this and why it is safe: downstream observes bindings
+ONLY BY DEREFERENCE, which is unchanged. Anything that compared binding maps STRUCTURALLY would be
+relying on an accident.
+
+⚠️ ON FAILURE THE MAP IS LEFT DIRTY — a failed solve may have inserted before contradicting. The
+caller must unwind to its mark on BOTH paths; `match_candidate!` does so in a `finally`.
+
+MOTIVATION, upstream's measurement: "the 3-axiom step trace re-derived one binding 18x per answer,
+and on big.metta the re-solving cost 11.6x the ProductZipper's unification work (1,423,278 occurs
+calls vs 122,933 at 2000 axioms)". Ours, profiled on `mm1_forward_full_proof`: `_occurs_check` is
+the dominant allocator under the leapfrog.
+"""
+function expr_unify_into!(bindings::Bindings,
+                          stack::Vector{Tuple{ExprEnv, ExprEnv}},
+                          trail::Vector{ExprVar})::Union{Bindings, UnificationFailure}
+    _expr_unify_core!(stack, bindings, trail)
+end
+
+"""Unwind `bindings` to the trail mark: delete every key inserted since. See `expr_unify_into!`."""
+function expr_unify_unwind!(bindings::Bindings, trail::Vector{ExprVar}, mark::Int)
+    while length(trail) > mark
+        delete!(bindings, pop!(trail))
+    end
+    nothing
+end
+
+# Shared implementation: fills `bindings`, which MAY ALREADY HOLD A SOLVED FORM — the derefs
+# below consult it, so a prior binding constrains the new equations without being re-asserted.
+# Every INSERTED key is pushed on `trail` so a caller can unwind to a mark (see
+# `expr_unify_into!`). Pass an empty vector when you do not need one.
 # Returns `bindings` on success or `UnificationFailure`.
 function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
-    bindings::Bindings)::Union{Bindings, UnificationFailure}
+    bindings::Bindings, trail::Vector{ExprVar})::Union{Bindings, UnificationFailure}
     iters = 0
     # encountered: deduplicates structural child pairs to break cyclic chains.
     # Mirrors the `encountered` HashSet<(ExprEnv,ExprEnv)> in the Rust `unify`.
@@ -587,10 +635,12 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
             vx == vy && continue   # same var — skip
             _occurs_check(vx, dt2) && return UnificationFailure(Val(:occurs), vx, dt2)
             bindings[vx] = dt2
+            push!(trail, vx)   # trailed: unwinding is removal
         else  # vy !== nothing
             vy == vx && continue
             _occurs_check(vy, dt1) && return UnificationFailure(Val(:occurs), vy, dt1)
             bindings[vy] = dt1
+            push!(trail, vy)   # trailed: unwinding is removal
         end
     end
 
@@ -1656,4 +1706,5 @@ export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MAN
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!
+export expr_unify_into!, expr_unify_unwind!   # the undo trail (upstream cfa8abf)
 export expr_apply, ee_show

@@ -4830,6 +4830,11 @@ const _MORK_TS = @testset "MORK" begin
     include("integration/leapfrog_ranking.jl")
     # RE-INDEXING — the pure column-permutation transform (layer 6). Round-trip tested: identity
     # permutation must reproduce the original bytes exactly, over 200 randomised shapes.
+    # THE UNDO TRAIL (upstream cfa8abf) — `expr_unify_into!` solves against a LIVE map and records
+    # inserted keys so a caller can unwind to a mark. Tests the two claims it rests on: unwinding
+    # restores the map (including after a FAILED solve, which leaves it dirty), and the deref
+    # CLOSURE is preserved even though the map's SHAPE may differ from a from-scratch solve.
+    include("integration/expr_unify_trail.jl")
     include("integration/leapfrog_reindex.jl")
     # `loc` — the SECOND callback argument — compared BYTE FOR BYTE against the stock engine.
     # Every other leapfrog test compares COUNTS, and a wrong `loc` changes no count: two real
