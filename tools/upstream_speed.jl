@@ -73,9 +73,11 @@ using MORK, Printf
 # `upstream_conformance.jl:68` already uses `Base.run` and its header records the same fix (c543841).
 
 const UP = get(ENV, "MORK_UPSTREAM_BIN",
-                expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
-const DIRS = [joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
-              for d in ("space", "sinks")]
+    expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
+const DIRS = [
+    joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
+    for d in ("space", "sinks")
+]
 const STEPS = 2000
 #
 # ✅ THE RUNS ARE STEP-ALIGNED WITH UPSTREAM. Upstream's `metta_calculus` is a DO-WHILE —
@@ -101,13 +103,17 @@ function up_time(path)
     for _ in 1:2
         t0 = time_ns()
         try
-            Base.run(pipeline(`$UP run $path --steps $STEPS $out`; stdout = devnull, stderr = devnull))
+            Base.run(
+                pipeline(
+                    `$UP run $path --steps $STEPS $out`; stdout=devnull, stderr=devnull
+                )
+            )
         catch
             return nothing                      # aborts/panics are not a timing
         end
         best = min(best, (time_ns() - t0) / 1e9)
     end
-    isfile(out) && rm(out; force = true)
+    isfile(out) && rm(out; force=true)
     best
 end
 
@@ -138,9 +144,12 @@ rows = Tuple{Float64, Float64, Float64, Float64, String}[]   # ratio_off, ratio_
 for d in DIRS, f in sort(readdir(d))
     endswith(f, ".mm2") || continue
     p = joinpath(d, f)
-    u = up_time(p);  u === nothing && continue
-    o = our_time(p, false); o === nothing && continue
-    n = our_time(p, true);  n === nothing && continue
+    u = up_time(p)
+    u === nothing && continue
+    o = our_time(p, false)
+    o === nothing && continue
+    n = our_time(p, true)
+    n === nothing && continue
     u < 1e-4 && continue                                     # too fast to compare meaningfully
     push!(rows, (o / u, n / u, u, o, basename(f)))
 end
@@ -154,26 +163,40 @@ end
 # what was dropped rather than averaging over what survived. [[feedback_verify_the_oracle_runs]]
 n_programs = sum(count(f -> endswith(f, ".mm2"), readdir(d)) for d in DIRS)
 if isempty(rows)
-    error("upstream_speed: ZERO programs timed out of $n_programs — the comparison measured " *
-          "NOTHING. Check the binary at $UP, and remember `run` is shadowed: use `Base.run`.")
+    error(
+        "upstream_speed: ZERO programs timed out of $n_programs — the comparison measured " *
+        "NOTHING. Check the binary at $UP, and remember `run` is shadowed: use `Base.run`."
+    )
 end
 if length(rows) < n_programs
     @warn "upstream_speed: not every program produced a timing — the tail may be missing the " *
-          "very outlier this tool exists to find" timed = length(rows) programs = n_programs \
-          dropped = n_programs - length(rows)
+        "very outlier this tool exists to find" timed = length(rows) programs =
+        n_programs \
+        dropped = n_programs - length(rows)
 end
 
-sort!(rows; by = first, rev = true)
+sort!(rows; by=first, rev=true)
 med_off = rows[max(1, length(rows) ÷ 2)][1]
-med_on  = sort([r[2] for r in rows])[max(1, length(rows) ÷ 2)]
+med_on = sort([r[2] for r in rows])[max(1, length(rows) ÷ 2)]
 
 @printf("\nprograms compared : %d\n", length(rows))
-@printf("MEDIAN ratio ours/upstream : %.1fx (dispatch off)   %.1fx (leapfrog on)\n", med_off, med_on)
-println("  ⇒ the median is the LANGUAGE TAX. The outliers below are where to look for a port defect.\n")
-@printf("%-42s %10s %10s %10s %10s\n", "program", "upstream", "ours-off", "ratio", "ratio-on")
+@printf(
+    "MEDIAN ratio ours/upstream : %.1fx (dispatch off)   %.1fx (leapfrog on)\n",
+    med_off,
+    med_on
+)
+println(
+    "  ⇒ the median is the LANGUAGE TAX. The outliers below are where to look for a port defect.\n"
+)
+@printf(
+    "%-42s %10s %10s %10s %10s\n", "program", "upstream", "ours-off", "ratio", "ratio-on"
+)
 for r in rows[1:min(15, length(rows))]
     @printf("%-42s %9.3fs %9.3fs %9.1fx %9.1fx\n", r[5], r[3], r[4], r[1], r[2])
 end
 @printf("\nWORST ratio is %.0fx the median — %s\n", rows[1][1] / med_off,
-        rows[1][1] / med_off > 5 ? "🔴 DISPROPORTIONATE: read that program" :
-                                   "in line with the language tax, no single outlier")
+    if rows[1][1] / med_off > 5
+        "🔴 DISPROPORTIONATE: read that program"
+    else
+        "in line with the language tax, no single outlier"
+    end)

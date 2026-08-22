@@ -16,7 +16,11 @@ using MORK
 
 # Same escaping the conformance gate uses: upstream writes RAW bytes, our dump escapes them.
 _norm(b::Vector{UInt8}) =
-    join(map(c -> (0x20 <= c < 0x7f) ? string(Char(c)) : "\\x" * string(c; base = 16, pad = 2), b))
+    join(
+        map(
+            c -> (0x20 <= c < 0x7f) ? string(Char(c)) : "\\x" * string(c; base=16, pad=2), b
+        )
+    )
 
 "Parse `(opname payload)` lines into opname => payload-rendering."
 function parse_lines(lines::Vector{String})
@@ -27,7 +31,7 @@ function parse_lines(lines::Vector{String})
         # `split` is codepoint-safe; byte-index slicing here threw StringIndexError on payloads
         # containing bytes >= 0x80 (which most pure ops produce). Harness bug, not an engine one.
         body = s[nextind(s, firstindex(s)):prevind(s, lastindex(s))]
-        parts = split(body, ' '; limit = 2)
+        parts = split(body, ' '; limit=2)
         d[String(parts[1])] = length(parts) > 1 ? String(strip(parts[2])) : ""
     end
     d
@@ -68,59 +72,60 @@ a value that differs is a bug in an op we HAVE; a missing one is an op we do not
 we emit where upstream errors. Collapsing them into a single "divergences" number hides which.
 """
 function compare_probes(DIR::AbstractString)
-tot = miss_ours = miss_up = wrong = agree = 0
-report = Tuple{String, String, String, String}[]
-for f in sort(readdir(DIR))
-    endswith(f, ".mm2") || continue
-    base = replace(f, ".mm2" => "")
-    rawp = joinpath(DIR, base * ".raw")
-    isfile(rawp) || continue
-    up = upstream_of(rawp)
-    ours = try
-        Base.invokelatest(ours_of, joinpath(DIR, f))
-    catch e
-        println("!! $base OUR ENGINE THREW: ", first(sprint(showerror, e), 120))
-        Dict{String, String}()
-    end
-    for (op, uval) in up
-        op == "n" && continue
-        tot += 1
-        if !haskey(ours, op)
-            miss_ours += 1
-            push!(report, (op, "<ABSENT>", uval, base))
-        elseif ours[op] != uval
-            wrong += 1
-            push!(report, (op, ours[op], uval, base))
-        else
-            agree += 1
+    tot = miss_ours = miss_up = wrong = agree = 0
+    report = Tuple{String, String, String, String}[]
+    for f in sort(readdir(DIR))
+        endswith(f, ".mm2") || continue
+        base = replace(f, ".mm2" => "")
+        rawp = joinpath(DIR, base * ".raw")
+        isfile(rawp) || continue
+        up = upstream_of(rawp)
+        ours = try
+            Base.invokelatest(ours_of, joinpath(DIR, f))
+        catch e
+            println("!! $base OUR ENGINE THREW: ", first(sprint(showerror, e), 120))
+            Dict{String, String}()
+        end
+        for (op, uval) in up
+            op == "n" && continue
+            tot += 1
+            if !haskey(ours, op)
+                miss_ours += 1
+                push!(report, (op, "<ABSENT>", uval, base))
+            elseif ours[op] != uval
+                wrong += 1
+                push!(report, (op, ours[op], uval, base))
+            else
+                agree += 1
+            end
+        end
+        for (op, oval) in ours
+            op == "n" && continue
+            if !haskey(up, op)
+                miss_up += 1
+                push!(report, (op, oval, "<UPSTREAM ABSENT>", base))
+            end
         end
     end
-    for (op, oval) in ours
-        op == "n" && continue
-        if !haskey(up, op)
-            miss_up += 1
-            push!(report, (op, oval, "<UPSTREAM ABSENT>", base))
-        end
-    end
-end
 
-    return (; compared = tot, agree, miss_ours, miss_up, wrong, report)
+    return (; compared=tot, agree, miss_ours, miss_up, wrong, report)
 end
 
 # ── CLI ──────────────────────────────────────────────────────────────────────────────────────────
 # Only when RUN as a script; `include`ing this file from a test defines `compare_probes` and stops.
 if abspath(PROGRAM_FILE) == @__FILE__
     r = compare_probes(ENV["PROBES"])
-    (tot, agree, miss_ours, miss_up, wrong, report) =
-        (r.compared, r.agree, r.miss_ours, r.miss_up, r.wrong, r.report)
-println("\n=== PURE OP DIFFERENTIAL ===")
-println("ops compared      : $tot")
-println("AGREE             : $agree")
-println("we produce nothing: $miss_ours")
-println("wrong value/width : $wrong")
-println("upstream nothing  : $miss_up   (we emit where upstream errors)")
-println("\n--- divergences ---")
-for (op, o, u, b) in sort(report)
-    println(rpad(op, 26), " ours=", rpad(o, 26), " upstream=", u)
-end
+    (tot, agree, miss_ours, miss_up, wrong, report) = (
+        r.compared, r.agree, r.miss_ours, r.miss_up, r.wrong, r.report
+    )
+    println("\n=== PURE OP DIFFERENTIAL ===")
+    println("ops compared      : $tot")
+    println("AGREE             : $agree")
+    println("we produce nothing: $miss_ours")
+    println("wrong value/width : $wrong")
+    println("upstream nothing  : $miss_up   (we emit where upstream errors)")
+    println("\n--- divergences ---")
+    for (op, o, u, b) in sort(report)
+        println(rpad(op, 26), " ours=", rpad(o, 26), " upstream=", u)
+    end
 end

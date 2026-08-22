@@ -24,7 +24,7 @@ const ARGS_MAP = Dict{String, String}()
 let i = 1
     while i <= length(ARGS)
         if ARGS[i] in ("--csv", "--suite") && i < length(ARGS)
-            ARGS_MAP[ARGS[i]] = ARGS[i + 1];
+            ARGS_MAP[ARGS[i]] = ARGS[i + 1]
             i += 2
         else
             i += 1
@@ -57,8 +57,12 @@ elseif SUITE_NAME == "both"
     # A BenchmarkGroup is Dict-like, so copying entries is the version-agnostic equivalent —
     # later key wins, exactly as `merge` did.
     let g = BenchmarkGroup()
-        for (k, v) in SUITE;           g[k] = v; end
-        for (k, v) in SUITE_CANONICAL; g[k] = v; end
+        for (k, v) in SUITE
+            g[k] = v
+        end
+        for (k, v) in SUITE_CANONICAL
+            g[k] = v
+        end
         g
     end
 else

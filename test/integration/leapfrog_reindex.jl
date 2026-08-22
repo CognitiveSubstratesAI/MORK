@@ -24,8 +24,8 @@ end
 
     @testset "🔑 IDENTITY permutation round-trips the bytes EXACTLY" begin
         for sx in ["(edge a b)", "(edge \$x \$y)", "(edge \$u \$u)", "(rel a \$x b)",
-                   "(rel (f a) \$y)", "(rel (f \$x) (g \$x))", "(e \$a \$b \$a)",
-                   "(deep (f (g \$x)) c)", "(sym-only x)"]
+            "(rel (f a) \$y)", "(rel (f \$x) (g \$x))", "(e \$a \$b \$a)",
+            "(deep (f (g \$x)) c)", "(sym-only x)"]
             (bytes, ncols) = _ri_colbytes(sx)
             cols = _RI.ri_split_columns(bytes, ncols)
             # the split must partition the bytes with nothing left over — a wrong span length would
@@ -91,22 +91,33 @@ end
         head = _RI.unify_term_col(MORK.sexpr_to_expr("edge"))
         ground = _RI.unify_term_col(MORK.sexpr_to_expr("c"))
 
-        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(0), v(1)]), var_pos) == false
+        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(0), v(1)]), var_pos) ==
+            false
         @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(2), v(0)]), var_pos) == true
-        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(0), v(0)]), var_pos) == false
+        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(0), v(0)]), var_pos) ==
+            false
         # a GROUND column constrains nothing about ordering and must be skipped, not treated as 0
-        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, ground, v(1)]), var_pos) == false
-        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, v(1), ground, v(0)]), var_pos) == true
+        @test _RI.is_inverted(_RI.UnifyFactor(UInt8[], [head, ground, v(1)]), var_pos) ==
+            false
+        @test _RI.is_inverted(
+            _RI.UnifyFactor(UInt8[], [head, v(1), ground, v(0)]), var_pos
+        ) == true
     end
 
     @testset "randomised round-trip — shapes nobody chose by hand" begin
         rng = MersenneTwister(0x21c0)
         syms = ["a", "b", "c"]
         for _ in 1:200
-            arg() = (t = rand(rng);
-                     t < 0.30 ? "\$v$(rand(rng, 0:2))" :
-                     t < 0.45 ? "(f \$v$(rand(rng, 0:1)))" :
-                     t < 0.60 ? "(g $(rand(rng, syms)))" : rand(rng, syms))
+            arg() = (t=rand(rng);
+                if t < 0.30
+                    "\$v$(rand(rng, 0:2))"
+                elseif t < 0.45
+                    "(f \$v$(rand(rng, 0:1)))"
+                elseif t < 0.60
+                    "(g $(rand(rng, syms)))"
+                else
+                    rand(rng, syms)
+                end)
             sx = "(rel " * join([arg() for _ in 1:rand(rng, 1:3)], " ") * ")"
             (bytes, ncols) = _ri_colbytes(sx)
             cols = _RI.ri_split_columns(bytes, ncols)

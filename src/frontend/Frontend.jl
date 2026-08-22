@@ -120,7 +120,7 @@ function sexpr_parse!(parser::MorkParser, ctx::SexprContext, target::ExprZipper)
         if c == UInt8(';')
             # comment: skip to end of line
             while _ctx_has_next(ctx) && _ctx_next!(ctx) != UInt8('\n')
-                ;
+
             end
             continue
 
@@ -359,16 +359,16 @@ end
 function _jp_read_hexdec_digit!(p::JSONParser)::UInt16
     ch = _jp_expect_byte!(p)
     if UInt8('0') <= ch <= UInt8('9')
-        ;
+
         return UInt16(ch - UInt8('0'))
     elseif UInt8('a') <= ch <= UInt8('f')
-        ;
+
         return UInt16(ch - UInt8('a') + 10)
     elseif UInt8('A') <= ch <= UInt8('F')
-        ;
+
         return UInt16(ch - UInt8('A') + 10)
     else
-        _jp_unexpected!(p);
+        _jp_unexpected!(p)
         return UInt16(0)
     end
 end
@@ -384,9 +384,9 @@ function _jp_read_codepoint!(p::JSONParser)
     cp = _jp_read_hex4!(p)
     if cp >= 0xD800 && cp <= 0xDBFF
         # surrogate pair
-        b1 = _jp_expect_byte!(p);
+        b1 = _jp_expect_byte!(p)
         b1 == UInt8('\\') || _jp_unexpected!(p)
-        b2 = _jp_expect_byte!(p);
+        b2 = _jp_expect_byte!(p)
         b2 == UInt8('u') || _jp_unexpected!(p)
         low = _jp_read_hex4!(p)
         full = 0x10000 + (UInt32(cp - 0xD800) << 10) + UInt32(low - 0xDC00)
@@ -408,8 +408,8 @@ function _jp_read_complex_string!(p::JSONParser, start::Int)::String
             continue
         end
         if ch == UInt8('"')
-            ;
-            break;
+
+            break
         end
         if ch == UInt8('\\')
             esc = _jp_expect_byte!(p)
@@ -418,19 +418,19 @@ function _jp_read_complex_string!(p::JSONParser, start::Int)::String
             elseif esc == UInt8('"') || esc == UInt8('\\') || esc == UInt8('/')
                 push!(p.buffer, esc)
             elseif esc == UInt8('b')
-                ;
+
                 push!(p.buffer, 0x08)
             elseif esc == UInt8('f')
-                ;
+
                 push!(p.buffer, 0x0C)
             elseif esc == UInt8('t')
-                ;
+
                 push!(p.buffer, UInt8('\t'))
             elseif esc == UInt8('r')
-                ;
+
                 push!(p.buffer, UInt8('\r'))
             elseif esc == UInt8('n')
-                ;
+
                 push!(p.buffer, UInt8('\n'))
             else
                 _jp_unexpected!(p)
@@ -458,11 +458,11 @@ function _jp_expect_exponent!(p::JSONParser, exp::Ref{Int16})
     ch = _jp_expect_byte!(p)
     sign = Int16(1)
     if ch == UInt8('-')
-        ;
-        sign = Int16(-1);
+
+        sign = Int16(-1)
         ch = _jp_expect_byte!(p)
     elseif ch == UInt8('+')
-        ;
+
         ch = _jp_expect_byte!(p)
     end
     UInt8('0') <= ch <= UInt8('9') || _jp_unexpected!(p)
@@ -488,11 +488,11 @@ function _jp_read_number!(p::JSONParser, first::UInt8)::Tuple{UInt64, Int16}
                     _jp_bump!(p)
                     m2 = mantissa * UInt64(10)
                     if m2 < mantissa
-                        ;
+
                         exponent += Int16(1)   # overflow
                     else
-                        ;
-                        mantissa = m2 + UInt64(c - UInt8('0'));
+
+                        mantissa = m2 + UInt64(c - UInt8('0'))
                     end
                 elseif c == UInt8('.')
                     _jp_bump!(p)
@@ -529,7 +529,7 @@ function _jp_read_number!(p::JSONParser, first::UInt8)::Tuple{UInt64, Int16}
                     if mantissa < JSON_MAX_PRECISION
                         m2 = mantissa * UInt64(10) + UInt64(c2 - UInt8('0'))
                         if m2 >= mantissa
-                            mantissa = m2;
+                            mantissa = m2
                             exponent -= Int16(1)
                         end
                     end
@@ -570,12 +570,12 @@ end
 
 abstract type _StackBlock end
 mutable struct _SBIndex <: _StackBlock
-    ;
-    cnt::Int;
+
+    cnt::Int
 end
 mutable struct _SBKey <: _StackBlock
-    ;
-    key::String;
+
+    key::String
 end
 
 # ── json_parse! — main entry point ───────────────────────────────────
@@ -648,31 +648,31 @@ function json_parse!(p::JSONParser, t::JSONTranscriber)
             end
 
         elseif ch == UInt8('t')
-            r = _jp_expect_byte!(p);
+            r = _jp_expect_byte!(p)
             r == UInt8('r') || _jp_unexpected!(p)
-            u = _jp_expect_byte!(p);
+            u = _jp_expect_byte!(p)
             u == UInt8('u') || _jp_unexpected!(p)
-            e = _jp_expect_byte!(p);
+            e = _jp_expect_byte!(p)
             e == UInt8('e') || _jp_unexpected!(p)
             jt_write_true!(t)
 
         elseif ch == UInt8('f')
-            a = _jp_expect_byte!(p);
+            a = _jp_expect_byte!(p)
             a == UInt8('a') || _jp_unexpected!(p)
-            l = _jp_expect_byte!(p);
+            l = _jp_expect_byte!(p)
             l == UInt8('l') || _jp_unexpected!(p)
-            s = _jp_expect_byte!(p);
+            s = _jp_expect_byte!(p)
             s == UInt8('s') || _jp_unexpected!(p)
-            e = _jp_expect_byte!(p);
+            e = _jp_expect_byte!(p)
             e == UInt8('e') || _jp_unexpected!(p)
             jt_write_false!(t)
 
         elseif ch == UInt8('n')
-            u = _jp_expect_byte!(p);
+            u = _jp_expect_byte!(p)
             u == UInt8('u') || _jp_unexpected!(p)
-            l = _jp_expect_byte!(p);
+            l = _jp_expect_byte!(p)
             l == UInt8('l') || _jp_unexpected!(p)
-            l2 = _jp_expect_byte!(p);
+            l2 = _jp_expect_byte!(p)
             l2 == UInt8('l') || _jp_unexpected!(p)
             jt_write_null!(t)
 
@@ -760,8 +760,8 @@ jt_ascend_index!(t::WriteTranscriber, i::Int, last::Bool) =
     last ? write(t.io, "]") : write(t.io, ", ")
 jt_write_empty_array!(t::WriteTranscriber) = write(t.io, "[]")
 jt_descend_key!(t::WriteTranscriber, k::String, first::Bool) = begin
-    first && write(t.io, "{");
-    write(t.io, "\"$k\": ");
+    first && write(t.io, "{")
+    write(t.io, "\"$k\": ")
 end
 jt_ascend_key!(t::WriteTranscriber, k::String, last::Bool) =
     last ? write(t.io, "}") : write(t.io, ", ")

@@ -95,8 +95,8 @@ abstract type RSToken end
 struct RSListStart <: RSToken end
 struct RSListEnd <: RSToken end
 struct RSLiteral <: RSToken
-    ;
-    val::RSExp;
+
+    val::RSExp
 end
 struct RSEof <: RSToken end
 
@@ -161,7 +161,7 @@ function rs_next_token!(t::RSTokens)::Union{RSToken, RSError}
             while i <= ncodeunits(t.string)
                 ch = t.string[i]
                 if ch == ')' || ch == '('
-                    end_ch = ch;
+                    end_ch = ch
                     break
                 elseif isspace(ch)
                     break

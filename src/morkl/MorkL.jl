@@ -280,13 +280,13 @@ function _binary_space_op!(space_reg::Vector{PathMap{UnitVal}}, pc::Int,
     a = space_reg[arg0 + 1]
     b = space_reg[arg1 + 1]
     result = if op == :union
-        ;
+
         pjoin(a, b)
     elseif op == :intersection
-        ;
+
         pmeet(a, b)
     elseif op == :subtraction
-        ;
+
         psubtract(a, b)
     else
         prestrict(a, b)
@@ -590,8 +590,9 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                     # everything the parent had beyond it.
                     parent_reg = Int(sr.previous_program_counter) + 1
                     parent = space_reg[parent_reg]
-                    space_reg[parent_reg] =
-                        _alg_result_to_space(pjoin(parent, result), parent, result)
+                    space_reg[parent_reg] = _alg_result_to_space(
+                        pjoin(parent, result), parent, result
+                    )
 
                     # Advance iterator
                     if _is_length_byte(sr.prefix_first_byte) && sr.prefix_first_byte > 0 &&

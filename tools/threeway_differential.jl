@@ -27,7 +27,7 @@
 # The binary must be built from the VENDORED upstream pin; a mismatched build makes B meaningless.
 using MORK
 
-const BIN  = get(ENV, "MORK_BIN", expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
+const BIN = get(ENV, "MORK_BIN", expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
 const CONF = joinpath(@__DIR__, "..", "test", "conformance")
 
 include(joinpath(CONF, "run_conformance.jl"))
@@ -35,22 +35,36 @@ include(joinpath(CONF, "run_conformance.jl"))
 function main()
     isfile(BIN) || (@error "upstream binary not found — set MORK_BIN" BIN; return 2)
     out = mktempdir()
-    baseline = Set{String}(strip(l) for l in eachline(joinpath(CONF, "EXPECTED_PASS.txt")) if !isempty(strip(l)))
+    baseline = Set{String}(
+        strip(l) for
+        l in eachline(joinpath(CONF, "EXPECTED_PASS.txt")) if !isempty(strip(l))
+    )
 
-    ours_vs_live = String[]; fixture_rot = String[]; control = String[]; total = 0
+    ours_vs_live = String[]
+    fixture_rot = String[]
+    control = String[]
+    total = 0
     for g in ("sinks", "space")
-        dir = joinpath(CONF, g); isdir(dir) || continue
+        dir = joinpath(CONF, g)
+        isdir(dir) || continue
         mkpath(joinpath(out, g))
         for f in sort(readdir(dir))
             endswith(f, ".mm2") || continue
-            stem = f[1:(end - 4)]; name = g * "/" * stem
-            expf = joinpath(dir, stem * ".expected"); isfile(expf) || continue
+            stem = f[1:(end - 4)]
+            name = g * "/" * stem
+            expf = joinpath(dir, stem * ".expected")
+            isfile(expf) || continue
             total += 1
             live = joinpath(out, g, stem * ".up")
             # NEVER pipe the binary — a `| head` SIGPIPEs it mid-write and silently truncates,
             # which cost an hour on 2026-08-03 chasing a "missing" output file.
-            run(pipeline(`$BIN run $(joinpath(dir, f)) $live`; stdout = devnull, stderr = devnull))
-            A = _conf_run_probe(joinpath(dir, f)); A = A === nothing ? String[] : A
+            run(
+                pipeline(
+                    `$BIN run $(joinpath(dir, f)) $live`; stdout=devnull, stderr=devnull
+                )
+            )
+            A = _conf_run_probe(joinpath(dir, f))
+            A = A === nothing ? String[] : A
             B = isfile(live) ? _conf_expected(live) : String[]
             C = _conf_expected(expf)
             A != B && push!(ours_vs_live, name)
@@ -61,12 +75,22 @@ function main()
 
     println("\n=== three-way differential ===")
     println("  probes                     ", total)
-    println("  ours != LIVE BINARY        ", length(ours_vs_live), "   <- true divergence count")
-    println("  fixture != LIVE BINARY     ", length(fixture_rot), "   <- fixtures no longer describing the binary")
+    println(
+        "  ours != LIVE BINARY        ", length(ours_vs_live), "   <- true divergence count"
+    )
+    println(
+        "  fixture != LIVE BINARY     ",
+        length(fixture_rot),
+        "   <- fixtures no longer describing the binary"
+    )
     println("  baseline (EXPECTED_PASS)   ", length(baseline))
     println("  CONTROL: baselined but ours != binary  ", length(control), "   <- MUST BE 0")
-    isempty(fixture_rot) || (println("\n  fixture rot:"); foreach(n -> println("    ", n), fixture_rot))
-    isempty(control)     || (println("\n  !! CONTROL VIOLATIONS — the baseline is lying:"); foreach(n -> println("    ", n), control))
+    isempty(fixture_rot) ||
+        (println("\n  fixture rot:"); foreach(n -> println("    ", n), fixture_rot))
+    isempty(control) || (
+        println("\n  !! CONTROL VIOLATIONS — the baseline is lying:");
+        foreach(n -> println("    ", n), control)
+    )
     println("\n  live binary outputs kept at: ", out)
     isempty(control) ? 0 : 1
 end

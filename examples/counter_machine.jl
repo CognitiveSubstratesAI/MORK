@@ -82,8 +82,8 @@ result2 = space_dump_all_sexpr(s2)
 results = filter(l -> startswith(l, "(! result"), split(result2, "\n"))
 println("After $pc_steps steps: $(length(results)) result atoms produced")
 for r in results[1:min(3, end)]
-    ;
-    println("  $r");
+
+    println("  $r")
 end
 println("PASS: process calculus IC/R machine ran successfully")
 

@@ -24,7 +24,7 @@ using MORK, Test
 const _ISSUE_TRACE = get(ENV, "MORK_ISSUE_TRACE", "1") != "0"
 
 """Run an MM2 program, print a trace, and return its atoms as a sorted Vector{String}."""
-function _issue_run(tag::String, src::AbstractString; cap::Int = 4000)
+function _issue_run(tag::String, src::AbstractString; cap::Int=4000)
     s = MORK.new_space()
     MORK.space_add_all_sexpr!(s, src)
     steps = MORK.space_metta_calculus!(s, cap)
@@ -48,32 +48,40 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
     @testset "CLOSED upstream — a failure here is OUR regression" begin
 
         @testset "#22 MM2 removal not working" begin
-            a = _issue_run("#22", "(exec 0 (, (foo \$x)) (O (- (foo \$x)) (+ (bar \$x))))\n(foo a)")
+            a = _issue_run(
+                "#22", "(exec 0 (, (foo \$x)) (O (- (foo \$x)) (+ (bar \$x))))\n(foo a)"
+            )
             @test _has(a, "(bar a)")
             @test !_has(a, "(foo a)")          # the RemoveSink must actually remove
         end
 
         @testset "#29 decreasing pattern specificity skips valid unifications" begin
-            a = _issue_run("#29", "(: \$a A)\n(: f (-> A))\n(exec 0 (, (: (\$f) \$t) (: \$f (-> \$t))) (, OK))")
+            a = _issue_run(
+                "#29",
+                "(: \$a A)\n(: f (-> A))\n(exec 0 (, (: (\$f) \$t) (: \$f (-> \$t))) (, OK))"
+            )
             @test _has(a, "OK")
         end
 
         @testset "#37 variable introduction in templates breaks internal references" begin
             # exec 0 uses DIFFERENT template vars ($k,$j); exec 1 uses the SAME ($k,$k).
             # The bug produced `(count0-2 (count0-2 $a))` for the differing-vars case.
-            a = _issue_run("#37", """
-                (item a)
-                (item b)
-                (item c)
-                (item2 a)
-                (item2 b)
-                (item2 c)
-                (item2 d)
-                (exec 0 (, (item \$x) (item2 \$y))
-                  (O (count (count0-1 \$k) \$k \$x) (count (count0-2 \$j) \$j \$y)))
-                (exec 1 (, (item \$x) (item2 \$y))
-                  (O (count (count1-1 \$k) \$k \$x) (count (count1-2 \$k) \$k \$y)))
-                """)
+            a = _issue_run(
+                "#37",
+                """
+(item a)
+(item b)
+(item c)
+(item2 a)
+(item2 b)
+(item2 c)
+(item2 d)
+(exec 0 (, (item \$x) (item2 \$y))
+  (O (count (count0-1 \$k) \$k \$x) (count (count0-2 \$j) \$j \$y)))
+(exec 1 (, (item \$x) (item2 \$y))
+  (O (count (count1-1 \$k) \$k \$x) (count (count1-2 \$k) \$k \$y)))
+"""
+            )
             @test _has(a, "(count0-1 3)")
             @test _has(a, "(count0-2 4)")      # the bug gave (count0-2 (count0-2 $a))
             @test _has(a, "(count1-1 3)")
@@ -83,7 +91,10 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
 
         @testset "#43 out of bounds error with coreferential_transition" begin
             # The report is a CRASH. Reaching the assertions at all is most of the test.
-            a = _issue_run("#43", "(data (0 1))\n(exec (0) (, (data (\$i \$g))) (, (((. \$x) \$x) lp \$i \$g)))")
+            a = _issue_run(
+                "#43",
+                "(data (0 1))\n(exec (0) (, (data (\$i \$g))) (, (((. \$x) \$x) lp \$i \$g)))"
+            )
             @test _has(a, "(data (0 1))")
             @test _any_containing(a, "lp 0 1")   # the transition fired instead of aborting
         end
@@ -91,16 +102,25 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
         @testset "#53 tail sink returns the wrong set for N >= 2 (filed from this port)" begin
             # HeadTailSink's fill branch tracked the MAX boundary for both head and tail. Sunk out of
             # ascending order, tail kept the wrong set. head and `tail 1` were never affected.
-            t2 = _issue_run("#53 tail2", "(v 1 e)\n(v 2 a)\n(v 3 b)\n(exec 0 (, (v \$i \$x)) (O (tail 2 (g \$x))))")
+            t2 = _issue_run(
+                "#53 tail2",
+                "(v 1 e)\n(v 2 a)\n(v 3 b)\n(exec 0 (, (v \$i \$x)) (O (tail 2 (g \$x))))"
+            )
             @test _has(t2, "(g b)") && _has(t2, "(g e)")
             @test !_has(t2, "(g a)")             # the bug kept {a,e}
 
-            h2 = _issue_run("#53 head2", "(v 1 e)\n(v 2 a)\n(v 3 b)\n(exec 0 (, (v \$i \$x)) (O (head 2 (g \$x))))")
+            h2 = _issue_run(
+                "#53 head2",
+                "(v 1 e)\n(v 2 a)\n(v 3 b)\n(exec 0 (, (v \$i \$x)) (O (head 2 (g \$x))))"
+            )
             @test _has(h2, "(g a)") && _has(h2, "(g b)")   # control: head was never wrong
             @test !_has(h2, "(g e)")
 
-            t3 = _issue_run("#53 tail3", "(v 1 e)\n(v 2 a)\n(v 3 c)\n(v 4 b)\n(v 5 d)\n" *
-                                          "(exec 0 (, (v \$i \$x)) (O (tail 3 (g \$x))))")
+            t3 = _issue_run(
+                "#53 tail3",
+                "(v 1 e)\n(v 2 a)\n(v 3 c)\n(v 4 b)\n(v 5 d)\n" *
+                "(exec 0 (, (v \$i \$x)) (O (tail 3 (g \$x))))"
+            )
             @test _has(t3, "(g c)") && _has(t3, "(g d)") && _has(t3, "(g e)")
             @test !_has(t3, "(g a)") && !_has(t3, "(g b)")  # the bug kept {a,c,e}
         end
@@ -108,11 +128,17 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
         @testset "#133 pure `tuple` ignores tuple arguments — closed as USAGE, not a code fix" begin
             base = "(R 0 Z)\n(R 1 (S Z))\n"
             # UNQUOTED: one atom, in ours AND upstream. This is NOT a gap — see the file header.
-            un = _issue_run("#133 unquoted", base * "(exec 0 (, (R \$x \$y)) (O (pure \$s \$s (tuple S \$x \$y))))")
+            un = _issue_run(
+                "#133 unquoted",
+                base * "(exec 0 (, (R \$x \$y)) (O (pure \$s \$s (tuple S \$x \$y))))"
+            )
             @test _has(un, "(S 0 Z)")
             @test !_has(un, "(S 1 (S Z))")
             # QUOTED: the accepted resolution from the issue thread.
-            q = _issue_run("#133 quoted", base * "(exec 0 (, (R \$x \$y)) (O (pure \$s \$s (tuple S \$x (' \$y)))))")
+            q = _issue_run(
+                "#133 quoted",
+                base * "(exec 0 (, (R \$x \$y)) (O (pure \$s \$s (tuple S \$x (' \$y)))))"
+            )
             @test _has(q, "(S 0 Z)")
             @test _has(q, "(S 1 (S Z))")
         end
@@ -131,27 +157,40 @@ _any_containing(atoms, frag) = any(a -> occursin(frag, a), atoms)
             #
             # RECONCILE when #135 or PR #137 lands — the fix is shaped to converge (it honours the
             # base upstream's own args/subterms thread), so their fix should look like this one.
-            a = _issue_run("#135", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$a))))))")
+            a = _issue_run(
+                "#135", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$a))))))"
+            )
             @test _has(a, "(R (\$a \$a))")          # correct; upstream still gives (R ($a $b))
 
             # The two shapes predicted from the diagnosis and confirmed against the binary BEFORE
             # the fix — upstream gave ($a $b $b) and ($a $b $c), the latter inventing a THIRD
             # variable. Both now round-trip.
-            b = _issue_run("#135 three vars", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$a))))))")
+            b = _issue_run(
+                "#135 three vars",
+                "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$a))))))"
+            )
             @test _has(b, "(R (\$a \$b \$a))")
-            c = _issue_run("#135 trailing repeat", "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$b))))))")
+            c = _issue_run(
+                "#135 trailing repeat",
+                "(exec 0 (,) (O (pure \$r \$r (tuple R (' (\$a \$b \$b))))))"
+            )
             @test _has(c, "(R (\$a \$b \$b))")
         end
 
         @testset "#136 pure fails to capture an output pattern" begin
             # Upstream PANICS ("unrecognized sink", sinks.rs:1309). We produce no atoms and do not
             # abort — strictly better, since we never take down a saturation run.
-            a = _issue_run("#136 pattern capture", "(exec 0 (,) (O (pure (R \$x \$y) (\$x \$y) (tuple 1 2))))")
+            a = _issue_run(
+                "#136 pattern capture",
+                "(exec 0 (,) (O (pure (R \$x \$y) (\$x \$y) (tuple 1 2))))"
+            )
             @test !_has(a, "(R 1 2)")            # neither engine achieves the expected result
             @test isempty(a)                     # and we fail QUIETLY rather than aborting
 
             # The single-variable capture in the same issue DOES work, on both sides.
-            b = _issue_run("#136 single var", "(exec 0 (,) (O (pure (R \$x) \$x (tuple 1 2))))")
+            b = _issue_run(
+                "#136 single var", "(exec 0 (,) (O (pure (R \$x) \$x (tuple 1 2))))"
+            )
             @test _has(b, "(R (1 2))")
         end
     end

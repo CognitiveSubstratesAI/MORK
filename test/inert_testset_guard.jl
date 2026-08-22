@@ -22,14 +22,14 @@ using Test
 Leaf testsets under `ts` that passed 0 assertions, as `(dotted path, n_broken)`. `n_broken > 0`
 means the leaf was all-skips — coverage that was PLANNED and then silently dropped.
 """
-function inert_testsets(ts::Test.DefaultTestSet, prefix::String = "")
-    path  = isempty(prefix) ? ts.description : prefix * " › " * ts.description
-    kids  = [r for r in ts.results if r isa Test.DefaultTestSet]
+function inert_testsets(ts::Test.DefaultTestSet, prefix::String="")
+    path = isempty(prefix) ? ts.description : prefix * " › " * ts.description
+    kids = [r for r in ts.results if r isa Test.DefaultTestSet]
     if isempty(kids)
         broken = count(r -> r isa Test.Broken, ts.results)
-        return ts.n_passed == 0 ? [(path, broken)] : Tuple{String,Int}[]
+        return ts.n_passed == 0 ? [(path, broken)] : Tuple{String, Int}[]
     end
-    reduce(vcat, (inert_testsets(k, path) for k in kids); init = Tuple{String,Int}[])
+    reduce(vcat, (inert_testsets(k, path) for k in kids); init=Tuple{String, Int}[])
 end
 
 """
@@ -41,13 +41,23 @@ function assert_no_inert_testsets(ts::Test.DefaultTestSet)
     bad = inert_testsets(ts)
     isempty(bad) && return nothing
     io = IOBuffer()
-    println(io, "INERT TESTSETS — these ran and asserted NOTHING, so the green result overstates ",
-                "coverage by exactly their scope:")
+    println(io,
+        "INERT TESTSETS — these ran and asserted NOTHING, so the green result overstates ",
+        "coverage by exactly their scope:")
     for (p, broken) in bad
-        println(io, "  · ", p, broken > 0 ? "   ($broken skipped — coverage planned, then dropped)" :
-                                            "   (0 assertions)")
+        println(
+            io,
+            "  · ",
+            p,
+            if broken > 0
+                "   ($broken skipped — coverage planned, then dropped)"
+            else
+                "   (0 assertions)"
+            end
+        )
     end
-    println(io, "Either make them assert, or DELETE them. A test that cannot run is worse than a ",
-                "missing test: the missing one is visibly absent.")
+    println(io,
+        "Either make them assert, or DELETE them. A test that cannot run is worse than a ",
+        "missing test: the missing one is visibly absent.")
     error(String(take!(io)))
 end

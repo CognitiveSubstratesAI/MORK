@@ -34,8 +34,8 @@ p1_steps = space_metta_calculus!(s1, 999)
 reach1 = sort(filter(l -> startswith(l, "(reach"), split(space_dump_all_sexpr(s1), "\n")))
 println("Steps: $p1_steps  Reachable pairs: $(length(reach1))")
 for r in reach1
-    ;
-    println("  $r");
+
+    println("  $r")
 end
 @assert length(reach1) >= 5 "P1: expected at least 5 reachable pairs"
 println("PASS\n")

@@ -171,7 +171,8 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     @test c.fns_missing <= PIN_FNS
     @test c.tys_missing <= PIN_TYS
     if c.fns_missing < PIN_FNS || c.tys_missing < PIN_TYS
-        @info "port coverage IMPROVED — lower the pins in this file" fns = c.fns_missing tys = c.tys_missing
+        @info "port coverage IMPROVED — lower the pins in this file" fns = c.fns_missing tys =
+            c.tys_missing
     end
     @test c.fns_missing >= 0
 
@@ -196,14 +197,18 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
         # min/max folded as binary, NaN, 0-arg sum/product, shift >= width, signum(-0.0), `tuple`
         # flattening nested exprs. A complete inventory with divergent bodies is exactly the state a
         # name diff reports as perfect. Do not read this green as "pure.rs is ported correctly".
-        cmpops = filter(n -> any(startswith(n, p) for p in ("eq_", "ne_", "lt_", "lte_", "gt_", "gte_")), fm)
+        cmpops = filter(
+            n ->
+                any(startswith(n, p) for p in ("eq_", "ne_", "lt_", "lte_", "gt_", "gte_")),
+            fm
+        )
         @test isempty(cmpops)
         @test isempty(fm)                   # NOTHING in pure.rs is missing by name (370/370 registered)
     end
 
     @testset "documented-deliberate gaps stay bounded" begin
-        @test length(bysite["expr/lib.rs"][1])   <= 43   # DELIBERATE PARTIAL (38/74), see memory note
-        @test length(bysite["expr/lib.rs"][2])   <= 12   # …and its unported TYPES
+        @test length(bysite["expr/lib.rs"][1]) <= 43   # DELIBERATE PARTIAL (38/74), see memory note
+        @test length(bysite["expr/lib.rs"][2]) <= 12   # …and its unported TYPES
         @test length(bysite["kernel/space.rs"][1]) <= 16  # JSON/JSONL/neo4j loaders + transform variants
     end
 end

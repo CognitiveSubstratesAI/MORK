@@ -13,7 +13,9 @@
 # Programs live in experiments/mm2_programs/programs/ (the ClarkeRemy corpus).
 using MORK, Test
 
-const _CORPUS_DIR = abspath(joinpath(@__DIR__, "..", "..", "experiments", "mm2_programs", "programs"))
+const _CORPUS_DIR = abspath(
+    joinpath(@__DIR__, "..", "..", "experiments", "mm2_programs", "programs")
+)
 
 # run a corpus program to a fixpoint (cap guards against the never-halting quine) → dumped atoms
 function _corpus_atoms(fname::AbstractString, cap::Int=20_000)
@@ -33,11 +35,15 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
     # ── Basics ────────────────────────────────────────────────────────────────
     @testset "Basics_03 union → a b c" begin
         _, _, a = _corpus_atoms("Basics_03_file1_file2.mm2")
-        for x in ("a", "b", "c"); @test x in a; end
+        for x in ("a", "b", "c")
+            @test x in a
+        end
     end
     @testset "Basics_04 predicated" begin
         _, _, a = _corpus_atoms("Basics_04_file1_file2_predicated.mm2")
-        for x in ("(file1 a)", "(file1 b)", "(file2 b)", "(file2 c)"); @test x in a; end
+        for x in ("(file1 a)", "(file1 b)", "(file2 b)", "(file2 c)")
+            @test x in a
+        end
     end
     @testset "Basics_05 projection → (projected a) (projected b)" begin
         _, _, a = _corpus_atoms("Basics_05_file1_file2_project.mm2")
@@ -45,7 +51,9 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
     end
     @testset "Basics_07 sources+sinks → (ab 1 3) (ab 2 3)" begin
         _, _, a = _corpus_atoms("Basics_07_Sources_Sinks.mm2")
-        for x in ("(a 1)", "(a 2)", "(b 3)"); @test x in a; end
+        for x in ("(a 1)", "(a 2)", "(b 3)")
+            @test x in a
+        end
         @test _with_prefix(a, "(ab") == ["(ab 1 3)", "(ab 2 3)"]
     end
     @testset "Basics_08 sink removal → a (removed atom gone)" begin
@@ -78,7 +86,9 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
     end
     @testset "Control_06 select-first-exec" begin
         _, _, a = _corpus_atoms("Control_06_Select_First_Exec.mm2")
-        for x in ("(Ran After)", "(case b)", "(case c)"); @test x in a; end
+        for x in ("(Ran After)", "(case b)", "(case c)")
+            @test x in a
+        end
     end
     @testset "Control_07 recursive quine → RUNAWAY (intentional, hits cap)" begin
         steps, cap, _ = _corpus_atoms("Control_07_Recursive.mm2", 2_000)
@@ -99,7 +109,9 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
     @testset "Going_Wide_01 finite function" begin
         _, _, a = _corpus_atoms("Going_Wide_01_Finite_Function.mm2")
         for x in ("(results-in 1 <- (and 1 1))", "(results-in 1 <- (or 1 1))",
-                  "(results-in 1 <- (not 0))"); @test x in a; end
+            "(results-in 1 <- (not 0))")
+            @test x in a
+        end
     end
     # Going_Wide_02 / _11_Macros / _31_Two_Programs use the DEF/main-loop idiom. The resurrection
     # bug was fixed (e59a16b) so they PROGRESS; the remaining "convergence/explosion" (they grew
@@ -128,7 +140,9 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
         steps, cap, a = _corpus_atoms("Going_Wide_21_Larger_Programs.mm2", 20_000)
         @test steps == 92                 # exact vs freshly-rebuilt upstream binary (2026-07-24)
         @test length(a) == 26
-        for x in ("(OUTPUT A 1)", "(OUTPUT B 1)"); @test x in a; end
+        for x in ("(OUTPUT A 1)", "(OUTPUT B 1)")
+            @test x in a
+        end
     end
 
     # ── 2026-07-24 corpus-completeness sweep: 15 programs never previously exercised by this file
@@ -150,8 +164,8 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
     # regardless of tag shape; this locks in that priority-tag parsing doesn't silently misparse
     # any of the encodings into something that fails to match/consume.
     for fname in ("Basics_06_Priority_00_01.mm2", "Basics_06_Priority_(0_0)_(0_1).mm2",
-                  "Basics_06_Priority_0_(0_0).mm2", "Basics_06_Priority_0_1.mm2",
-                  "Basics_06_Priority_1_00.mm2", "Basics_06_Priority_(1)_(0_0).mm2")
+        "Basics_06_Priority_0_(0_0).mm2", "Basics_06_Priority_0_1.mm2",
+        "Basics_06_Priority_1_00.mm2", "Basics_06_Priority_(1)_(0_0).mm2")
         @testset "$fname → 2 no-op execs consumed, 0 data atoms" begin
             steps, cap, a = _corpus_atoms(fname)
             @test steps == 2
@@ -179,13 +193,15 @@ _with_prefix(atoms, prefix) = sort([a for a in atoms if startswith(a, prefix)])
         _, _, a = _corpus_atoms("Set_Ops_01_Hardcoded_Locations.mm2")
         @test _with_prefix(a, "(arg_a") == ["(arg_a a)", "(arg_a b)", "(arg_a c)"]
         @test _with_prefix(a, "(arg_b") == ["(arg_b d)", "(arg_b e)", "(arg_b f)"]
-        @test _with_prefix(a, "(ret") == ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
+        @test _with_prefix(a, "(ret") ==
+            ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
     end
     @testset "Set_Ops_02_Parameterized_Locations → ret a-f + the union rule echoed" begin
         _, _, a = _corpus_atoms("Set_Ops_02_Parameterized_Locations.mm2")
         @test _with_prefix(a, "(arg_a") == ["(arg_a a)", "(arg_a b)", "(arg_a c)"]
         @test _with_prefix(a, "(arg_b") == ["(arg_b d)", "(arg_b e)", "(arg_b f)"]
-        @test _with_prefix(a, "(ret") == ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
+        @test _with_prefix(a, "(ret") ==
+            ["(ret a)", "(ret b)", "(ret c)", "(ret d)", "(ret e)", "(ret f)"]
     end
     @testset "Setup_Hello_World → (say (Hello World !))" begin
         _, _, a = _corpus_atoms("Setup_Hello_World.mm2")

@@ -401,7 +401,7 @@ const PURE_OP_ARITY = Dict{String, Union{Nothing, Vector{Int}}}(
     "u8_ternarylogic" => [3],
     "u8_xnor" => [2],
     "u8_xor" => [2],
-    "u8_zeros" => [0],
+    "u8_zeros" => [0]
 )
 
 const PURE_REGISTER = String[
@@ -497,7 +497,7 @@ const PURE_REGISTER = String[
     "hypot_f32", "clamp_f32", "sum_f32", "product_f32",
     "max_f32", "min_f32", "lt_f32", "gt_f32",
     "lte_f32", "gte_f32", "eq_f32", "ne_f32",
-    "f32_from_string", "f32_to_string",
+    "f32_from_string", "f32_to_string"
 ]
 
 export PURE_OP_ARITY, PURE_REGISTER
@@ -808,7 +808,7 @@ const PURE_OP_OPERAND_WIDTHS = Dict{String, Vector{Int}}(
     "u8_swap_bytes" => [1],
     "u8_ternarylogic" => [1, 1, 1, 1],
     "u8_xnor" => [1, 1],
-    "u8_xor" => [1, 1],
+    "u8_xor" => [1, 1]
 )
 
 """Per-ELEMENT operand width for each `nary` arm — every element is consumed as this type."""
@@ -855,5 +855,5 @@ const PURE_OP_NARY_WIDTH = Dict{String, Int}(
     "u64_parity" => 8,
     "u8_and" => 1,
     "u8_or" => 1,
-    "u8_parity" => 1,
+    "u8_parity" => 1
 )

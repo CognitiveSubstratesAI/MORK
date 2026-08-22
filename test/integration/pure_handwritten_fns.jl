@@ -31,20 +31,23 @@
 using MORK, Test
 
 _hw_sym(s) = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(s))))],
-                  Vector{UInt8}(codeunits(String(s))))
-_hw_expr(items...) = vcat(UInt8[MORK.item_byte(MORK.ExprArity(UInt8(length(items))))], items...)
+    Vector{UInt8}(codeunits(String(s))))
+_hw_expr(items...) =
+    vcat(UInt8[MORK.item_byte(MORK.ExprArity(UInt8(length(items))))], items...)
 _hw(name, args...) = MORK.pure_apply(name, Vector{UInt8}[args...])
 _hw_str(name, args...) = String(_hw(name, args...))
 
 @testset "pure.rs hand-written extern fns" begin
     @testset "collapse_symbol — all three upstream Err paths" begin
         # (collapse_symbol ('(a b c))) => abc   [binary: (q_ok abc)]
-        @test _hw_str("collapse_symbol", _hw_expr(_hw_sym("a"), _hw_sym("b"), _hw_sym("c"))) == "abc"
+        @test _hw_str(
+            "collapse_symbol", _hw_expr(_hw_sym("a"), _hw_sym("b"), _hw_sym("c"))
+        ) == "abc"
 
         # A non-Symbol element is `Err("can only concat symbols in collapse")`, NOT a partial result.
         # (collapse_symbol ('(a (b c)))) => no atom.  We used to `break` and return "a".
         @test_throws Exception _hw("collapse_symbol",
-                                   _hw_expr(_hw_sym("a"), _hw_expr(_hw_sym("b"), _hw_sym("c"))))
+            _hw_expr(_hw_sym("a"), _hw_expr(_hw_sym("b"), _hw_sym("c"))))
 
         # A non-expression argument is `Err("argument should be an expression")`. Upstream prints a
         # stray `si [102, 111, 111]` and returns Err; we used to fall through to `reduce(vcat, a)` and
@@ -57,16 +60,18 @@ _hw_str(name, args...) = String(_hw(name, args...))
         # emitted nothing (q_over).
         a32, b31, b32 = "a"^32, "b"^31, "b"^32
         @test length(_hw("collapse_symbol", _hw_expr(_hw_sym(a32), _hw_sym(b31)))) == 63
-        @test _hw_str("collapse_symbol", _hw_expr(_hw_sym(a32), _hw_sym("b"^27))) == a32 * "b"^27
+        @test _hw_str("collapse_symbol", _hw_expr(_hw_sym(a32), _hw_sym("b"^27))) ==
+            a32 * "b"^27
         @test_throws Exception _hw("collapse_symbol", _hw_expr(_hw_sym(a32), _hw_sym(b32)))
     end
 
     @testset "explode_symbol / reverse_symbol / tuple" begin
         # (explode_symbol abc) => (a b c)
         @test _hw("explode_symbol", Vector{UInt8}("abc")) ==
-              _hw_expr(_hw_sym("a"), _hw_sym("b"), _hw_sym("c"))
+            _hw_expr(_hw_sym("a"), _hw_sym("b"), _hw_sym("c"))
         # Round trip, which is upstream's own test shape (main.rs:1130).
-        @test _hw_str("collapse_symbol", _hw("explode_symbol", Vector{UInt8}("abc"))) == "abc"
+        @test _hw_str("collapse_symbol", _hw("explode_symbol", Vector{UInt8}("abc"))) ==
+            "abc"
         # A symbol is parser-capped at 63 bytes, so the 6-bit Arity tag here can never overflow —
         # upstream truncates a 64- and 65-byte literal to 63 at PARSE time (measured: 62/63/64/65
         # bytes in gave 62/63/63/63 elements out). No guard is needed; this pins the reachable edge.
@@ -80,7 +85,7 @@ _hw_str(name, args...) = String(_hw(name, args...))
         @test _hw("tuple", _hw_sym("a")) == _hw_expr(_hw_sym("a"))
         # Each element is spliced VERBATIM, so a nested expression stays nested.
         @test _hw("tuple", _hw_sym("a"), _hw_expr(_hw_sym("b"), _hw_sym("c"))) ==
-              _hw_expr(_hw_sym("a"), _hw_expr(_hw_sym("b"), _hw_sym("c")))
+            _hw_expr(_hw_sym("a"), _hw_expr(_hw_sym("b"), _hw_sym("c")))
     end
 
     @testset "hex / base64url" begin
@@ -105,7 +110,8 @@ _hw_str(name, args...) = String(_hw(name, args...))
         # Julia's bare `parse` accepts these; Rust's `str::parse` does not, so we were emitting atoms
         # upstream never produces. Measured: `0x10` and `0b101` yielded 16 and 5 here and NO atom
         # upstream; `1_000` and `5abc` already agreed (both reject).
-        for bad in ("0x10", "0b101", "0o17", "1_000", "5abc", " 5", "5 ", "", "+", "-", "1e3")
+        for bad in
+            ("0x10", "0b101", "0o17", "1_000", "5abc", " 5", "5 ", "", "+", "-", "1e3")
             @test_throws Exception _hw("i64_from_string", Vector{UInt8}(bad))
         end
         @test _hw("i64_from_string", Vector{UInt8}("+5")) == MORK._be_bytes(Int64(5))
@@ -113,8 +119,10 @@ _hw_str(name, args...) = String(_hw(name, args...))
         @test _hw("i64_from_string", Vector{UInt8}("5")) == MORK._be_bytes(Int64(5))
         @test _hw("i8_from_string", Vector{UInt8}("127")) == MORK._be_bytes(Int8(127))
         @test_throws Exception _hw("i8_from_string", Vector{UInt8}("128"))   # overflow: Err both sides
-        @test _hw("i128_from_string", Vector{UInt8}("-170141183460469231731687303715884105728")) ==
-              MORK._be_bytes(typemin(Int128))
+        @test _hw(
+            "i128_from_string", Vector{UInt8}("-170141183460469231731687303715884105728")
+        ) ==
+            MORK._be_bytes(typemin(Int128))
 
         # FLOAT parsing is Rust-compatible as-is and is NOT narrowed by the guard above: the binary
         # accepts `NaN`, `inf` and the long form `infinity`, and so does Julia.
@@ -132,19 +140,21 @@ _hw_str(name, args...) = String(_hw(name, args...))
         #   (powi_f64 0.1 3)  = 3f 50 62 4d d2 f1 a9 fd
         #   (powi_f32 1.1 10) = 40 25 ff e3
         @test _hw("powi_f64", MORK._be_bytes(1.1), MORK._be_bytes(Int32(10))) ==
-              UInt8[0x40, 0x04, 0xbf, 0xfc, 0x0c, 0x03, 0x02, 0x3d]
+            UInt8[0x40, 0x04, 0xbf, 0xfc, 0x0c, 0x03, 0x02, 0x3d]
         @test _hw("powi_f64", MORK._be_bytes(0.1), MORK._be_bytes(Int32(3))) ==
-              UInt8[0x3f, 0x50, 0x62, 0x4d, 0xd2, 0xf1, 0xa9, 0xfd]
+            UInt8[0x3f, 0x50, 0x62, 0x4d, 0xd2, 0xf1, 0xa9, 0xfd]
         @test _hw("powi_f32", MORK._be_bytes(1.1f0), MORK._be_bytes(Int32(10))) ==
-              UInt8[0x40, 0x25, 0xff, 0xe3]
+            UInt8[0x40, 0x25, 0xff, 0xe3]
         # Shape properties of the chain: n=0 is 1.0 for every base, and a negative exponent is the
         # reciprocal of the positive one (`recip` in __powidf2), never a DomainError.
-        @test _hw("powi_f64", MORK._be_bytes(7.5), MORK._be_bytes(Int32(0))) == MORK._be_bytes(1.0)
-        @test _hw("powi_f64", MORK._be_bytes(2.0), MORK._be_bytes(Int32(-2))) == MORK._be_bytes(0.25)
+        @test _hw("powi_f64", MORK._be_bytes(7.5), MORK._be_bytes(Int32(0))) ==
+            MORK._be_bytes(1.0)
+        @test _hw("powi_f64", MORK._be_bytes(2.0), MORK._be_bytes(Int32(-2))) ==
+            MORK._be_bytes(0.25)
         # `b /= 2` truncates toward zero and `b & 1` is 1 for odd negatives, so typemin needs no
         # special case (an `abs`-based formulation would overflow here).
         @test _hw("powi_f64", MORK._be_bytes(1.0), MORK._be_bytes(typemin(Int32))) ==
-              MORK._be_bytes(1.0)
+            MORK._be_bytes(1.0)
     end
 end
 
@@ -158,20 +168,20 @@ end
     # and both are invisible to `pure_apply`:
     #   * every ARG is a complete EXPRESSION, not a raw payload
     #   * the RESULT is the encoded result expression — a symbol result carries its SymbolSize header
-    _s(x)  = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(x))))],
-                  Vector{UInt8}(codeunits(String(x))))
+    _s(x) = vcat(UInt8[MORK.item_byte(MORK.ExprSymbol(UInt8(length(x))))],
+        Vector{UInt8}(codeunits(String(x))))
     _e(xs...) = vcat(UInt8[MORK.item_byte(MORK.ExprArity(UInt8(length(xs))))], xs...)
-    _q(x)  = _e(_s("'"), x)
+    _q(x) = _e(_s("'"), x)
     _n(nm, a...) = MORK.pure_apply_native(nm, Vector{UInt8}[a...])
 
-    @test _n("encode_hex", _s("ab"))            == _s("6162")
-    @test _n("decode_hex", _s("6162"))          == _s("ab")
+    @test _n("encode_hex", _s("ab")) == _s("6162")
+    @test _n("decode_hex", _s("6162")) == _s("ab")
     # URL-safe and UNPADDED, the documented fix — standard base64 would give `YWJjZA==`
-    @test _n("encode_base64url", _s("abcd"))    == _s("YWJjZA")
-    @test _n("decode_base64url", _s("YWJjZA"))  == _s("abcd")
-    @test _n("reverse_symbol", _s("abc"))       == _s("cba")
-    @test _n("explode_symbol", _s("abc"))       == _e(_s("a"), _s("b"), _s("c"))
-    @test _n("tuple", _s("a"), _s("b"))         == _e(_s("a"), _s("b"))
+    @test _n("encode_base64url", _s("abcd")) == _s("YWJjZA")
+    @test _n("decode_base64url", _s("YWJjZA")) == _s("abcd")
+    @test _n("reverse_symbol", _s("abc")) == _s("cba")
+    @test _n("explode_symbol", _s("abc")) == _e(_s("a"), _s("b"), _s("c"))
+    @test _n("tuple", _s("a"), _s("b")) == _e(_s("a"), _s("b"))
     # hash_expr yields a 16-byte symbol (XXH3-128)
     @test length(_n("hash_expr", _s("a"))) == 17
     @test _n("hash_expr", _s("a"))[1] == MORK.item_byte(MORK.ExprSymbol(0x10))

@@ -13,7 +13,9 @@
 using MORK, Test
 
 _atoms(src) = begin
-    s = new_space(); space_add_all_sexpr!(s, src); space_metta_calculus!(s)
+    s = new_space()
+    space_add_all_sexpr!(s, src)
+    space_metta_calculus!(s)
     Set(strip(l) for l in split(space_dump_all_sexpr(s), '\n') if !isempty(strip(l)))
 end
 
@@ -22,12 +24,16 @@ end
     @test "done" in _atoms("(exec 0 (, \$x) (, done))")
 
     # Control_02: nested-exec chain bootstrapped by a bare-var outer pattern → exactly {0,1,2,3}.
-    a2 = _atoms("(exec 0 (, \$x) (, 0 (exec 0 (, 0) (, 1 (exec 0 (, 1) (, 2 (exec 0 (, 2) (, 3))))))))")
+    a2 = _atoms(
+        "(exec 0 (, \$x) (, 0 (exec 0 (, 0) (, 1 (exec 0 (, 1) (, 2 (exec 0 (, 2) (, 3))))))))"
+    )
     @test "0" in a2 && "1" in a2 && "2" in a2 && "3" in a2
 
     # Control_03: inner patterns match the never-present symbol `!`; each exec is consumed but writes
     # nothing, so ONLY the bootstrap `0` survives — 1/2/3 must be absent.
-    a3 = _atoms("(exec 0 (, \$x) (, 0 (exec 0 (, !) (, 1 (exec 0 (, !) (, 2 (exec 0 (, !) (, 3))))))))")
+    a3 = _atoms(
+        "(exec 0 (, \$x) (, 0 (exec 0 (, !) (, 1 (exec 0 (, !) (, 2 (exec 0 (, !) (, 3))))))))"
+    )
     @test "0" in a3
     @test !("1" in a3) && !("2" in a3) && !("3" in a3)
 
@@ -41,5 +47,7 @@ end
     @test "(out a)" in a && "(out b)" in a
 
     # Two-factor join, concrete heads — transitive step still correct.
-    @test "(path 1 3)" in _atoms("(e 1 2)\n(e 2 3)\n(exec 0 (, (e \$a \$b) (e \$b \$c)) (, (path \$a \$c)))")
+    @test "(path 1 3)" in _atoms(
+        "(e 1 2)\n(e 2 3)\n(exec 0 (, (e \$a \$b) (e \$b \$c)) (, (path \$a \$c)))"
+    )
 end

@@ -27,7 +27,7 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     # them back at the mercy of a suite that already failed to catch them once.
     if get(ENV, "MORK_SKIP_CONFORMANCE", "") == "1"
         @info "conformance corpus SKIPPED (MORK_SKIP_CONFORMANCE=1) — do not set this in CI"
-        return
+        return nothing
     end
 
     expected = Set{String}(strip(l) for l in eachline(baseline_path) if !isempty(strip(l)))
@@ -51,34 +51,38 @@ include(joinpath(@__DIR__, "..", "conformance", "run_conformance.jl"))
     # Cost: the ~70s corpus runs twice. That is the price of a flag never again deciding whether the
     # port gets checked at all.
     # [[feedback_differential_vs_upstream_binary]] · [[feedback_enforcement_works_prose_memory_does_not]]
-    for (engine, on) in (("ProductZipper (shipped default)", false), ("LEAPFROG JOIN", true))
+    for (engine, on) in
+        (("ProductZipper (shipped default)", false), ("LEAPFROG JOIN", true))
         prev = MORK.LEAPFROG_DISPATCH[]
         MORK.LEAPFROG_DISPATCH[] = on
         MORK.LEAPFROG_ROUTED[] = 0
         MORK.LEAPFROG_DECLINED[] = 0
         empty!(MORK.LEAPFROG_DECLINED_BODIES)
         try
-        passing, total, orphans = conformance_results()
-        # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
-        # corpus count look healthy while a probe silently does nothing.
-        isempty(orphans) || @info "conformance: .mm2 with NO .expected (inert, never run)" orphans
-        @test isempty(orphans)
+            passing, total, orphans = conformance_results()
+            # A .mm2 with no .expected is INERT — it never ran. Fail loudly rather than let the
+            # corpus count look healthy while a probe silently does nothing.
+            isempty(orphans) ||
+                @info "conformance: .mm2 with NO .expected (inert, never run)" orphans
+            @test isempty(orphans)
 
-        @test total > 0
-        @info "conformance corpus" engine total passing = length(passing) baseline = length(expected)
+            @test total > 0
+            @info "conformance corpus" engine total passing = length(passing) baseline = length(
+                expected
+            )
 
-        # (1) RATCHET — nothing that matched upstream may stop matching.
-        regressed = sort(collect(setdiff(expected, passing)))
-        if !isempty(regressed)
-            @error "CONFORMANCE REGRESSION — these probes matched upstream and no longer do" engine regressed
-        end
-        @test isempty(regressed)
+            # (1) RATCHET — nothing that matched upstream may stop matching.
+            regressed = sort(collect(setdiff(expected, passing)))
+            if !isempty(regressed)
+                @error "CONFORMANCE REGRESSION — these probes matched upstream and no longer do" engine regressed
+            end
+            @test isempty(regressed)
 
-        # (2) IMPROVEMENTS — informational, never a failure. Tighten the baseline when they appear.
-        improved = sort(collect(setdiff(passing, expected)))
-        isempty(improved) || @info(
-            "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
-            improved)
+            # (2) IMPROVEMENTS — informational, never a failure. Tighten the baseline when they appear.
+            improved = sort(collect(setdiff(passing, expected)))
+            isempty(improved) || @info(
+                "conformance IMPROVED — add these to test/conformance/EXPECTED_PASS.txt to lock them in",
+                improved)
             # ── 🔴 THE DECLINE RATE IS AN INVARIANT, NOT A STATISTIC ────────────────────────
             # `space_query_multi_leapfrog` returns `nothing` for a body it cannot represent, and the
             # dispatch then falls back. Upstream refuses to have that branch at all: "a violation is

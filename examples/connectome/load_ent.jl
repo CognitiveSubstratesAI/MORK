@@ -22,12 +22,13 @@
 using MORK
 using MORK: ExprArity, ExprSymbol, item_byte, byte_item
 using PathMap: read_zipper_at_path, zipper_to_next_val!, zipper_path, set_val_at!,
-               act_from_zipper, act_save, act_open_mmap
+    act_from_zipper, act_save, act_open_mmap
 
-const NEURON_HEAD   = codeunits("neuron")
+const NEURON_HEAD = codeunits("neuron")
 # prefix = (arity 7)(symbol "neuron") — the read-zipper anchor for all neuron atoms
-const NEURON_PREFIX = vcat(UInt8[item_byte(ExprArity(UInt8(7))), item_byte(ExprSymbol(UInt8(6)))],
-                           codeunits("neuron"))
+const NEURON_PREFIX = vcat(
+    UInt8[item_byte(ExprArity(UInt8(7))), item_byte(ExprSymbol(UInt8(6)))],
+    codeunits("neuron"))
 const N_NEURON_ARGS = 6   # id, flow, super_class, class, sub_class, side
 
 @inline function _push_sym!(buf::Vector{UInt8}, s::AbstractVector{UInt8})
@@ -46,7 +47,7 @@ function load_classification!(s::Space, csv_gz::AbstractString)::Int
     isfile(csv_gz) || error("classification csv not found: $csv_gz")
     btm = s.btm
     buf = UInt8[]
-    n   = 0
+    n = 0
     header_skipped = false
     for line in eachline(`zcat $csv_gz`)
         if !header_skipped
@@ -79,9 +80,11 @@ end
     pos = 1
     @inbounds for i in 1:k
         pos > length(rel) && return nothing
-        t = byte_item(rel[pos]); t isa ExprSymbol || return nothing
-        len = Int(t.size); pos + len > length(rel) && return nothing
-        out[i] = String(@view rel[pos+1:pos+len])
+        t = byte_item(rel[pos])
+        t isa ExprSymbol || return nothing
+        len = Int(t.size)
+        pos + len > length(rel) && return nothing
+        out[i] = String(@view rel[(pos + 1):(pos + len)])
         pos += 1 + len
     end
     out
@@ -108,7 +111,7 @@ end
 
 "All distinct (flow, class) modality keys present, with counts — for discovery."
 function modality_histogram(btm)
-    h = Dict{Tuple{String,String}, Int}()
+    h = Dict{Tuple{String, String}, Int}()
     rz = read_zipper_at_path(btm, NEURON_PREFIX)
     while zipper_to_next_val!(rz)
         fs = _parse_syms(collect(zipper_path(rz)), N_NEURON_ARGS)

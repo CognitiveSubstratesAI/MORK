@@ -22,7 +22,7 @@ function _lf_cursor(lines::Vector{String})
 end
 
 "Drain a cursor into the list of subterm byte-vectors it yields, checking invariants at each step."
-function _lf_drain!(c; limit::Int = 10_000)
+function _lf_drain!(c; limit::Int=10_000)
     out = Vector{UInt8}[]
     _LF.cursor_first!(c)
     n = 0
@@ -49,11 +49,11 @@ end
         @test all(_LF.is_complete(k) for k in got)
 
         # …and the set must be exactly what we stored, by bytes.
-        want = sort([MORK.sexpr_to_expr(a).buf for a in atoms], lt = (x, y) -> x < y)
+        want = sort([MORK.sexpr_to_expr(a).buf for a in atoms], lt=(x, y) -> x < y)
         @test got == want
 
         # ascending lexicographic, asserted directly rather than inferred from `want` being sorted
-        @test issorted(got, lt = (x, y) -> x < y)
+        @test issorted(got, lt=(x, y) -> x < y)
     end
 
     @testset "an empty trie yields nothing, and says so via at_end" begin
@@ -98,7 +98,9 @@ end
     @testset "seek is monotone: repeated seeks never go backwards" begin
         # The leapfrog's correctness rests on this. Each round it seeks every cursor to the current
         # maximum; if a seek could move a cursor BACKWARDS the loop would not terminate.
-        atoms = ["(edge a b)", "(edge a c)", "(edge b c)", "(node x)", "(node y)", "(zed q)"]
+        atoms = [
+            "(edge a b)", "(edge a c)", "(edge b c)", "(node x)", "(node y)", "(zed q)"
+        ]
         (_, c) = _lf_cursor(atoms)
         keys = _lf_drain!(c)
         @test length(keys) == 6

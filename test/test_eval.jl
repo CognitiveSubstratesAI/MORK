@@ -20,11 +20,15 @@ const M = MORK
 
 # Build the serialized argument buffer an upstream `ExprSource` would see for `(name a1 a2 …)`:
 # Arity(1 + nargs), the head Symbol, then each argument.
-_es_sym(bytes) = vcat(UInt8[M.item_byte(M.ExprSymbol(UInt8(length(bytes))))], Vector{UInt8}(bytes))
-_es_call2(items...) = vcat(UInt8[M.item_byte(M.ExprArity(UInt8(length(items))))], reduce(vcat, items; init = UInt8[]))
+_es_sym(bytes) =
+    vcat(UInt8[M.item_byte(M.ExprSymbol(UInt8(length(bytes))))], Vector{UInt8}(bytes))
+_es_call2(items...) = vcat(
+    UInt8[M.item_byte(M.ExprArity(UInt8(length(items))))],
+    reduce(vcat, items; init=UInt8[])
+)
 _es_call(name, args...) =
     vcat(UInt8[M.item_byte(M.ExprArity(UInt8(1 + length(args))))], _es_sym(name),
-         reduce(vcat, args; init = UInt8[]))
+        reduce(vcat, args; init=UInt8[]))
 
 "Run a registered op through its skeleton exactly as `eval_impl` would, returning the sink bytes."
 function _es_run(name::String, argbufs::Vector{Vector{UInt8}})
@@ -53,10 +57,14 @@ end
 
     @testset "op_skeleton drives a scalar numeric op end to end" begin
         # `(sub_i64 7 5)` — both operands are 8 big-endian bytes, result is a Symbol of 8 bytes.
-        out = _es_run("sub_i64", [_es_sym(M._be_bytes(Int64(7))), _es_sym(M._be_bytes(Int64(5)))])
+        out = _es_run(
+            "sub_i64", [_es_sym(M._be_bytes(Int64(7))), _es_sym(M._be_bytes(Int64(5)))]
+        )
         @test out == _es_sym(M._be_bytes(Int64(2)))
         # Width is the EXPRESSION's, not the operand's: comparisons return a 1-byte i8.
-        out = _es_run("lt_i64", [_es_sym(M._be_bytes(Int64(3))), _es_sym(M._be_bytes(Int64(5)))])
+        out = _es_run(
+            "lt_i64", [_es_sym(M._be_bytes(Int64(3))), _es_sym(M._be_bytes(Int64(5)))]
+        )
         @test out == _es_sym(UInt8[0x01])
         # nary with a seed and no arity check: zero args must emit the seed.
         @test _es_run("sum_i64", Vector{UInt8}[]) == _es_sym(M._be_bytes(Int64(0)))
@@ -67,9 +75,12 @@ end
         # Upstream: `if items != 2 { return Err("… takes two arguments") }`. Ported ops carry the
         # check in the SKELETON; calling with the wrong count must raise EvalError, not reach the body.
         @test_throws M.EvalError _es_run("sub_i64", [_es_sym(M._be_bytes(Int64(7)))])
-        @test_throws M.EvalError _es_run("sub_i64", [_es_sym(M._be_bytes(Int64(1))),
-                                                     _es_sym(M._be_bytes(Int64(2))),
-                                                     _es_sym(M._be_bytes(Int64(3)))])
+        @test_throws M.EvalError _es_run(
+            "sub_i64",
+            [_es_sym(M._be_bytes(Int64(1))),
+                _es_sym(M._be_bytes(Int64(2))),
+                _es_sym(M._be_bytes(Int64(3)))]
+        )
         # `nary` and `tuple` declare NO arity upstream, so any count is admissible.
         @test M.PURE_OP_ARITY["sum_i64"] === nothing
         @test M.PURE_OP_ARITY["tuple"] === nothing
@@ -78,11 +89,17 @@ end
     @testset "the skeleton converts Julia failures into EvalError" begin
         # Upstream returns Err(EvalError) and its caller SKIPS the atom (sinks.rs:1167). A raw
         # DivideError/DomainError escaping the sink would abort more than one row.
-        @test_throws M.EvalError _es_run("div_i64", [_es_sym(M._be_bytes(Int64(1))),
-                                                     _es_sym(M._be_bytes(Int64(0)))])
-        @test_throws M.EvalError _es_run("u8_shl", [_es_sym(UInt8[0x01]),
-                                                    _es_sym(M._be_bytes(Int32(8)))])
-        @test_throws M.EvalError _es_run("i64_from_string", [_es_sym(Vector{UInt8}("0x10"))])
+        @test_throws M.EvalError _es_run(
+            "div_i64", [_es_sym(M._be_bytes(Int64(1))),
+                _es_sym(M._be_bytes(Int64(0)))]
+        )
+        @test_throws M.EvalError _es_run(
+            "u8_shl", [_es_sym(UInt8[0x01]),
+                _es_sym(M._be_bytes(Int32(8)))]
+        )
+        @test_throws M.EvalError _es_run(
+            "i64_from_string", [_es_sym(Vector{UInt8}("0x10"))]
+        )
     end
 
     # ── the STACK MACHINE itself: eval / push_eval / eval_impl (ported 2026-07-30) ──
@@ -93,34 +110,44 @@ end
         @test ev(_es_sym("abc")) == _es_sym("abc")
 
         # Flat call: children land in the frame's sink, then the func runs over its own bytes.
-        @test ev(_es_call("sub_i64", _es_sym(M._be_bytes(Int64(7))),
-                          _es_sym(M._be_bytes(Int64(5))))) == _es_sym(M._be_bytes(Int64(2)))
+        @test ev(
+            _es_call("sub_i64", _es_sym(M._be_bytes(Int64(7))),
+                _es_sym(M._be_bytes(Int64(5))))
+        ) == _es_sym(M._be_bytes(Int64(2)))
 
         # NESTED: the inner frame's result is written into the OUTER frame's sink before the outer
         # func runs. This is the property that makes evaluation bottom-up and therefore EAGER.
-        inner = _es_call("sum_i64", _es_sym(M._be_bytes(Int64(10))), _es_sym(M._be_bytes(Int64(2))))
+        inner = _es_call(
+            "sum_i64", _es_sym(M._be_bytes(Int64(10))), _es_sym(M._be_bytes(Int64(2)))
+        )
         @test ev(_es_call("sub_i64", inner, _es_sym(M._be_bytes(Int64(5))))) ==
-              _es_sym(M._be_bytes(Int64(7)))
+            _es_sym(M._be_bytes(Int64(7)))
 
         # Two nested children, so `rest` accounting is exercised on both.
-        @test ev(_es_call("sub_i64",
-                          _es_call("sum_i64", _es_sym(M._be_bytes(Int64(10))),
-                                   _es_sym(M._be_bytes(Int64(5)))),
-                          _es_call("sum_i64", _es_sym(M._be_bytes(Int64(1))),
-                                   _es_sym(M._be_bytes(Int64(2)))))) ==
-              _es_sym(M._be_bytes(Int64(12)))
+        @test ev(
+            _es_call("sub_i64",
+                _es_call("sum_i64", _es_sym(M._be_bytes(Int64(10))),
+                    _es_sym(M._be_bytes(Int64(5)))),
+                _es_call("sum_i64", _es_sym(M._be_bytes(Int64(1))),
+                    _es_sym(M._be_bytes(Int64(2)))))
+        ) ==
+            _es_sym(M._be_bytes(Int64(12)))
 
         # nary with 0 args inside a call: the seed must reach the parent.
-        @test ev(_es_call("sub_i64", _es_call("sum_i64"), _es_sym(M._be_bytes(Int64(3))))) ==
-              _es_sym(M._be_bytes(Int64(-3)))
+        @test ev(
+            _es_call("sub_i64", _es_call("sum_i64"), _es_sym(M._be_bytes(Int64(3))))
+        ) ==
+            _es_sym(M._be_bytes(Int64(-3)))
 
         # An unregistered head is upstream's `Err("unknown function")`.
         @test_throws M.EvalError ev(_es_call("bogus_op_xyz", _es_sym("a")))
         # An error ANYWHERE in the tree propagates out of eval (=> the caller skips the atom).
-        @test_throws M.EvalError ev(_es_call("sub_i64",
-                                             _es_call("div_i64", _es_sym(M._be_bytes(Int64(1))),
-                                                      _es_sym(M._be_bytes(Int64(0)))),
-                                             _es_sym(M._be_bytes(Int64(5)))))
+        @test_throws M.EvalError ev(
+            _es_call("sub_i64",
+                _es_call("div_i64", _es_sym(M._be_bytes(Int64(1))),
+                    _es_sym(M._be_bytes(Int64(0)))),
+                _es_sym(M._be_bytes(Int64(5))))
+        )
 
         # quote splices its argument VERBATIM, so nesting survives and the head is not called.
         quoted = _es_call("'", _es_call("b", _es_sym("c")))
@@ -144,31 +171,43 @@ end
 
         # tuple: Arity(items) then each element's WHOLE span, so NESTING SURVIVES.
         @test ev(_es_call("tuple", _es_sym("a"), _es_sym("b"))) ==
-              _es_call2(_es_sym("a"), _es_sym("b"))
+            _es_call2(_es_sym("a"), _es_sym("b"))
         @test ev(_es_call("tuple")) == UInt8[M.item_byte(M.ExprArity(UInt8(0)))]
-        nested = ev(_es_call("tuple", _es_sym("a"), quote_of(_es_call2(_es_sym("b"), _es_sym("c")))))
+        nested = ev(
+            _es_call("tuple", _es_sym("a"), quote_of(_es_call2(_es_sym("b"), _es_sym("c"))))
+        )
         @test nested == _es_call2(_es_sym("a"), _es_call2(_es_sym("b"), _es_sym("c")))
         @test M.byte_item(nested[1]) isa M.ExprArity      # an EXPRESSION, not a flattened symbol
 
         # collapse_symbol consumes an EXPRESSION of symbols (this is what op_skeleton could not do).
-        @test ev(_es_call("collapse_symbol",
-                          quote_of(_es_call2(_es_sym("a"), _es_sym("b"), _es_sym("c"))))) ==
-              _es_sym("abc")
+        @test ev(
+            _es_call("collapse_symbol",
+                quote_of(_es_call2(_es_sym("a"), _es_sym("b"), _es_sym("c"))))
+        ) ==
+            _es_sym("abc")
         # …and enforces upstream's `i + len >= 64` cap, so 63 bytes is the maximum TOTAL.
-        @test length(ev(_es_call("collapse_symbol",
-                                 quote_of(_es_call2(_es_sym("a"^32), _es_sym("b"^31)))))) == 64
-        @test_throws M.EvalError ev(_es_call("collapse_symbol",
-                                             quote_of(_es_call2(_es_sym("a"^32), _es_sym("b"^32)))))
+        @test length(
+            ev(
+                _es_call("collapse_symbol",
+                    quote_of(_es_call2(_es_sym("a"^32), _es_sym("b"^31))))
+            )
+        ) == 64
+        @test_throws M.EvalError ev(
+            _es_call("collapse_symbol",
+                quote_of(_es_call2(_es_sym("a"^32), _es_sym("b"^32))))
+        )
         # a non-Symbol element is an Err, NOT a partial result
-        @test_throws M.EvalError ev(_es_call("collapse_symbol",
-                                             quote_of(_es_call2(_es_sym("a"),
-                                                                _es_call2(_es_sym("b"))))))
+        @test_throws M.EvalError ev(
+            _es_call("collapse_symbol",
+                quote_of(_es_call2(_es_sym("a"),
+                    _es_call2(_es_sym("b")))))
+        )
 
         # explode_symbol produces an EXPRESSION; round-trips with collapse_symbol.
         @test ev(_es_call("explode_symbol", _es_sym("abc"))) ==
-              _es_call2(_es_sym("a"), _es_sym("b"), _es_sym("c"))
+            _es_call2(_es_sym("a"), _es_sym("b"), _es_sym("c"))
         @test ev(_es_call("collapse_symbol", _es_call("explode_symbol", _es_sym("abc")))) ==
-              _es_sym("abc")
+            _es_sym("abc")
 
         @test ev(_es_call("reverse_symbol", _es_sym("abc"))) == _es_sym("cba")
         @test ev(_es_call("encode_hex", _es_sym("aa"))) == _es_sym("6161")
@@ -183,21 +222,31 @@ end
 
         # ifnz SELECTS between branches the machine has ALREADY evaluated (hence eager).
         one, zero = _es_sym(UInt8[0x01]), _es_sym(UInt8[0x00])
-        @test ev(_es_call("ifnz", one, _es_sym("then"), _es_sym("A"),
-                          _es_sym("else"), _es_sym("B"))) == _es_sym("A")
-        @test ev(_es_call("ifnz", zero, _es_sym("then"), _es_sym("A"),
-                          _es_sym("else"), _es_sym("B"))) == _es_sym("B")
+        @test ev(
+            _es_call("ifnz", one, _es_sym("then"), _es_sym("A"),
+                _es_sym("else"), _es_sym("B"))
+        ) == _es_sym("A")
+        @test ev(
+            _es_call("ifnz", zero, _es_sym("then"), _es_sym("A"),
+                _es_sym("else"), _es_sym("B"))
+        ) == _es_sym("B")
         @test ev(_es_call("ifnz", one, _es_sym("then"), _es_sym("A"))) == _es_sym("A")
         # zero condition with no else is upstream's Err("ifnz no else branch")
         @test_throws M.EvalError ev(_es_call("ifnz", zero, _es_sym("then"), _es_sym("A")))
         # arity must be exactly 3 or 5 — the malformed 4-arg shape is rejected
-        @test_throws M.EvalError ev(_es_call("ifnz", one, _es_sym("then"), _es_sym("A"),
-                                             _es_sym("B")))
+        @test_throws M.EvalError ev(
+            _es_call("ifnz", one, _es_sym("then"), _es_sym("A"),
+                _es_sym("B"))
+        )
         # a multi-byte condition is false only when EVERY byte is zero
-        @test ev(_es_call("ifnz", _es_sym(UInt8[0x00, 0x00]), _es_sym("then"), _es_sym("A"),
-                          _es_sym("else"), _es_sym("B"))) == _es_sym("B")
-        @test ev(_es_call("ifnz", _es_sym(UInt8[0x00, 0x01]), _es_sym("then"), _es_sym("A"),
-                          _es_sym("else"), _es_sym("B"))) == _es_sym("A")
+        @test ev(
+            _es_call("ifnz", _es_sym(UInt8[0x00, 0x00]), _es_sym("then"), _es_sym("A"),
+                _es_sym("else"), _es_sym("B"))
+        ) == _es_sym("B")
+        @test ev(
+            _es_call("ifnz", _es_sym(UInt8[0x00, 0x01]), _es_sym("then"), _es_sym("A"),
+                _es_sym("else"), _es_sym("B"))
+        ) == _es_sym("A")
     end
 end
 

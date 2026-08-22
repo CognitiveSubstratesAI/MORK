@@ -4,12 +4,12 @@ using PathMap
 # Aqua is test-only [extras]: present under Pkg.test/CI but NOT in a plain
 # `julia --project=. test/runtests.jl` run (no sandbox). Load optionally.
 const _HAS_AQUA = try
-    ;
-    @eval using Aqua;
-    true;
+
+    @eval using Aqua
+    true
 catch
-    ;
-    false;
+
+    false
 end
 # PathMap module and PathMap type share the same name — alias the type
 const PM = PathMap.PathMap
@@ -580,13 +580,13 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "Utils — ByteMask Lattice (pjoin / pmeet / psubtract)" begin
             a = ByteMask()
-            a = set(a, UInt8(1));
-            a = set(a, UInt8(3));
+            a = set(a, UInt8(1))
+            a = set(a, UInt8(3))
             a = set(a, UInt8(5))
 
             b = ByteMask()
-            b = set(b, UInt8(3));
-            b = set(b, UInt8(5));
+            b = set(b, UInt8(3))
+            b = set(b, UInt8(5))
             b = set(b, UInt8(7))
 
             # pjoin = union; has both a's and b's bits
@@ -1269,7 +1269,7 @@ const _MORK_TS = @testset "MORK" begin
             tiny = TinyRefNode(false, collect(UInt8, "xyz"), ValOrChild(2), GlobalAlloc())
             r = pjoin_dyn(lln, tiny)
             @test r isa AlgResElement
-            m = PM{Int}();
+            m = PM{Int}()
             m.root = r.value
             @test get_val_at(m, collect(UInt8, "abc")) == 1
             @test get_val_at(m, collect(UInt8, "xyz")) == 2
@@ -1402,9 +1402,9 @@ const _MORK_TS = @testset "MORK" begin
             n = LineListNode{Int, GlobalAlloc}(GlobalAlloc())
             node_set_val!(n, UInt8[0x61], 5)
             # pmeet of node with itself (same content) via PathMap
-            m1 = PM{Int}();
+            m1 = PM{Int}()
             set_val_at!(m1, "a", 5)
-            m2 = PM{Int}();
+            m2 = PM{Int}()
             set_val_at!(m2, "a", 5)
             r = pmeet(m1.root, m2.root)
             @test r isa AlgResIdentity || (r isa AlgResElement && get_val_at(m1, "a") == 5)
@@ -1412,11 +1412,11 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "LineListNode — pmeet_dyn intersection: common key wins" begin
             # a has "a"→3, "b"→7 ; b has "a"→5, "c"→9 ; meet = "a"→min(3,5)=3
-            m1 = PM{Int}();
-            set_val_at!(m1, "a", 3);
+            m1 = PM{Int}()
+            set_val_at!(m1, "a", 3)
             set_val_at!(m1, "b", 7)
-            m2 = PM{Int}();
-            set_val_at!(m2, "a", 5);
+            m2 = PM{Int}()
+            set_val_at!(m2, "a", 5)
             set_val_at!(m2, "c", 9)
             r = pmeet(m1.root, m2.root)
             # result contains only key "a" with value min(3,5)=3
@@ -1433,9 +1433,9 @@ const _MORK_TS = @testset "MORK" begin
         end
 
         @testset "LineListNode — pmeet_dyn disjoint keys → None" begin
-            m1 = PM{Int}();
+            m1 = PM{Int}()
             set_val_at!(m1, "a", 1)
-            m2 = PM{Int}();
+            m2 = PM{Int}()
             set_val_at!(m2, "b", 2)
             r = pmeet(m1.root, m2.root)
             @test r isa AlgResNone
@@ -1555,8 +1555,8 @@ const _MORK_TS = @testset "MORK" begin
     end
 
     @testset "BridgeNode (ports bridge_node.rs)" begin
-        V = Int;
-        A = GlobalAlloc;
+        V = Int
+        A = GlobalAlloc
         alloc = GlobalAlloc()
 
         @testset "BridgeNode — short key val round-trip" begin
@@ -2358,8 +2358,8 @@ const _MORK_TS = @testset "MORK" begin
     end
 
     @testset "WriteZipper and PathMap write API (ports pathmap/src/write_zipper.rs)" begin
-        V = Int;
-        A = GlobalAlloc;
+        V = Int
+        A = GlobalAlloc
         alloc = GlobalAlloc()
 
         # ------------------------------------------------------------------
@@ -2694,10 +2694,10 @@ const _MORK_TS = @testset "MORK" begin
             res = wz_join_k_path_into!(z, 2)
             @test res == true
             # After dropping 2 bytes, only 0x03 and 0x04 remain
-            n = 0;
+            n = 0
             rz = read_zipper(m)
             while zipper_to_next_val!(rz)
-                ;
+
                 n += 1
             end
             @test n == 2
@@ -2920,8 +2920,8 @@ const _MORK_TS = @testset "MORK" begin
             keys = ["Hello", "Hell", "Help", "Helsinki"]
             m = PM{UnitVal}()
             for k in keys
-                ;
-                set_val_at!(m, collect(UInt8, k), UNIT_VAL);
+
+                set_val_at!(m, collect(UInt8, k), UNIT_VAL)
             end
 
             tr0 = trie_ref_at_path(m, collect(UInt8, "H"))
@@ -3041,8 +3041,8 @@ const _MORK_TS = @testset "MORK" begin
                 m = PM{Int}()
                 words = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus"]
                 for (i, w) in enumerate(words)
-                    ;
-                    set_val_at!(m, collect(UInt8, w), i);
+
+                    set_val_at!(m, collect(UInt8, w), i)
                 end
 
                 postfix_m = PM{Int}()
@@ -3112,8 +3112,8 @@ const _MORK_TS = @testset "MORK" begin
                     "ruber"
                 ]
                 for w in words
-                    ;
-                    set_val_at!(m, collect(UInt8, w), UNIT_VAL);
+
+                    set_val_at!(m, collect(UInt8, w), UNIT_VAL)
                 end
 
                 buf = IOBuffer()
@@ -3136,8 +3136,8 @@ const _MORK_TS = @testset "MORK" begin
                 m = PM{Int}()
                 pairs = [("a", 1), ("b", 2), ("ba", 3)]
                 for (w, v) in pairs
-                    ;
-                    set_val_at!(m, collect(UInt8, w), v);
+
+                    set_val_at!(m, collect(UInt8, w), v)
                 end
 
                 collected_vals = Int[]
@@ -3217,8 +3217,8 @@ const _MORK_TS = @testset "MORK" begin
                 @test act_child_count(z) >= 1
                 vals = UInt64[]
                 while act_to_next_val!(z)
-                    ;
-                    push!(vals, act_val(z));
+
+                    push!(vals, act_val(z))
                 end
                 @test sort(vals) == [1, 2, 3]
             end
@@ -3321,8 +3321,8 @@ const _MORK_TS = @testset "MORK" begin
                 @test pz_factor_count(pz) == 1
                 vals = Int[]
                 while pz_to_next_val!(pz)
-                    ;
-                    push!(vals, pz_val(pz));
+
+                    push!(vals, pz_val(pz))
                 end
                 @test sort(vals) == [1, 2]
             end
@@ -3720,11 +3720,11 @@ const _MORK_TS = @testset "MORK" begin
             leaked_raw = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
                 try
-                    ;
-                    try_acquire_permission(h);
-                    error("boom");
+
+                    try_acquire_permission(h)
+                    error("boom")
                 catch
-                    ;
+
                 end
                 get(task_local_storage(), :mork_thread_idx, nothing)
             end)
@@ -3732,13 +3732,13 @@ const _MORK_TS = @testset "MORK" begin
             released = fetch(Threads.@spawn begin
                 h = SharedMappingHandle()
                 try
-                    ;
+
                     with_write_permit(h) do _
-                        ;
-                        error("boom");
-                    end;
+
+                        error("boom")
+                    end
                 catch
-                    ;
+
                 end
                 get(task_local_storage(), :mork_thread_idx, nothing)
             end)
@@ -3757,18 +3757,18 @@ const _MORK_TS = @testset "MORK" begin
                 h = SharedMappingHandle()
                 for k in 1:100
                     wb = Vector{UInt8}("iw_$(k)")
-                    ready = Threads.Atomic{Int}(0);
+                    ready = Threads.Atomic{Int}(0)
                     ts = Vector{Task}(undef, 8)
                     for t in 1:8
                         ts[t] = Threads.@spawn begin
-                            Threads.atomic_add!(ready, 1);
+                            Threads.atomic_add!(ready, 1)
                             while ready[] < 8
-                                ;
-                                yield();
+
+                                yield()
                             end
                             with_write_permit(h) do wp
-                                ;
-                                get_sym_or_insert!(wp, wb);
+
+                                get_sym_or_insert!(wp, wb)
                             end
                         end
                     end
@@ -4108,9 +4108,10 @@ const _MORK_TS = @testset "MORK" begin
             # (counter (S $N)) is unsatisfiable, so the exec must fail-and-halt. Regression
             # for the dangling-path bug: a non-pruning remove_val_at! left removed atoms
             # queryable, so the conjunction kept matching them and the loop never halted.
-            src = "(counter (S (S (S Z))))\n" *
-                  "(exec LOOP (, (counter (S \$N)) (exec LOOP \$p \$t)) " *
-                  "(O (+ (exec LOOP \$p \$t)) (+ (counter \$N)) (- (counter (S \$N)))))\n"
+            src =
+                "(counter (S (S (S Z))))\n" *
+                "(exec LOOP (, (counter (S \$N)) (exec LOOP \$p \$t)) " *
+                "(O (+ (exec LOOP \$p \$t)) (+ (counter \$N)) (- (counter (S \$N)))))\n"
             result = _mc(src, 1000)          # _mc asserts steps < cap (no infinite loop)
             @test occursin("(counter Z)", result)
         end
@@ -4121,8 +4122,9 @@ const _MORK_TS = @testset "MORK" begin
             # per-match immediate removal, an atom added by one (a,b) match and removed by a later
             # one survives or dies by match ORDER: {a,b,c}\{b,c,d} gave the phantom {a,c} instead
             # of {a}. RemoveSink is now accumulating (_is_accumulating_sink), so removes win.
-            src = "(arg_a a)\n(arg_a b)\n(arg_a c)\n(arg_b b)\n(arg_b c)\n(arg_b d)\n" *
-                  "(exec 0 (, (arg_a \$a) (arg_b \$b)) (O (+ (ret \$a)) (- (ret \$b))))\n"
+            src =
+                "(arg_a a)\n(arg_a b)\n(arg_a c)\n(arg_b b)\n(arg_b c)\n(arg_b d)\n" *
+                "(exec 0 (, (arg_a \$a) (arg_b \$b)) (O (+ (ret \$a)) (- (ret \$b))))\n"
             result = _mc(src, 1000)
             @test occursin("(ret a)", result)
             @test !occursin("(ret b)", result)
@@ -4151,7 +4153,7 @@ const _MORK_TS = @testset "MORK" begin
                 "(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (OUT (\$x != \$y)) ))\n"
             )
             for p in ["(OUT (X != Y))", "(OUT (X != Z))", "(OUT (Y != X))",
-                      "(OUT (Y != Z))", "(OUT (Z != X))", "(OUT (Z != Y))"]
+                "(OUT (Y != Z))", "(OUT (Z != X))", "(OUT (Z != Y))"]
                 @test occursin(p, result)
             end
             @test !occursin("(X != X)", result)   # an element is never != itself
@@ -4170,15 +4172,19 @@ const _MORK_TS = @testset "MORK" begin
                 space_backup_tree(act_s, joinpath(dir, "simple.act"))
                 # (ACT …) source reads the backed-up tree
                 s = new_space()
-                space_add_all_sexpr!(s, "(exec 0 (I (ACT simple (fact \$x))) (, (got \$x)))\n")
+                space_add_all_sexpr!(
+                    s, "(exec 0 (I (ACT simple (fact \$x))) (, (got \$x)))\n"
+                )
                 space_metta_calculus!(s, 1000)
                 d = space_dump_all_sexpr(s)
-                @test occursin("(got a)", d) && occursin("(got b)", d) && occursin("(got c)", d)
+                @test occursin("(got a)", d) && occursin("(got b)", d) &&
+                    occursin("(got c)", d)
                 # backup_tree → restore_tree! round-trip
                 s2 = new_space()
                 space_restore_tree!(s2, joinpath(dir, "simple.act"))
                 d2 = space_dump_all_sexpr(s2)
-                @test occursin("(fact a)", d2) && occursin("(fact b)", d2) && occursin("(fact c)", d2)
+                @test occursin("(fact a)", d2) && occursin("(fact b)", d2) &&
+                    occursin("(fact c)", d2)
             finally
                 MORK.ACT_PATH[] = old
             end
@@ -4942,8 +4948,8 @@ const _MORK_TS = @testset "MORK" begin
         # The *_ternarylogic ops ignored x, y, AND the selector (they rebuilt z) — and
         # u128_ternarylogic truncated to u64. Fixed via the general vpternlog
         # _ternarylogic (8-minterm LUT ≡ upstream 256-case ternary_table).
-        x = UInt8(0b11001010);
-        y = UInt8(0b10110100);
+        x = UInt8(0b11001010)
+        y = UInt8(0b10110100)
         z = UInt8(0b01101001)
         tl(s) = only(
             MORK.pure_apply("u8_ternarylogic",
@@ -5019,26 +5025,26 @@ const _MORK_TS = @testset "MORK" begin
         # two impls so they cannot silently drift apart (S-1: 3 competing span impls).
         A(n) = item_byte(ExprArity(UInt8(n)))
         Sy(s) = vcat(item_byte(ExprSymbol(UInt8(length(s)))), Vector{UInt8}(codeunits(s)))
-        NV() = item_byte(ExprNewVar());
+        NV() = item_byte(ExprNewVar())
         VR(i) = item_byte(ExprVarRef(UInt8(i)))
         function starts!(buf, off, acc)
             off > length(buf) && return off
-            push!(acc, off);
+            push!(acc, off)
             t = byte_item(buf[off])
             if t isa ExprSymbol
-                ;
+
                 return off + 1 + Int(t.size)
             elseif t isa ExprArity
-                ;
-                cur = off + 1;
+
+                cur = off + 1
                 for _ in 1:Int(t.arity)
-                    ;
-                    cur = starts!(buf, cur, acc);
-                end;
+
+                    cur = starts!(buf, cur, acc)
+                end
                 return cur
             else
-                ;
-                return off + 1;
+
+                return off + 1
             end
         end
         bufs = [vcat(A(2), Sy("a"), Sy("b")), vcat(A(2), Sy("a"), A(2), Sy("b"), Sy("c")),
@@ -5048,8 +5054,8 @@ const _MORK_TS = @testset "MORK" begin
                 A(3), Sy("f"), A(2), Sy("g"), NV(), VR(2)
             )]
         for buf in bufs
-            e = MORK.Expr(buf);
-            acc = Int[];
+            e = MORK.Expr(buf)
+            acc = Int[]
             starts!(buf, 1, acc)
             for off in acc
                 @test off + length(MORK.expr_span(e, off)) ==

@@ -23,24 +23,31 @@ _env(i::Int) = MORK.ExprEnv(UInt8(i % 64), MORK.Expr(UInt8[0xC1, UInt8(0x61 + (i
 
         # A deliberately awkward schedule: repeats, deletes of absent keys, re-inserts over
         # existing keys, and keys spread across namespaces so the slab has to grow more than once.
-        keys_used = _BV[(UInt8(n), UInt8(v)) for n in (0, 1, 5, 0, 2) for v in (0, 1, 63, 7)]
+        keys_used = _BV[
+            (UInt8(n), UInt8(v)) for n in (0, 1, 5, 0, 2) for v in (0, 1, 63, 7)
+        ]
         ops = 0
         for round in 1:3, (i, k) in enumerate(keys_used)
             e = _env(i + round)
             # insert (sometimes over an existing key)
-            d[k] = e; b[k] = e; ops += 1
+            d[k] = e
+            b[k] = e
+            ops += 1
             @test length(b) == length(d)
             @test haskey(b, k) == haskey(d, k)
             @test b[k] === d[k]
 
             # delete every third, including some that are already gone
             if i % 3 == 0
-                delete!(d, k); delete!(b, k); ops += 1
+                delete!(d, k)
+                delete!(b, k)
+                ops += 1
                 @test length(b) == length(d)
                 @test haskey(b, k) == haskey(d, k)
                 @test get(b, k, nothing) === get(d, k, nothing)
                 # deleting again must be a no-op on both
-                delete!(d, k); delete!(b, k)
+                delete!(d, k)
+                delete!(b, k)
                 @test length(b) == length(d)
             end
         end
@@ -62,14 +69,16 @@ _env(i::Int) = MORK.ExprEnv(UInt8(i % 64), MORK.Expr(UInt8[0xC1, UInt8(0x61 + (i
 
         # The index is (n << 6) | v. These are the corners: first slot, last slot of namespace 0,
         # first slot of namespace 1 — a wrong shift or mask collides two of them.
-        a = _env(1); c = _env(2); e = _env(3)
-        b[(UInt8(0), UInt8(0))]  = a
+        a = _env(1)
+        c = _env(2)
+        e = _env(3)
+        b[(UInt8(0), UInt8(0))] = a
         b[(UInt8(0), UInt8(63))] = c
-        b[(UInt8(1), UInt8(0))]  = e
+        b[(UInt8(1), UInt8(0))] = e
         @test length(b) == 3                            # ⇐ a collision would make this 2
-        @test b[(UInt8(0), UInt8(0))]  === a
+        @test b[(UInt8(0), UInt8(0))] === a
         @test b[(UInt8(0), UInt8(63))] === c
-        @test b[(UInt8(1), UInt8(0))]  === e
+        @test b[(UInt8(1), UInt8(0))] === e
     end
 
     @testset "growth across namespaces leaves no undefined slot" begin
@@ -88,8 +97,10 @@ _env(i::Int) = MORK.ExprEnv(UInt8(i % 64), MORK.Expr(UInt8[0xC1, UInt8(0x61 + (i
 
     @testset "copy is independent, and shares immutable values" begin
         b = MORK.Bindings()
-        k1 = (UInt8(0), UInt8(1)); k2 = (UInt8(2), UInt8(3))
-        e1 = _env(1); b[k1] = e1
+        k1 = (UInt8(0), UInt8(1))
+        k2 = (UInt8(2), UInt8(3))
+        e1 = _env(1)
+        b[k1] = e1
         c = copy(b)
         @test length(c) == 1 && c[k1] === e1            # values shared: ExprEnv is immutable
 
@@ -103,7 +114,9 @@ _env(i::Int) = MORK.ExprEnv(UInt8(i % 64), MORK.Expr(UInt8[0xC1, UInt8(0x61 + (i
 
     @testset "empty! clears both the slab and the touched list" begin
         b = MORK.Bindings()
-        for n in 0:3, v in 0:5; b[(UInt8(n), UInt8(v))] = _env(n * 6 + v); end
+        for n in 0:3, v in 0:5
+            b[(UInt8(n), UInt8(v))] = _env(n * 6 + v)
+        end
         @test length(b) == 24
         empty!(b)
         @test isempty(b) && length(b) == 0

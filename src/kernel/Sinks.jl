@@ -119,7 +119,7 @@ function _sink_prefix(e::MORK.Expr)::Vector{UInt8}
         tag = try
             byte_item(b)
         catch
-            ;
+
             break
         end
         if tag isa ExprNewVar || tag isa ExprVarRef
@@ -192,11 +192,15 @@ function sink_request end
 
 # `skip` bytes of `(<keyword>` header, and whether the GROUND fallback drops the final byte.
 function _sink_root(e::MORK.Expr, skip::Int, ground_minus_one::Bool)::Vector{UInt8}
-    buf = e.buf; n = length(buf); i = 1; varpos = 0
+    buf = e.buf
+    n = length(buf)
+    i = 1
+    varpos = 0
     while i <= n
         t = byte_item(buf[i])
         if t isa ExprNewVar || t isa ExprVarRef
-            varpos = i; break
+            varpos = i
+            break
         elseif t isa ExprSymbol
             i += 1 + Int(t.size)
         else
@@ -457,16 +461,18 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
     # <source> slots occur there so each of the three branches can be tested independently
     # (upstream's three `if`s are not mutually exclusive — sinks.rs:584/595/603).
     counts = Dict{Vector{UInt8}, Int}()
-    slots  = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
-    order  = Vector{Vector{UInt8}}()
-    root   = sink_request(s)                             # upstream's `request()` write root
+    slots = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
+    order = Vector{Vector{UInt8}}()
+    root = sink_request(s)                             # upstream's `request()` write root
     rz = read_zipper(s.unique)
     while zipper_to_next_val!(rz)
-        parsed = _redsink_parse_entry(collect(zipper_path(rz)); symbol_value = false)
+        parsed = _redsink_parse_entry(collect(zipper_path(rz)); symbol_value=false)
         parsed === nothing && continue
         (rbytes, source, _value) = parsed
         if !haskey(counts, rbytes)
-            push!(order, rbytes); counts[rbytes] = 0; slots[rbytes] = Vector{UInt8}[]
+            push!(order, rbytes)
+            counts[rbytes] = 0
+            slots[rbytes] = Vector{UInt8}[]
         end
         counts[rbytes] += 1
         source in slots[rbytes] || push!(slots[rbytes], source)
@@ -475,15 +481,20 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
     changed = false
     for rbytes in order
         cnt_str = string(counts[rbytes])
-        cnt_sym = vcat(item_byte(ExprSymbol(UInt8(ncodeunits(cnt_str)))), Vector{UInt8}(cnt_str))
+        cnt_sym = vcat(
+            item_byte(ExprSymbol(UInt8(ncodeunits(cnt_str)))), Vector{UInt8}(cnt_str)
+        )
         for source in slots[rbytes]
             t = byte_item(source[1])
             out = if t isa ExprNewVar
                 rbytes                                   # branch 2 — ignored guard
             elseif t isa ExprVarRef
                 k = Int(t.idx)                           # branch 3 — substitute at index k, re-basing
-                k < _expr_newvars(rbytes, 1, length(rbytes)) ?
-                    _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, cnt_sym) : nothing
+                if k < _expr_newvars(rbytes, 1, length(rbytes))
+                    _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, cnt_sym)
+                else
+                    nothing
+                end
             else
                 source == cnt_sym ? rbytes : nothing     # branch 1 — fixed literal
             end
@@ -494,7 +505,7 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
             # the sink expression's first variable sits inside the result. When the result is
             # ground the root runs past it into the source slot and prepending is wrong.
             if out !== nothing && !isempty(root) && !(t isa ExprVarRef) &&
-               length(root) < length(out) && view(out, 1:length(root)) == root
+                length(root) < length(out) && view(out, 1:length(root)) == root
                 out = vcat(root, out)
             end
             out === nothing && continue
@@ -544,7 +555,7 @@ end
 # symbol there. CountSink only COUNTS entries and never looks at the value, which is routinely a
 # compound expression (`(count (all $k) $k (cux $z $y $x))`); requiring a symbol there silently dropped
 # every entry and made the count 0 (caught by the mode-1/2/3 regressions, 2026-07-26).
-function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
+function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool=true)
     isempty(p) && return nothing
     rspan = expr_span(MORK.Expr(p), 1)              # first complete sub-expression = <result>
     i = length(rspan) + 1
@@ -560,7 +571,8 @@ function _redsink_parse_entry(p::Vector{UInt8}; symbol_value::Bool = true)
     else
         tx = byte_item(p[j])
         if tx isa ExprSymbol
-            xsz = Int(tx.size); j + xsz <= length(p) || return nothing
+            xsz = Int(tx.size)
+            j + xsz <= length(p) || return nothing
             Vector{UInt8}(p[(j + 1):(j + xsz)])
         else
             # UPSTREAM DOES NOT TYPE-CHECK THIS SLOT. `sinks.rs:771` (and :808) is literally
@@ -593,7 +605,7 @@ Generic finalize for the accumulating reduction sinks. `acc(running, value_paylo
 spliced in by branch 3 and the thing compared against the literal in branch 1.
 """
 function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc, enc,
-        root::Vector{UInt8} = UInt8[])::Bool where {T}
+    root::Vector{UInt8}=UInt8[])::Bool where {T}
     GK = Tuple{Vector{UInt8}, Vector{UInt8}}         # (result, source) — upstream's traversal "context"
     groups = Dict{GK, T}()                           # FOLDED total — ABSENT if no value ever folded
     order = GK[]                                     # EXISTENCE + deterministic order (Dict iteration is not)
@@ -617,7 +629,8 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
         # unparseable never existed, so branch 2 could not fire. Confirmed against the live binary:
         # `sinks/g2_sum_ignored_nonnum` emits `(seen)` upstream and emitted nothing here.
         if !(key in exists)
-            push!(exists, key); push!(order, key)
+            push!(exists, key)
+            push!(order, key)
         end
         folded = acc(haskey(groups, key) ? groups[key] : init, value)
         folded === nothing && continue
@@ -646,8 +659,11 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
             # Upstream indexes `vars[k]` and panics if k is out of range; a malformed template must not
             # take the engine down, so we skip that group instead (a CHECK, not a silent mask — reaching
             # this means the `<source>` backref does not name a NewVar of `<result>`).
-            k < _expr_newvars(rbytes, 1, length(rbytes)) ?
-                _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, encoded) : nothing
+            if k < _expr_newvars(rbytes, 1, length(rbytes))
+                _expr_substitute_one_de_bruijn(rbytes, 1, length(rbytes), k, encoded)
+            else
+                nothing
+            end
         else                                         # branch 1 — SIZES fixed literal
             encoded == source ? rbytes : nothing
         end
@@ -671,7 +687,7 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
         # atom off the binary's atom yields exactly `sink_request(sink)` every time, and in every
         # one the root is a proper prefix of the result.
         if out !== nothing && !isempty(root) && !(t isa ExprVarRef) &&
-           length(root) < length(out) && view(out, 1:length(root)) == root
+            length(root) < length(out) && view(out, 1:length(root)) == root
             out = vcat(root, out)
         end
         out === nothing && continue
@@ -789,7 +805,8 @@ end
 # Bitwise-AND reduction: upstream seeds `total = !0u8` and folds `total &= p[clen+1]` — the FIRST
 # PAYLOAD BYTE of each value symbol, not the whole payload (sinks.rs:764/771, :801/808) — then renders
 # the result as the one-byte symbol `[total]` (:773, :810-813).
-_and_acc(running::UInt8, value::Vector{UInt8}) = isempty(value) ? running : running & value[1]
+_and_acc(running::UInt8, value::Vector{UInt8}) =
+    isempty(value) ? running : running & value[1]
 
 _and_enc(total::UInt8) = UInt8[item_byte(ExprSymbol(0x01)), total]
 
@@ -801,11 +818,13 @@ sink_finalize!(s::AndSink, btm::SinkBtm)::Bool =
 # =====================================================================
 
 struct WASMSink <: AbstractSink
-    ;
-    expr::MORK.Expr;
+
+    expr::MORK.Expr
 end
-@eval sink_apply!(::WASMSink, ::AbstractDict, ::Vector{UInt8}, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
-@eval sink_finalize!(::WASMSink, ::SinkBtm) = error("WASMSink requires the wasmtime runtime")
+@eval sink_apply!(::WASMSink, ::AbstractDict, ::Vector{UInt8}, ::SinkBtm) =
+    error("WASMSink requires the wasmtime runtime")
+@eval sink_finalize!(::WASMSink, ::SinkBtm) =
+    error("WASMSink requires the wasmtime runtime")
 
 # ── Z3Sink — write SMT-LIB assertions to a named z3 instance (real port of Rust Z3Sink) ──────────────
 # `(z3 <instance> <se>)` on the sink side streams the matched <se> (bindings-substituted) as text to the live
@@ -827,7 +846,9 @@ function sink_apply!(s::Z3Sink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
     length(path) > s.skip || return nothing
     text = expr_serialize(path[(s.skip + 1):end])            # the <se> assertion, e.g. (assert (> a 5))
     proc = z3_instance!(s.ins)
-    write(proc, text); write(proc, "\n"); flush(proc)
+    write(proc, text)
+    write(proc, "\n")
+    flush(proc)
     nothing
 end
 sink_finalize!(::Z3Sink, ::SinkBtm)::Bool = false            # assertions are streamed in apply; nothing to finalize
@@ -940,7 +961,9 @@ function sink_apply!(s::USink, ::AbstractDict, path::Vector{UInt8}, ::SinkBtm)
         # measured: the corpus gained g7_u_crossvars/g7_u_three/s6_usink_mgu and REGRESSED
         # g7_u_occurs, which began emitting `(f (g $a) (g $a))` where the binary emits nothing.
         cycled = Dict{ExprVar, UInt8}()
-        expr_apply(UInt8(0), UInt8(0), UInt8(0), ez, result, oz, cycled, ExprVar[], ExprVar[])
+        expr_apply(
+            UInt8(0), UInt8(0), UInt8(0), ez, result, oz, cycled, ExprVar[], ExprVar[]
+        )
         if !isempty(cycled)
             s.conflict = true
             return nothing
@@ -955,7 +978,7 @@ function sink_finalize!(s::USink, btm::SinkBtm)::Bool
     buf = s.buf::Vector{UInt8}
     old = get_val_at(btm, buf)
     set_val_at!(btm, buf, UNIT_VAL)
-    s.buf = nothing;
+    s.buf = nothing
     s.conflict = false   # reset
     old === nothing
 end
@@ -997,9 +1020,9 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     st::_AuState)::Tuple{Int, Int}
     (i1 > length(e1) || i2 > length(e2)) &&
         (push!(out, item_byte(ExprNewVar())); return (0, 0))
-    b1 = e1[i1];
+    b1 = e1[i1]
     b2 = e2[i2]
-    t1 = byte_item(b1);
+    t1 = byte_item(b1)
     t2 = byte_item(b2)
 
     # decomposable: same symbol content
@@ -1015,11 +1038,11 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     # decomposable: same arity — recurse into children
     if t1 isa ExprArity && t2 isa ExprArity && t1.arity == t2.arity
         push!(out, b1)
-        c1 = 1;
+        c1 = 1
         c2 = 1
         for _ in 1:Int(t1.arity)
             dc1, dc2 = _au_merge!(e1, i1+c1, e2, i2+c2, out, st)
-            c1 += dc1;
+            c1 += dc1
             c2 += dc2
         end
         return (c1, c2)
@@ -1040,7 +1063,9 @@ function _au_merge!(e1::Vector{UInt8}, i1::Int,
     e2_end = _expr_end_offset(e2, i2)
     s1 = e1_end - i1
     s2 = e2_end - i2
-    key = (Vector{UInt8}(view(e1, i1:(e1_end - 1))), Vector{UInt8}(view(e2, i2:(e2_end - 1))))
+    key = (
+        Vector{UInt8}(view(e1, i1:(e1_end - 1))), Vector{UInt8}(view(e2, i2:(e2_end - 1)))
+    )
     if haskey(st.memo, key)
         push!(out, item_byte(ExprVarRef(st.memo[key])))
     elseif st.next_var < 0x40
@@ -1084,8 +1109,8 @@ function sink_finalize!(s::AUSink, btm::SinkBtm)::Bool
     key = buf[1:last]
     old = get_val_at(btm, key)
     set_val_at!(btm, key, UNIT_VAL)
-    s.buf = nothing;
-    s.last = 0;
+    s.buf = nothing
+    s.last = 0
     s.st = _AuState()   # reset
     old === nothing
 end
@@ -1127,8 +1152,8 @@ function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc})::UInt64
     h = UInt64(0xa9e17c4d3f8b21c5)   # fixed seed — deterministic across calls
     while zipper_to_next_val!(fork)
         for b in zipper_path(fork)
-            ;
-            h = hash(b, h);
+
+            h = hash(b, h)
         end
         h = hash(UInt64(0xffffffff), h)  # path terminator
     end
@@ -1156,7 +1181,9 @@ end
 # use, so all three upstream branches (sinks.rs:659 SIZES / :688 NewVar / :696 VarRef) are covered.
 _hash_one(v::Vector{UInt8}) = begin
     h = UInt64(0xa9e17c4d3f8b21c5)
-    for b in v; h = hash(b, h); end
+    for b in v
+        h = hash(b, h)
+    end
     h
 end
 
@@ -1169,7 +1196,9 @@ _hash_enc(total::UInt64) =
     vcat(item_byte(ExprSymbol(UInt8(8))), collect(reinterpret(UInt8, [hton(total)])))
 
 sink_finalize!(s::HashSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, UInt64(0xa9e17c4d3f8b21c5), _hash_acc, _hash_enc, sink_request(s))
+    _redsink_finalize!(
+        s.unique, btm, UInt64(0xa9e17c4d3f8b21c5), _hash_acc, _hash_enc, sink_request(s)
+    )
 
 # =====================================================================
 # PureSink — port of PureSink in sinks.rs
@@ -1262,7 +1291,9 @@ matches exactly. Reconcile when #135 or PR #137 lands.
 See `test/integration/upstream_issues.jl` for the three shapes this fixes, two of which were
 PREDICTED from the diagnosis and confirmed against the release binary before the fix was written.
 """
-function _expr_rebase_varrefs(buf::AbstractVector{UInt8}, from::Int, base::Int)::Vector{UInt8}
+function _expr_rebase_varrefs(
+    buf::AbstractVector{UInt8}, from::Int, base::Int
+)::Vector{UInt8}
     # Only the call's OWN span is copied — `_expr_end_offset` gives its exclusive end, so a formula
     # sitting mid-buffer does not drag its trailing siblings along. (It takes an AbstractVector
     # precisely so this needs no `collect`: the sink hands us `formula_ee.base.buf`, and copying the
@@ -1281,9 +1312,12 @@ function _expr_rebase_varrefs(buf::AbstractVector{UInt8}, from::Int, base::Int):
             # template's. Standalone evaluation cannot resolve that, and silently clamping would
             # alias it onto an unrelated variable, which is the very failure this function exists to
             # remove. Raise instead; the sink treats EvalError as "skip this atom".
-            idx >= base || throw(EvalError(
-                "pure: variable reference _$(idx + 1) names a binder outside the call expression \
-(de Bruijn base $base); it cannot be resolved when the call is evaluated on its own"))
+            idx >= base || throw(
+                EvalError(
+                    "pure: variable reference _$(idx + 1) names a binder outside the call expression \
+(de Bruijn base $base); it cannot be resolved when the call is evaluated on its own"
+                )
+            )
             push!(out, item_byte(ExprVarRef(UInt8(idx - base))))
             i += 1
         elseif t isa ExprSymbol
@@ -1381,8 +1415,11 @@ function sink_apply!(s::PureSink, bindings::AbstractDict, path::Vector{UInt8}, b
         # base 0 is the overwhelmingly common case (no binder precedes the call), and the re-base
         # would be an identity copy — so take the original buffer and skip the allocation entirely.
         fbase = Int(formula_ee.v)
-        formula_src = fbase == 0 ? ExprSource(formula_buf, formula_start) :
-                      ExprSource(_expr_rebase_varrefs(formula_buf, formula_start, fbase), 1)
+        formula_src = if fbase == 0
+            ExprSource(formula_buf, formula_start)
+        else
+            ExprSource(_expr_rebase_varrefs(formula_buf, formula_start, fbase), 1)
+        end
         result_mork = try
             scope_eval!(s.scope, formula_src)
         catch err
@@ -1390,8 +1427,11 @@ function sink_apply!(s::PureSink, bindings::AbstractDict, path::Vector{UInt8}, b
             return nothing
         end
         k = Int(src_tag.idx)
-        k < _expr_newvars(tpl_bytes, 1, length(tpl_bytes)) ?
-            _expr_substitute_one_de_bruijn(tpl_bytes, 1, length(tpl_bytes), k, result_mork) : nothing
+        if k < _expr_newvars(tpl_bytes, 1, length(tpl_bytes))
+            _expr_substitute_one_de_bruijn(tpl_bytes, 1, length(tpl_bytes), k, result_mork)
+        else
+            nothing
+        end
     else
         # A fixed-literal or compound `<source>` slot is `todo!()` upstream (sinks.rs:1136/:1145),
         # i.e. a process abort. We decline the write rather than reproduce a crash.
@@ -1473,12 +1513,16 @@ end
 # NewVars preceding the first variable slot (0 if it is itself the first NewVar)
 # for a NewVar, or the referenced index for a leading VarRef.
 function _first_var_index_and_bounds(buf::Vector{UInt8}, from::Int, to::Int)
-    firstidx = nothing; nvs = 0; maxref = -1; i = from
+    firstidx = nothing
+    nvs = 0
+    maxref = -1
+    i = from
     @inbounds while i <= to
         t = byte_item(buf[i])
         if t isa ExprNewVar
             firstidx === nothing && (firstidx = nvs)
-            nvs += 1; i += 1
+            nvs += 1
+            i += 1
         elseif t isa ExprVarRef
             r = Int(t.idx)
             firstidx === nothing && (firstidx = r)
@@ -1560,8 +1604,11 @@ FloatReductionSink(e::MORK.Expr, op::Symbol) =
 # (sinks.rs:987 for the float family, :552 CountSink, :845 SumSink); reading the size off the
 # expression itself keeps it correct for every keyword length.
 _sink_keyword_prefix_len(e::MORK.Expr) =
-    (length(e.buf) >= 2 && byte_item(e.buf[2]) isa ExprSymbol) ?
-        2 + Int(byte_item(e.buf[2]).size) : 5
+    if (length(e.buf) >= 2 && byte_item(e.buf[2]) isa ExprSymbol)
+        2 + Int(byte_item(e.buf[2]).size)
+    else
+        5
+    end
 
 function sink_apply!(s::FloatReductionSink, bindings, path::Vector{UInt8}, btm)
     # Store the INSTANTIATED `<result> <source> <value>` (upstream: unique.insert(mpath, ())).
@@ -1574,22 +1621,37 @@ end
 # upstream's exactly: Sum 0.0, Prod 1.0, Min f64::MAX, Max f64::MIN — note Min/Max seed at the finite
 # extrema, NOT ±Inf (sinks.rs:955/960/965/970).
 _freduce_init(op::Symbol) =
-    op === :sum ? 0.0 : op === :prod ? 1.0 :
-    op === :min ? floatmax(Float64) : -floatmax(Float64)
+    if op === :sum
+        0.0
+    elseif op === :prod
+        1.0
+    elseif op === :min
+        floatmax(Float64)
+    else
+        -floatmax(Float64)
+    end
 
 function _freduce_acc(op::Symbol)
     (running::Float64, value::Vector{UInt8}) -> begin
         v = tryparse(Float64, String(copy(value)))   # upstream .unwrap()s; we skip unparseable
         v === nothing && return nothing
-        op === :sum  ? running + v :
-        op === :prod ? running * v :
-        # Rust float min/max IGNORE NaN. This was open-coded here on 2026-07-26 and the rule was not
-        # swept to the PURE ops, which propagated NaN until 2026-07-30. Now both call one helper
-        # (Pure.jl `_rust_fmin`/`_rust_fmax`), so the next float reduction inherits it.
-        # ⚠️ The SEEDS still differ deliberately and must not be unified: this sink seeds at the finite
-        # extrema (f64::MAX/MIN, sinks.rs:955-970) while the pure `min_/max_f64` seed at ±Inf
-        # (pure.rs:674-675). Same NaN rule, different identity element.
-        op === :min  ? _rust_fmin(running, v) : _rust_fmax(running, v)
+        if op === :sum
+            running + v
+        elseif op === :prod
+            running * v
+        elseif (
+            # Rust float min/max IGNORE NaN. This was open-coded here on 2026-07-26 and the rule was not
+            # swept to the PURE ops, which propagated NaN until 2026-07-30. Now both call one helper
+            # (Pure.jl `_rust_fmin`/`_rust_fmax`), so the next float reduction inherits it.
+            # ⚠️ The SEEDS still differ deliberately and must not be unified: this sink seeds at the finite
+            # extrema (f64::MAX/MIN, sinks.rs:955-970) while the pure `min_/max_f64` seed at ±Inf
+            # (pure.rs:674-675). Same NaN rule, different identity element.
+            op === :min
+        )
+            _rust_fmin(running, v)
+        else
+            _rust_fmax(running, v)
+        end
     end
 end
 
@@ -1608,7 +1670,14 @@ function _freduce_enc(total::Float64)
 end
 
 sink_finalize!(s::FloatReductionSink, btm::SinkBtm)::Bool =
-    _redsink_finalize!(s.unique, btm, _freduce_init(s.op), _freduce_acc(s.op), _freduce_enc, sink_request(s))
+    _redsink_finalize!(
+        s.unique,
+        btm,
+        _freduce_init(s.op),
+        _freduce_acc(s.op),
+        _freduce_enc,
+        sink_request(s)
+    )
 
 # =====================================================================
 # ASink — dispatch union
@@ -1624,7 +1693,7 @@ function asink_new(e::MORK.Expr, raw::Vector{UInt8}=e.buf)::AbstractSink
     buf = e.buf
     length(buf) < 2 && return CompatSink(e)
 
-    a1 = buf[1];
+    a1 = buf[1]
     a2 = buf[2]
 
     # [2] + → AddSink
@@ -1751,16 +1820,16 @@ export _au_merge!, _zipper_subtrie_hash
 # ── sink_request methods (see the block comment near the top of this file) ───────────────────
 # Defined here because they dispatch on sink types declared throughout the file.
 # `skip` = 2 + length(keyword); the Bool is the GROUND fallback (true = span minus one byte).
-sink_request(s::CompatSink)  = _sink_root(s.expr, 0, false)
-sink_request(s::AddSink)     = _sink_root(s.expr, 3, false)
-sink_request(s::USink)       = _sink_root(s.expr, 3, false)
-sink_request(s::AUSink)      = _sink_root(s.expr, 4, false)
-sink_request(s::RemoveSink)  = _sink_root(s.expr, 3, true)
-sink_request(s::AndSink)     = _sink_root(s.expr, 5, true)
-sink_request(s::SumSink)     = _sink_root(s.expr, 5, true)
-sink_request(s::HashSink)    = _sink_root(s.expr, 6, true)
-sink_request(s::PureSink)    = _sink_root(MORK.Expr(s.raw), 6, true)  # RAW: upstream sinks.rs:1095
-sink_request(s::CountSink)   = _sink_root(s.expr, 7, true)
+sink_request(s::CompatSink) = _sink_root(s.expr, 0, false)
+sink_request(s::AddSink) = _sink_root(s.expr, 3, false)
+sink_request(s::USink) = _sink_root(s.expr, 3, false)
+sink_request(s::AUSink) = _sink_root(s.expr, 4, false)
+sink_request(s::RemoveSink) = _sink_root(s.expr, 3, true)
+sink_request(s::AndSink) = _sink_root(s.expr, 5, true)
+sink_request(s::SumSink) = _sink_root(s.expr, 5, true)
+sink_request(s::HashSink) = _sink_root(s.expr, 6, true)
+sink_request(s::PureSink) = _sink_root(MORK.Expr(s.raw), 6, true)  # RAW: upstream sinks.rs:1095
+sink_request(s::CountSink) = _sink_root(s.expr, 7, true)
 # FloatReduction's header is `2 + Reduction::NAME.len()` upstream (sinks.rs:980). fsum/fmin/fmax
 # are 4 and fprod is 5, so READ the length off the expression rather than hardcoding one — a
 # future reduction name must not silently mis-skip.
@@ -1771,10 +1840,10 @@ function sink_request(s::FloatReductionSink)
 end
 # HeadSink/TailSink embed the N literal in their header, so reuse the width the constructor
 # already computed (upstream: `[self.skip..]`, sinks.rs:383-389).
-sink_request(s::HeadSink)    = _sink_root(s.expr, s.skip, true)
+sink_request(s::HeadSink) = _sink_root(s.expr, s.skip, true)
 # Non-BTM resources have NO write root: ACTSink requests an ACT file (sinks.rs:320) and Z3Sink a
 # Z3 instance (:1204).
-sink_request(::ACTSink)      = nothing
-sink_request(::Z3Sink)       = nothing
+sink_request(::ACTSink) = nothing
+sink_request(::Z3Sink) = nothing
 
 export sink_request

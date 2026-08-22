@@ -59,7 +59,7 @@
 using Printf
 
 const UPSTREAM = get(ENV, "MORK_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/MORK"))
-const HERE     = normpath(joinpath(@__DIR__, ".."))
+const HERE = normpath(joinpath(@__DIR__, ".."))
 const BASELINE = joinpath(HERE, "test", "conformance", "PORT_INVENTORY.txt")
 # 🔴 `experiments/eval` ADDED 2026-07-30 — it was missing, and it is where the EVALUATOR lives.
 # `EvalScope`, `FuncType{Macro,Pure}`, `Func`, `StackFrame`, `add_func`, `push_eval`, `eval_impl` and
@@ -68,7 +68,7 @@ const BASELINE = joinpath(HERE, "test", "conformance", "PORT_INVENTORY.txt")
 # "kernel/pure.rs: 0 missing" while never once looking at the structure those 370 registrations target.
 # Found by the user, not by the tool. Same blind-spot class as the interpolated-key bug: the
 # instrument's SCOPE was wrong, so its green meant less than it appeared to.
-const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experiments/eval"]
+const CRATES = ["kernel", "expr", "frontend", "interning", "linalg", "experiments/eval"]
 
 # ── PROFILES — 2026-08-14: this tool now covers PathMap too ──────────────────────────────────────────
 #
@@ -101,13 +101,13 @@ const CRATES   = ["kernel", "expr", "frontend", "interning", "linalg", "experime
 # `names(PathMap; all = true)` is the authority. Both ask the RUNTIME. Neither reads source text for
 # presence, which is the defect this file's header exists to describe.
 struct PortProfile
-    name        :: String
-    upstream    :: String          # upstream checkout root
-    dirs        :: Vector{String}  # crate/dir roots to scan under `upstream`
-    our_src     :: String          # our Julia src tree
-    baseline    :: String          # vendored symbol inventory
-    runtime_syms:: Function        # () -> Set{String}, the LIVE authority for our names
-    features    :: String          # ⚠️ upstream cargo feature set the baseline is taken under
+    name::String
+    upstream::String          # upstream checkout root
+    dirs::Vector{String}  # crate/dir roots to scan under `upstream`
+    our_src::String          # our Julia src tree
+    baseline::String          # vendored symbol inventory
+    runtime_syms::Function        # () -> Set{String}, the LIVE authority for our names
+    features::String          # ⚠️ upstream cargo feature set the baseline is taken under
 end
 
 """
@@ -123,9 +123,15 @@ swallowed a load error and silently degraded to a source-text scan, which re-fab
 gap it had been written to kill. A tool whose job is proving absence must fail loudly, never guess.
 """
 function runtime_module_names(mod::Symbol)::Set{String}
-    m = isdefined(Main, mod) ? Base.invokelatest(getglobal, Main, mod) : Base.require(Main, mod)
-    Set{String}(String(n) for n in Base.invokelatest(names, m; all = true)
-                if !startswith(String(n), "#"))          # drop gensyms/closure boxes
+    m = if isdefined(Main, mod)
+        Base.invokelatest(getglobal, Main, mod)
+    else
+        Base.require(Main, mod)
+    end
+    Set{String}(
+        String(n) for n in Base.invokelatest(names, m; all=true)
+        if !startswith(String(n), "#")
+    )          # drop gensyms/closure boxes
 end
 
 const MORK_PROFILE = PortProfile(
@@ -135,16 +141,19 @@ const MORK_PROFILE = PortProfile(
 
 # PathMap upstream is a SINGLE crate — `src/` plus `experimental/` and `utils/` — not a workspace, so
 # the dir list is just the source root and `walkdir` finds the rest.
-const PATHMAP_UPSTREAM = get(ENV, "PATHMAP_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/PathMap"))
-const PATHMAP_HERE     = normpath(joinpath(HERE, "..", "PathMap"))
-const PATHMAP_PROFILE  = PortProfile(
+const PATHMAP_UPSTREAM = get(
+    ENV, "PATHMAP_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/PathMap")
+)
+const PATHMAP_HERE = normpath(joinpath(HERE, "..", "PathMap"))
+const PATHMAP_PROFILE = PortProfile(
     "PathMap", PATHMAP_UPSTREAM, ["src"], joinpath(PATHMAP_HERE, "src"),
     joinpath(PATHMAP_HERE, "test", "conformance", "PORT_INVENTORY.txt"),
     () -> runtime_module_names(:PathMap),
     # ⚠️ RECORDED BECAUSE ROW 173 SAYS A CONFORMANCE CLAIM MUST NAME ITS FEATURE SET AND OURS NEVER HAS.
     # `graft_root_vals` is SEMANTIC, not cosmetic — upstream describes it as changing what `graft`,
     # `graft_map`, `make_map`, `take_map` and `join_map` do with the value at the focus.
-    "default = [graft_root_vals, slim_ptrs, serialization]; MORK additionally enables nightly")
+    "default = [graft_root_vals, slim_ptrs, serialization]; MORK additionally enables nightly"
+)
 
 # ── extraction ────────────────────────────────────────────────────────────────────────────────────
 
@@ -174,16 +183,23 @@ function strip_rust_comments(text::AbstractString)
     while i <= n
         c = chars[i]
         if c == '"'                                   # string literal — copy verbatim
-            write(out, c); i += 1
+            write(out, c)
+            i += 1
             while i <= n
                 if chars[i] == '\\' && i < n
-                    write(out, chars[i]); write(out, chars[i + 1]); i += 2; continue
+                    write(out, chars[i])
+                    write(out, chars[i + 1])
+                    i += 2
+                    continue
                 end
-                write(out, chars[i]); i += 1
+                write(out, chars[i])
+                i += 1
                 chars[i - 1] == '"' && break
             end
         elseif c == '/' && i < n && chars[i + 1] == '/'      # line comment
-            while i <= n && chars[i] != '\n'; i += 1; end
+            while i <= n && chars[i] != '\n'
+                i += 1
+            end
         elseif c == '/' && i < n && chars[i + 1] == '*'      # block comment
             i += 2
             while i <= n && !(chars[i] == '*' && i < n && chars[i + 1] == '/')
@@ -192,7 +208,8 @@ function strip_rust_comments(text::AbstractString)
             end
             i += 2
         else
-            write(out, c); i += 1
+            write(out, c)
+            i += 1
         end
     end
     String(take!(out))
@@ -203,17 +220,25 @@ function rust_symbols(raw::AbstractString)
     text = strip_rust_comments(raw)
     fns = Set{String}()
     # `pub fn`, `pub(crate) fn`, `pub unsafe fn`, `pub extern "C" fn`, `pub const fn`
-    for m in eachmatch(r"\bpub(?:\(crate\))?\s+(?:unsafe\s+|extern\s+\"C\"\s+|const\s+)*fn\s+(\w+)", text)
+    for m in eachmatch(
+        r"\bpub(?:\(crate\))?\s+(?:unsafe\s+|extern\s+\"C\"\s+|const\s+)*fn\s+(\w+)", text
+    )
         push!(fns, m.captures[1])
     end
     # macro-generated numeric ops: `op!(num binary lt_i64(…))`, `op!(num from_string i64_from_string<i64>)`
-    for m in eachmatch(r"op!\s*\(\s*(?:num\s+)?\w+\s+(\w+)", text); push!(fns, m.captures[1]); end
+    for m in eachmatch(r"op!\s*\(\s*(?:num\s+)?\w+\s+(\w+)", text)
+        push!(fns, m.captures[1])
+    end
     # explicit registrations: `scope.add_func("lt_i64", …)`
-    for m in eachmatch(r"add_func\(\s*\"([^\"]+)\"", text); push!(fns, m.captures[1]); end
+    for m in eachmatch(r"add_func\(\s*\"([^\"]+)\"", text)
+        push!(fns, m.captures[1])
+    end
     # (`delete!(fns, "$1")` used to live here. It is now unreachable by construction — the artifact
     #  came from a COMMENTED-OUT template, which strip_rust_comments removes. See that docstring.)
     tys = Set{String}()
-    for m in eachmatch(r"\bpub\s+(?:struct|enum|trait|type)\s+(\w+)", text); push!(tys, m.captures[1]); end
+    for m in eachmatch(r"\bpub\s+(?:struct|enum|trait|type)\s+(\w+)", text)
+        push!(tys, m.captures[1])
+    end
     fns, tys
 end
 
@@ -237,44 +262,67 @@ function runtime_op_keys()
     # world-age barrier. `@eval Main using MORK` + `Main.MORK` does NOT work here: the binding is
     # created in a newer world than the running method, and the getfield throws
     # "The binding may be too new: running in world age N, while current world is N+11".
-    mork = isdefined(Main, :MORK) ? Base.invokelatest(getglobal, Main, :MORK) :
-                                    Base.require(Main, :MORK)
+    mork = if isdefined(Main, :MORK)
+        Base.invokelatest(getglobal, Main, :MORK)
+    else
+        Base.require(Main, :MORK)
+    end
     for reg in (:PURE_OPS, :GROUNDED_REGISTRY)
         d = Base.invokelatest(getglobal, mork, reg)
-        for k in Base.invokelatest(keys, d); push!(keys_, String(k)); end
+        for k in Base.invokelatest(keys, d)
+            push!(keys_, String(k))
+        end
     end
     # SPECIAL FORMS are implemented in the evaluator, not the table — `ifnz` and `'` control their own
     # argument evaluation, so they can never be table-dispatched (see `PURE_SPECIAL_FORMS`). Without
     # this union, removing a dead `PURE_OPS["ifnz"]` entry makes a correctly-implemented conditional
     # read as an unported op.
-    for k in Base.invokelatest(getglobal, mork, :PURE_SPECIAL_FORMS); push!(keys_, String(k)); end
+    for k in Base.invokelatest(getglobal, mork, :PURE_SPECIAL_FORMS)
+        push!(keys_, String(k))
+    end
     keys_
 end
 
 "Names our Julia port defines: functions, live registry op keys, and types."
-function julia_symbols(root::AbstractString, runtime_syms::Function = runtime_op_keys)
+function julia_symbols(root::AbstractString, runtime_syms::Function=runtime_op_keys)
     names, tys = Set{String}(), Set{String}()
     union!(names, runtime_syms())        # ← authoritative; the regexes below are best-effort backup
     for (dir, _, files) in walkdir(root), f in files
         endswith(f, ".jl") || continue
         text = read(joinpath(dir, f), String)
-        for m in eachmatch(r"^\s*function\s+([A-Za-z_][\w!]*)"m, text); push!(names, m.captures[1]); end
-        for m in eachmatch(r"^\s*([a-z_][\w!]*)\s*\("m, text);          push!(names, m.captures[1]); end
-        for m in eachmatch(r"\"([A-Za-z_][\w]*)\"\s*=>", text);         push!(names, m.captures[1]); end
-        for m in eachmatch(r"^\s*(?:mutable\s+)?struct\s+(\w+)"m, text); push!(tys, m.captures[1]); end
-        for m in eachmatch(r"^\s*abstract\s+type\s+(\w+)"m, text);       push!(tys, m.captures[1]); end
-        for m in eachmatch(r"^\s*@enum\s+(\w+)"m, text);                 push!(tys, m.captures[1]); end
+        for m in eachmatch(r"^\s*function\s+([A-Za-z_][\w!]*)"m, text)
+            push!(names, m.captures[1])
+        end
+        for m in eachmatch(r"^\s*([a-z_][\w!]*)\s*\("m, text)
+            push!(names, m.captures[1])
+        end
+        for m in eachmatch(r"\"([A-Za-z_][\w]*)\"\s*=>", text)
+            push!(names, m.captures[1])
+        end
+        for m in eachmatch(r"^\s*(?:mutable\s+)?struct\s+(\w+)"m, text)
+            push!(tys, m.captures[1])
+        end
+        for m in eachmatch(r"^\s*abstract\s+type\s+(\w+)"m, text)
+            push!(tys, m.captures[1])
+        end
+        for m in eachmatch(r"^\s*@enum\s+(\w+)"m, text)
+            push!(tys, m.captures[1])
+        end
         # ⚠️ ALSO `const X = Union{…}` / `const X = SomeType`. MISSING THIS produced a FALSE 35% type
         # coverage on 2026-07-29 and reported `ASink`, `ASource`, `AFactor`, `HeadTailSink`,
         # `ParDataParser`, `SourceItem`, `Tag` as unported when all seven are present. The port maps
         # Rust ENUM dispatch wrappers onto Julia UNION ALIASES on purpose — `Sinks.jl:1363` is
         # literally "ASink — dispatch union" — so a type diff that only knows `struct` invents gaps.
         # Inventing a gap is worse than missing one: it sends people to re-port working code.
-        for m in eachmatch(r"^\s*const\s+([A-Z]\w*)\s*=", text);          push!(tys, m.captures[1]); end
+        for m in eachmatch(r"^\s*const\s+([A-Z]\w*)\s*=", text)
+            push!(tys, m.captures[1])
+        end
         # last resort: a type NAME mentioned anywhere in our source counts as present. Deliberately
         # lenient — this instrument exists to prove ABSENCE, so it must under-report gaps, never
         # fabricate them.
-        for m in eachmatch(r"\b([A-Z]\w{2,})\b", text);                   push!(tys, m.captures[1]); end
+        for m in eachmatch(r"\b([A-Z]\w{2,})\b", text)
+            push!(tys, m.captures[1])
+        end
     end
     names, tys
 end
@@ -295,8 +343,10 @@ end
 
 # ── report ────────────────────────────────────────────────────────────────────────────────────────
 
-function extract_upstream(p::PortProfile = MORK_PROFILE)
-    isdir(p.upstream) || error("$(p.name) upstream not found at $(p.upstream) — set $(uppercase(p.name))_UPSTREAM")
+function extract_upstream(p::PortProfile=MORK_PROFILE)
+    isdir(p.upstream) || error(
+        "$(p.name) upstream not found at $(p.upstream) — set $(uppercase(p.name))_UPSTREAM"
+    )
     out = Pair{String, Tuple{Vector{String}, Vector{String}}}[]
     for crate in p.dirs
         d = joinpath(p.upstream, crate)
@@ -308,7 +358,7 @@ function extract_upstream(p::PortProfile = MORK_PROFILE)
             push!(out, "$crate/$f" => (sort(collect(fns)), sort(collect(tys))))
         end
     end
-    sort!(out; by = first)
+    sort!(out; by=first)
 end
 
 """
@@ -330,7 +380,7 @@ days staler. The release binary the 277-probe differential grades us against is 
 MAIN is the anchor. A baseline extracted from a `server` checkout would silently grade us against
 code upstream has moved past.
 """
-function upstream_revision(p::PortProfile = MORK_PROFILE)::String
+function upstream_revision(p::PortProfile=MORK_PROFILE)::String
     U = p.upstream
     isdir(joinpath(U, ".git")) || return "UNKNOWN (not a git checkout)"
     try
@@ -343,7 +393,7 @@ function upstream_revision(p::PortProfile = MORK_PROFILE)::String
     end
 end
 
-function write_baseline(rows, p::PortProfile = MORK_PROFILE)
+function write_baseline(rows, p::PortProfile=MORK_PROFILE)
     rev = upstream_revision(p)
     mkpath(dirname(p.baseline))
     open(p.baseline, "w") do io
@@ -353,21 +403,40 @@ function write_baseline(rows, p::PortProfile = MORK_PROFILE)
         # never has. PathMap's `graft_root_vals` is SEMANTIC, so a baseline taken under a different
         # feature set is measuring a different upstream.
         println(io, "# FEATURES: ", p.features)
-        println(io, "#   ^ REQUIRED. Without it this file cannot distinguish a port gap from upstream drift.")
-        println(io, "#     Our port draws from main AND server; the differential binary is built from MAIN,")
-        println(io, "#     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl.")
-        println(io, "# Regenerate: $(uppercase(p.name))_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract" * (p.name == "MORK" ? "" : " --pathmap"))
+        println(
+            io,
+            "#   ^ REQUIRED. Without it this file cannot distinguish a port gap from upstream drift."
+        )
+        println(
+            io,
+            "#     Our port draws from main AND server; the differential binary is built from MAIN,"
+        )
+        println(
+            io,
+            "#     so MAIN is the anchor. See `upstream_revision` in tools/port_inventory.jl."
+        )
+        println(
+            io,
+            "# Regenerate: $(uppercase(p.name))_UPSTREAM=<path> julia --project=. tools/port_inventory.jl --extract" *
+            (p.name == "MORK" ? "" : " --pathmap")
+        )
         println(io, "# Format:  <crate/file>\\tFN|TY\\t<name>")
         for (file, (fns, tys)) in rows
-            for n in fns; println(io, file, "\t", "FN", "\t", n); end
-            for n in tys; println(io, file, "\t", "TY", "\t", n); end
+            for n in fns
+                println(io, file, "\t", "FN", "\t", n)
+            end
+            for n in tys
+                println(io, file, "\t", "TY", "\t", n)
+            end
         end
     end
-    println("wrote $(p.baseline)  ($(sum(length(v[1]) + length(v[2]) for (_, v) in rows)) symbols)")
+    println(
+        "wrote $(p.baseline)  ($(sum(length(v[1]) + length(v[2]) for (_, v) in rows)) symbols)"
+    )
 end
 
 "The UPSTREAM revision recorded in the vendored baseline, or a loud marker if absent."
-function baseline_revision(p::PortProfile = MORK_PROFILE)::String
+function baseline_revision(p::PortProfile=MORK_PROFILE)::String
     isfile(p.baseline) || return "NO BASELINE"
     for line in eachline(p.baseline)
         startswith(line, "# UPSTREAM: ") && return strip(line[13:end])
@@ -376,8 +445,9 @@ function baseline_revision(p::PortProfile = MORK_PROFILE)::String
     "UNPINNED — regenerate with --extract"
 end
 
-function read_baseline(p::PortProfile = MORK_PROFILE)
-    isfile(p.baseline) || error("no vendored baseline at $(p.baseline) — run with --extract")
+function read_baseline(p::PortProfile=MORK_PROFILE)
+    isfile(p.baseline) ||
+        error("no vendored baseline at $(p.baseline) — run with --extract")
     rows = Dict{String, Tuple{Vector{String}, Vector{String}}}()
     for line in eachline(p.baseline)
         (isempty(line) || startswith(line, "#")) && continue
@@ -385,7 +455,7 @@ function read_baseline(p::PortProfile = MORK_PROFILE)
         f, t = get!(rows, file, (String[], String[]))
         kind == "FN" ? push!(f, name) : push!(t, name)
     end
-    sort!(collect(rows); by = first)
+    sort!(collect(rows); by=first)
 end
 
 # ── ALIAS RESOLUTION — the gate that stops a NAME DIFF being reported as a PORT GAP ───────────────
@@ -443,7 +513,7 @@ function alias_resolves(name::AbstractString, aliases::Dict{String, Tuple{String
 end
 
 "Return (missing_fns, missing_tys) per file, plus totals. Pure — the test wraps this."
-function coverage(p::PortProfile = MORK_PROFILE)
+function coverage(p::PortProfile=MORK_PROFILE)
     ours_names, ours_tys = julia_symbols(p.our_src, p.runtime_syms)
     rows = read_baseline(p)
     aliases = alias_map()
@@ -456,17 +526,21 @@ function coverage(p::PortProfile = MORK_PROFILE)
     for (file, (fns, tys)) in rows
         fm_raw = [n for n in fns if !port_has(n, ours_names)]
         tm_raw = [n for n in tys if !(n in ours_tys)]
-        raw_fm += length(fm_raw); raw_tm += length(tm_raw)
+        raw_fm += length(fm_raw)
+        raw_tm += length(tm_raw)
         for n in vcat(fm_raw, tm_raw)
             alias_resolves(n, aliases) && push!(resolved, (n, aliases[n][1], aliases[n][2]))
         end
         fm = sort([n for n in fm_raw if !alias_resolves(n, aliases)])
         tm = sort([n for n in tm_raw if !alias_resolves(n, aliases)])
         push!(report, file => (fm, tm))
-        tf += length(fns); tfm += length(fm); tt += length(tys); ttm += length(tm)
+        tf += length(fns)
+        tfm += length(fm)
+        tt += length(tys)
+        ttm += length(tm)
     end
-    (; report, fns_total = tf, fns_missing = tfm, tys_total = tt, tys_missing = ttm,
-       fns_missing_raw = raw_fm, tys_missing_raw = raw_tm, alias_resolved = sort(resolved))
+    (; report, fns_total=tf, fns_missing=tfm, tys_total=tt, tys_missing=ttm,
+        fns_missing_raw=raw_fm, tys_missing_raw=raw_tm, alias_resolved=sort(resolved))
 end
 
 function main(args)
@@ -474,7 +548,8 @@ function main(args)
     # wired test, behave exactly as before.
     p = ("--pathmap" in args) ? PATHMAP_PROFILE : MORK_PROFILE
     if "--extract" in args
-        write_baseline(extract_upstream(p), p); return
+        write_baseline(extract_upstream(p), p)
+        return nothing
     end
     c = coverage(p)
     println("PROFILE: ", p.name, "   (upstream ", p.upstream, ")")
@@ -482,16 +557,17 @@ function main(args)
     println(rpad("upstream file", 36), lpad("fns MISSING", 12), lpad("types MISSING", 15))
     println("-"^63)
     for (file, (fm, tm)) in c.report
-        nf = length(fm); nt = length(tm)
+        nf = length(fm)
+        nt = length(tm)
         (nf == 0 && nt == 0) && continue
         println(rpad(file, 36), lpad(nf, 5), lpad(nt, 6))
     end
     println("-"^63)
     @printf("TOTAL  functions %d/%d (%d%%)   types %d/%d (%d%%)\n",
-            c.fns_total - c.fns_missing, c.fns_total,
-            100 * (c.fns_total - c.fns_missing) ÷ max(c.fns_total, 1),
-            c.tys_total - c.tys_missing, c.tys_total,
-            100 * (c.tys_total - c.tys_missing) ÷ max(c.tys_total, 1))
+        c.fns_total - c.fns_missing, c.fns_total,
+        100 * (c.fns_total - c.fns_missing) ÷ max(c.fns_total, 1),
+        c.tys_total - c.tys_missing, c.tys_total,
+        100 * (c.tys_total - c.tys_missing) ÷ max(c.tys_total, 1))
     println("\n⚠️  LENIENT by construction (see port_has): reported coverage is a CEILING.")
     println("    Absence is proof of a gap; presence is NOT proof of equivalence.")
     # 🔴 AND THE INVERSE WARNING, which this tool needed and did not have. `port_has` matches by our
@@ -499,7 +575,9 @@ function main(args)
     # reported missing here and that is right for the DEDUP half, but its HASHING half is fully ported
     # as `map_hash`, a name sharing no substring. Reading this column alone produced exactly that wrong
     # claim, twice, on 2026-08-07 and 2026-08-14.
-    println("\n🔴  A NAME HERE IS NOT A VERDICT. Semantic renames are invisible to port_has —")
+    println(
+        "\n🔴  A NAME HERE IS NOT A VERDICT. Semantic renames are invisible to port_has —"
+    )
     # The alias table is now CONSULTED, not recommended. Report its effect so the resolution is
     # auditable rather than a silently smaller number.
     if !isempty(c.alias_resolved)
@@ -509,9 +587,13 @@ function main(args)
         end
     end
     println("\n  raw name-diff: fns=", c.fns_missing_raw, " tys=", c.tys_missing_raw,
-            "   after alias resolution: fns=", c.fns_missing, " tys=", c.tys_missing)
-    println("    PARTIAL/ABSENT rows stay MISSING deliberately — see workflows/PORT_NAME_MAP.tsv")
-    println("    e.g. merkleize -> map_hash (hashing PORTED; only the dedup half is really absent).")
+        "   after alias resolution: fns=", c.fns_missing, " tys=", c.tys_missing)
+    println(
+        "    PARTIAL/ABSENT rows stay MISSING deliberately — see workflows/PORT_NAME_MAP.tsv"
+    )
+    println(
+        "    e.g. merkleize -> map_hash (hashing PORTED; only the dedup half is really absent)."
+    )
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)

@@ -42,7 +42,7 @@ end
         atoms = ["(rel a)", "(rel b)"]
         (_, c) = _l3_cursor(atoms)
         floor_before = c.col.floor
-        path_before  = length(PathMap.zipper_path(c.z))
+        path_before = length(PathMap.zipper_path(c.z))
 
         _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel a)").buf)
         @test c.col.floor == floor_before
@@ -78,10 +78,14 @@ end
     @testset "stored_wildcard_bytes agrees with column_matches_by_equality" begin
         # The two read the SAME range (0x80..0xC0). If they ever disagreed, the join would prune a
         # column one of them called wildcard-free — silently dropping every answer that needed it.
-        mk(bs) = (bits = PathMap.EMPTY_BITS4;
-                  for b in bs; bits = PathMap.with_bit_set(bits, UInt8(b)); end;
-                  PathMap.ByteMask(bits))
-        for bs in ([0xC1, 0xD0], [0x00, 0x3F], UInt8[], [0x80], [0xC0], [0xBF, 0xC1], [0x00, 0x80])
+        mk(bs) = (bits=PathMap.EMPTY_BITS4;
+            for b in bs
+                bits = PathMap.with_bit_set(bits, UInt8(b))
+            end;
+            PathMap.ByteMask(bits))
+        for bs in (
+            [0xC1, 0xD0], [0x00, 0x3F], UInt8[], [0x80], [0xC0], [0xBF, 0xC1], [0x00, 0x80]
+        )
             m = mk(bs)
             wilds = _L3.stored_wildcard_bytes(m)
             # equality-only ⟺ no wildcards found. Asserted BOTH ways, so neither can drift.

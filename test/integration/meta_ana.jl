@@ -25,7 +25,9 @@
 # upstream's assert_eq! can see.
 using MORK, Test
 
-const META_ANA_PROBE = joinpath(@__DIR__, "..", "conformance", "space", "meta_ana_coalgebra.mm2")
+const META_ANA_PROBE = joinpath(
+    @__DIR__, "..", "conformance", "space", "meta_ana_coalgebra.mm2"
+)
 
 @testset "meta_ana — coalgebraic tree traversal via (rulify) multi-source O sinks" begin
     s = new_space()

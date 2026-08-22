@@ -99,7 +99,7 @@ hand-written. A gap a generator cannot produce is unobserved, not absent.
 ONE O(1) ROOT PROBE: a stored variable is a complete single-byte subterm, so its presence is exactly
 a wildcard tag among the root's children, and those are the contiguous range `VarRef(0)..=NewVar`.
 """
-function warn_top_level_variable(s::Space; warn::Bool = true)::Bool
+function warn_top_level_variable(s::Space; warn::Bool=true)::Bool
     # ⚠️ UNQUALIFIED, DELIBERATELY. `PathMap` binds the TYPE here, not the module — `Leapfrog.jl`'s
     # import block already warns about this, and qualifying the call fails load with "type UnionAll
     # has no field". I hit that exact error in a throwaway probe an hour before writing this, called
@@ -120,7 +120,7 @@ function warn_top_level_variable(s::Space; warn::Bool = true)::Bool
     end
     if found && warn
         @warn "top level variable in the space: it unifies with every conjunct of every query, " *
-              "and the leapfrog join cannot see it, so the two engines will not agree on this space."
+            "and the leapfrog join cannot see it, so the two engines will not agree on this space."
     end
     found
 end

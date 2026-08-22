@@ -37,9 +37,11 @@ using MORK, Test
 # A cyclic conjunctive query (the join path) and a chain over the same relation. Small enough to be
 # fast, structured enough that the join, the fold and the exec calculus all run.
 const _AR_EDGES = join(["(edge n$i n$j)" for i in 1:14 for j in 1:14 if i < j], "\n") * "\n"
-const _AR_CLIQUE = _AR_EDGES *
+const _AR_CLIQUE =
+    _AR_EDGES *
     "(exec 0 (, (edge \$a \$b) (edge \$a \$c) (edge \$b \$c)) (, (tri \$a \$b \$c)))\n"
-const _AR_CHAIN = _AR_EDGES *
+const _AR_CHAIN =
+    _AR_EDGES *
     "(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (path \$x \$z)))\n"
 
 _ar_run(src, cap) = begin
@@ -61,16 +63,16 @@ end
     @test n_path > 0
 
     for (name, src, cap, PIN_MIB) in (
-            # PINS measured 2026-08-20 AFTER the traverseh fix, five runs each:
-            #   triangle  3.818 MiB, spread 0.01%
-            #   chain     2.388 MiB, spread 0.00%
-            # Pinned at ~1.15x measured. The headroom is for Julia/stdlib version drift, NOT for
-            # slack in our own code — a regression that boxes a container or copies where it used
-            # to view moves this by multiples, not by percent. My first draft pinned 40.0 from a
-            # guess and the ratchet said so immediately, which is the behaviour to keep.
-            ("triangle join", _AR_CLIQUE, 1, 4.4),
-            ("chain join",    _AR_CHAIN,  1, 2.8),
-        )
+        # PINS measured 2026-08-20 AFTER the traverseh fix, five runs each:
+        #   triangle  3.818 MiB, spread 0.01%
+        #   chain     2.388 MiB, spread 0.00%
+        # Pinned at ~1.15x measured. The headroom is for Julia/stdlib version drift, NOT for
+        # slack in our own code — a regression that boxes a container or copies where it used
+        # to view moves this by multiples, not by percent. My first draft pinned 40.0 from a
+        # guess and the ratchet said so immediately, which is the behaviour to keep.
+        ("triangle join", _AR_CLIQUE, 1, 4.4),
+        ("chain join", _AR_CHAIN, 1, 2.8)
+    )
         @testset "$name" begin
             _ar_run(src, cap)                                    # warm — JIT out of the measurement
             b = @allocated _ar_run(src, cap)
@@ -80,7 +82,7 @@ end
             @test mib <= PIN_MIB
             if mib < PIN_MIB * 0.75
                 @info "allocation IMPROVED — lower the pin in this file and say what changed" (
-                    workload = name, measured_MiB = round(mib, digits = 2), pin_MiB = PIN_MIB)
+                    workload=name, measured_MiB=round(mib, digits=2), pin_MiB=PIN_MIB)
             end
         end
     end

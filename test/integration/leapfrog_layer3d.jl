@@ -15,7 +15,8 @@ using MORK, Test, Random
 const _L4 = MORK.Leapfrog
 
 _l4_expr(s::AbstractString) = MORK.sexpr_to_expr(s)
-_l4_env(n::Integer, s::AbstractString) = MORK.ExprEnv(UInt8(n), UInt8(0), UInt32(0), _l4_expr(s))
+_l4_env(n::Integer, s::AbstractString) =
+    MORK.ExprEnv(UInt8(n), UInt8(0), UInt32(0), _l4_expr(s))
 
 function _l4_cursor(atoms::Vector{String})
     sp = MORK.new_space()
@@ -62,7 +63,7 @@ end
     @testset "🔴 with_bound_bytes! restores the cursor — even when cont THROWS" begin
         (_, c) = _l4_cursor(["(rel a)", "(rel b)"])
         floor0 = c.col.floor
-        path0  = length(PathMap.zipper_path(c.z))
+        path0 = length(PathMap.zipper_path(c.z))
 
         ran = Ref(false)
         _L4.with_bound_bytes!(c, UInt8[0xC1], () -> (ran[] = true))
@@ -72,7 +73,9 @@ end
 
         # THE LOAD-BEARING CASE. Upstream is straight-line Rust and cannot throw here; ours can.
         # Without the `finally`, the cursor stays descended and every enclosing column is corrupt.
-        @test_throws ErrorException _L4.with_bound_bytes!(c, UInt8[0xC1], () -> error("boom"))
+        @test_throws ErrorException _L4.with_bound_bytes!(
+            c, UInt8[0xC1], () -> error("boom")
+        )
         @test c.col.floor == floor0
         @test length(PathMap.zipper_path(c.z)) == path0
         @test _L4.cursor_check_invariants(c)
@@ -85,8 +88,8 @@ end
 
         seen = Ref(0)
         got = _L4.match_candidate!(c, caller, 0, 0x00,
-                                   _L4.query_var_env(0), MORK.sexpr_to_expr("(rel a)").buf,
-                                   nb -> (seen[] += 1))
+            _L4.query_var_env(0), MORK.sexpr_to_expr("(rel a)").buf,
+            nb -> (seen[] += 1))
         @test got !== nothing                                  # it unified
         @test seen[] == 1                                      # …and the continuation ran
         # ⚠️ The CALLER's bindings must be untouched — upstream saves/restores; we return instead.
@@ -98,8 +101,8 @@ end
         @test b1 !== nothing
         seen2 = Ref(0)
         got2 = _L4.match_candidate!(c, b1, 0, 0x00,
-                                    _L4.query_var_env(0), MORK.sexpr_to_expr("(rel a)").buf,
-                                    nb -> (seen2[] += 1))
+            _L4.query_var_env(0), MORK.sexpr_to_expr("(rel a)").buf,
+            nb -> (seen2[] += 1))
         @test got2 === nothing
         @test seen2[] == 0                                     # cont must NOT run on a miss
     end
@@ -153,7 +156,7 @@ end
             if !(tag isa MORK.ExprArity)
                 tag isa MORK.ExprSymbol || return "TAG:" * string(typeof(tag))
                 lo = Int(e.offset) + 1
-                return string(Vector{UInt8}(e.base.buf[lo:lo + Int(tag.size)]))
+                return string(Vector{UInt8}(e.base.buf[lo:(lo + Int(tag.size))]))
             end
             args = MORK.ExprEnv[]
             MORK.ee_args!(e, args)
@@ -162,13 +165,17 @@ end
 
         "What the join can OBSERVE: the query variables, normalised, in a fixed order under one
          shared renaming. Not the map."
-        _d_closure(b) = (names = Dict{MORK.ExprVar, Int}();
-                         String[_d_norm(b, _L4.query_var_env(i), names, 64) for i in 0:3])
+        _d_closure(b) = (names=Dict{MORK.ExprVar, Int}();
+            String[_d_norm(b, _L4.query_var_env(i), names, 64) for i in 0:3])
 
-        rng   = MersenneTwister(0xB13F)
+        rng = MersenneTwister(0xB13F)
         terms = ["a", "b", "(rel a)", "(rel \$w)", "(pair a b)", "\$u"]
-        eq(r) = rand(r, Bool) ? _L4.query_var_env(rand(r, 0:3)) :
-                                _l4_env(rand(r, 1:3), rand(r, terms))
+        eq(r) =
+            if rand(r, Bool)
+                _L4.query_var_env(rand(r, 0:3))
+            else
+                _l4_env(rand(r, 1:3), rand(r, terms))
+            end
 
         nbound = 0        # trials where the oracle really bound something
         nfailed = 0       # trials where the two agreed on a CONTRADICTION
@@ -176,8 +183,8 @@ end
 
         for _ in 1:300
             oracle = MORK.Bindings()
-            live   = MORK.Bindings()
-            trail  = MORK.ExprVar[]
+            live = MORK.Bindings()
+            trail = MORK.ExprVar[]
 
             for _ in 1:rand(rng, 1:4)
                 lhs, rhs = eq(rng), eq(rng)
@@ -185,8 +192,8 @@ end
                 before = _d_closure(live)
 
                 nb = _L4.unified_bindings(oracle, lhs, rhs)
-                r  = MORK.expr_unify_into!(live,
-                        Tuple{MORK.ExprEnv, MORK.ExprEnv}[(lhs, rhs)], trail)
+                r = MORK.expr_unify_into!(live,
+                    Tuple{MORK.ExprEnv, MORK.ExprEnv}[(lhs, rhs)], trail)
                 failed = r isa MORK.UnificationFailure
 
                 # 🔴 AGREEMENT ON FAILURE FIRST. An incremental binder that merely failed LESS often
@@ -210,8 +217,8 @@ end
 
         # ⚠️ ANTI-VACUITY. Without these, a generator that only ever produced trivially-equal or
         # instantly-contradictory pairs would satisfy every assertion above while testing nothing.
-        @test nbound   > 100
-        @test nfailed  > 10
+        @test nbound > 100
+        @test nfailed > 10
         @test nrestored == nfailed
     end
 
@@ -245,11 +252,13 @@ end
         # `(pair $x $x)` against the data `(pair a b)`: unification binds $x := a, then meets $x
         # against b and CONTRADICTS — a failure that has already inserted. This is the shape
         # `expr_unify_trail.jl` pins at the primitive level; here it goes through the join's binder.
-        pat  = _l4_env(0, "(pair \$x \$x)")
+        pat = _l4_env(0, "(pair \$x \$x)")
         data = MORK.sexpr_to_expr("(pair a b)").buf
 
         seen = Ref(0)
-        got = _L4.match_candidate!(c, b, 0, 0x00, pat, data, _ -> (seen[] += 1); trail = trail)
+        got = _L4.match_candidate!(
+            c, b, 0, 0x00, pat, data, _ -> (seen[] += 1); trail=trail
+        )
 
         @test got === nothing            # it really did fail…
         @test seen[] == 0                # …and the continuation never ran
@@ -260,21 +269,25 @@ end
 
         # ⚠️ ANTI-VACUITY, TWO WAYS. Without these the test above is satisfied by a binder that
         # simply never binds anything — which is exactly what "unreachable branch" looked like.
-        b2 = MORK.Bindings(); trail2 = MORK.ExprVar[]
+        b2 = MORK.Bindings()
+        trail2 = MORK.ExprVar[]
         inner = Ref(0)
         _L4.match_candidate!(c, b2, 0, 0x00, _l4_env(0, "(pair \$x \$y)"),
-                             MORK.sexpr_to_expr("(pair a b)").buf,
-                             _ -> (inner[] += 1); trail = trail2)
+            MORK.sexpr_to_expr("(pair a b)").buf,
+            _ -> (inner[] += 1); trail=trail2)
         @test inner[] == 1               # the SAME shape, non-contradictory, DOES run cont
         @test isempty(trail2)            # …and still restores afterwards
 
         # and the insert-then-contradict really does insert: solving it against a live map directly
         # (no unwind) must leave the map non-empty, or the failure path had nothing to restore.
-        probe = MORK.Bindings(); ptrail = MORK.ExprVar[]
+        probe = MORK.Bindings()
+        ptrail = MORK.ExprVar[]
         pr = MORK.expr_unify_into!(probe,
-                Tuple{MORK.ExprEnv, MORK.ExprEnv}[(pat,
-                    MORK.ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.sexpr_to_expr("(pair a b)")))],
-                ptrail)
+            Tuple{MORK.ExprEnv, MORK.ExprEnv}[(pat,
+                MORK.ExprEnv(
+                    UInt8(1), UInt8(0), UInt32(0), MORK.sexpr_to_expr("(pair a b)")
+                ))],
+            ptrail)
         @test pr isa MORK.UnificationFailure
         @test !isempty(ptrail)           # ⇐ proves the branch has something to unwind
     end

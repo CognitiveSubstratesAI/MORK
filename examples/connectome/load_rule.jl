@@ -34,20 +34,33 @@ Stream the raw CSV, summing syn_count per (pre,post) across neuropils. Uses
 """
 function aggregate_connections(csv_gz::AbstractString)
     isfile(csv_gz) || error("connections csv not found: $csv_gz")
-    agg = Dict{Tuple{UInt64,UInt64}, Int}()
+    agg = Dict{Tuple{UInt64, UInt64}, Int}()
     sizehint!(agg, 4_000_000)
     header = true
     for line in eachline(`zcat $csv_gz`)
-        if header; header = false; continue; end
+        if header
+            header = false
+            continue
+        end
         isempty(line) && continue
-        c1 = findfirst(',', line);          c1 === nothing && continue
-        c2 = findnext(',', line, c1 + 1);   c2 === nothing && continue
-        c3 = findnext(',', line, c2 + 1);   c3 === nothing && continue
+        c1 = findfirst(',', line)
+        c1 === nothing && continue
+        c2 = findnext(',', line, c1 + 1)
+        c2 === nothing && continue
+        c3 = findnext(',', line, c2 + 1)
+        c3 === nothing && continue
         c4 = findnext(',', line, c3 + 1)
-        pre  = tryparse(UInt64, SubString(line, 1, c1 - 1));        pre === nothing && continue
-        post = tryparse(UInt64, SubString(line, c1 + 1, c2 - 1));   post === nothing && continue
-        cntstr = c4 === nothing ? SubString(line, c3 + 1, lastindex(line)) : SubString(line, c3 + 1, c4 - 1)
-        cnt  = tryparse(Int, cntstr);                              cnt === nothing && continue
+        pre = tryparse(UInt64, SubString(line, 1, c1 - 1))
+        pre === nothing && continue
+        post = tryparse(UInt64, SubString(line, c1 + 1, c2 - 1))
+        post === nothing && continue
+        cntstr = if c4 === nothing
+            SubString(line, c3 + 1, lastindex(line))
+        else
+            SubString(line, c3 + 1, c4 - 1)
+        end
+        cnt = tryparse(Int, cntstr)
+        cnt === nothing && continue
         k = (pre, post)
         agg[k] = get(agg, k, 0) + cnt
     end

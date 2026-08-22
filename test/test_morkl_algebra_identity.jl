@@ -59,10 +59,10 @@ end
     end
 
     @testset "controls — Element and None were always correct, and must stay so" begin
-        @test _op(["a", "b"], ["b"], :subtraction)   == ["a"]        # Element
+        @test _op(["a", "b"], ["b"], :subtraction) == ["a"]        # Element
         @test _op(["a", "b"], ["b", "c"], :intersection) == ["b"]    # Element
-        @test _op(["a"], ["b"], :union)              == ["a", "b"]   # Element
-        @test _op(["a"], ["a"], :subtraction)        == String[]     # None — genuinely empty
+        @test _op(["a"], ["b"], :union) == ["a", "b"]   # Element
+        @test _op(["a"], ["a"], :subtraction) == String[]     # None — genuinely empty
     end
 
     @testset "COUNTER_IDENT — the answer is the SECOND operand" begin

@@ -26,7 +26,9 @@ using MORK, Test
 
 include(joinpath(@__DIR__, "..", "conformance", "pure_ops", "cmp_pure.jl"))   # defines compare_probes
 
-const _PO_DIR = get(ENV, "MORK_PURE_PROBES", joinpath(homedir(), "csai-work", "pure_probes"))
+const _PO_DIR = get(
+    ENV, "MORK_PURE_PROBES", joinpath(homedir(), "csai-work", "pure_probes")
+)
 const _PO_ALLOW_MISSING =
     lowercase(get(ENV, "MORK_ALLOW_MISSING_ORACLE", "")) in ("1", "true", "yes", "on")
 
@@ -35,12 +37,11 @@ const _PO_ALLOW_MISSING =
 
     if !have && _PO_ALLOW_MISSING
         @warn "PURE-OP ORACLE MISSING — differential coverage REDUCED " *
-              "(MORK_ALLOW_MISSING_ORACLE=1)" dir = _PO_DIR
+            "(MORK_ALLOW_MISSING_ORACLE=1)" dir = _PO_DIR
         @test_skip "pure-op probe corpus"
     elseif !have
         @error "PURE-OP ORACLE MISSING — this is a FAILURE, not a skip. Without the corpus this \
-                file proves nothing about the 355 ported ops." dir = _PO_DIR fix =
-               "gen_pure_probes.py <dir> && run_probes.sh <dir>, or set MORK_ALLOW_MISSING_ORACLE=1"
+                file proves nothing about the 355 ported ops." dir = _PO_DIR fix = "gen_pure_probes.py <dir> && run_probes.sh <dir>, or set MORK_ALLOW_MISSING_ORACLE=1"
         @test false
     else
         r = compare_probes(_PO_DIR)
@@ -74,7 +75,7 @@ const _PO_ALLOW_MISSING =
         if !isempty(unexpected)
             for (op, ours, up, file) in unexpected
                 println("  🔴 UNEXPECTED DIVERGENCE  ", rpad(op, 26),
-                        " ours=", rpad(ours, 26), " upstream=", up, "   [", file, "]")
+                    " ours=", rpad(ours, 26), " upstream=", up, "   [", file, "]")
             end
         end
         @test isempty(unexpected)

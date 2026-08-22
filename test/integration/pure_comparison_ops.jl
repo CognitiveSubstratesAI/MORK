@@ -37,25 +37,28 @@ const _CMP_PROGRAM = raw"""
 
 # (atom-head, expected raw byte) — exactly as the upstream binary produced them.
 const _CMP_EXPECTED = [
-    ("lt32",  0x01),   # 3 <  5
-    ("gt32",  0x00),   # 3 >  5
+    ("lt32", 0x01),   # 3 <  5
+    ("gt32", 0x00),   # 3 >  5
     ("lte32", 0x01),   # 5 <= 5
     ("gte32", 0x00),   # 4 >= 5
-    ("eq32",  0x01),   # 5 == 5
-    ("ne32",  0x00),   # 5 != 5
-    ("ltf",   0x01),   # 1.5 <  2.5   (f64)
-    ("eqf",   0x01),   # 2.5 == 2.5   (f64)
-    ("neg",   0x01),   # -3  <  2     (i8, signed)
+    ("eq32", 0x01),   # 5 == 5
+    ("ne32", 0x00),   # 5 != 5
+    ("ltf", 0x01),   # 1.5 <  2.5   (f64)
+    ("eqf", 0x01),   # 2.5 == 2.5   (f64)
+    ("neg", 0x01)   # -3  <  2     (i8, signed)
 ]
 
 @testset "pure comparison ops (vs upstream binary)" begin
     @testset "table completeness — all 42 present, no unsigned variants" begin
         for suffix in ("i8", "i16", "i32", "i64", "i128", "f32", "f64"),
             name in ("lt", "gt", "lte", "gte", "eq", "ne")
+
             @test haskey(MORK.PURE_OPS, "$(name)_$(suffix)")
         end
         # Upstream defines no unsigned comparisons; adding them would be invention, not porting.
-        for suffix in ("u8", "u16", "u32", "u64", "u128"), name in ("lt", "gt", "lte", "gte", "ne")
+        for suffix in ("u8", "u16", "u32", "u64", "u128"),
+            name in ("lt", "gt", "lte", "gte", "ne")
+
             @test !haskey(MORK.PURE_OPS, "$(name)_$(suffix)")
         end
     end
@@ -64,7 +67,10 @@ const _CMP_EXPECTED = [
         s = MORK.new_space()
         MORK.space_add_all_sexpr!(s, _CMP_PROGRAM)
         MORK.space_metta_calculus!(s, 1000)
-        atoms = [strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))]
+        atoms = [
+            strip(l) for
+            l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))
+        ]
 
         for (head, byte) in _CMP_EXPECTED
             # The dump emits the result byte VERBATIM, exactly as upstream does
@@ -72,8 +78,10 @@ const _CMP_EXPECTED = [
             # escaped text `(lt32 \x01)`, which encoded a rendering our own parser could not read
             # back — `space_add_all_sexpr!(space_dump_all_sexpr(s))` did not round-trip. Build the
             # expectation from BYTES so it says what the engine actually emits.
-            want = String(vcat(Vector{UInt8}(codeunits("($head ")), UInt8[byte],
-                               Vector{UInt8}(codeunits(")"))))
+            want = String(
+                vcat(Vector{UInt8}(codeunits("($head ")), UInt8[byte],
+                    Vector{UInt8}(codeunits(")")))
+            )
             @test want in atoms
         end
     end
@@ -81,8 +89,14 @@ const _CMP_EXPECTED = [
     @testset "results are ONE byte (i8), not the operand width" begin
         # Regression guard for the class of bug that bit the bit-count ops (which must return u32
         # for every input width): a comparison must be 1 byte regardless of operand size.
-        @test MORK.pure_apply("lt_i64", [MORK._be_bytes(Int64(1)), MORK._be_bytes(Int64(2))]) == UInt8[0x01]
-        @test MORK.pure_apply("gt_i64", [MORK._be_bytes(Int64(1)), MORK._be_bytes(Int64(2))]) == UInt8[0x00]
-        @test MORK.pure_apply("eq_f32", [MORK._be_bytes(Float32(1.5)), MORK._be_bytes(Float32(1.5))]) == UInt8[0x01]
+        @test MORK.pure_apply(
+            "lt_i64", [MORK._be_bytes(Int64(1)), MORK._be_bytes(Int64(2))]
+        ) == UInt8[0x01]
+        @test MORK.pure_apply(
+            "gt_i64", [MORK._be_bytes(Int64(1)), MORK._be_bytes(Int64(2))]
+        ) == UInt8[0x00]
+        @test MORK.pure_apply(
+            "eq_f32", [MORK._be_bytes(Float32(1.5)), MORK._be_bytes(Float32(1.5))]
+        ) == UInt8[0x01]
     end
 end

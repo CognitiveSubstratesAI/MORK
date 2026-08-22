@@ -15,10 +15,11 @@ const CAP = 10_000
 
 function run_and_save()
     files = sort(filter(f -> endswith(f, ".mm2"), readdir(PROGDIR)))
-    rows = Tuple{String,String,Int,Any}[]
+    rows = Tuple{String, String, Int, Any}[]
     ok = capped = crash = 0
     for fn in files
-        print(stderr, "  · ", rpad(fn, 46)); flush(stderr)
+        print(stderr, "  · ", rpad(fn, 46))
+        flush(stderr)
         src = read(joinpath(PROGDIR, fn), String)
         try
             s = new_space()
@@ -27,25 +28,31 @@ function run_and_save()
             dump = space_dump_all_sexpr(s)
             nlines = count(==('\n'), dump)
             if steps >= CAP
-                capped += 1; println(stderr, "CAP ($steps)")
+                capped += 1
+                println(stderr, "CAP ($steps)")
                 push!(rows, (fn, "CAP", steps, nlines))
             else
-                ok += 1; println(stderr, "OK ($steps steps, $nlines lines)")
+                ok += 1
+                println(stderr, "OK ($steps steps, $nlines lines)")
                 push!(rows, (fn, "OK", steps, nlines))
             end
         catch e
-            crash += 1; msg = first(split(sprint(showerror, e), '\n'))
+            crash += 1
+            msg = first(split(sprint(showerror, e), '\n'))
             println(stderr, "CRASH")
             push!(rows, (fn, "CRASH", 0, msg))
         end
     end
     date = string(Dates.today())
-    outdir = joinpath(@__DIR__, "results"); mkpath(outdir)
+    outdir = joinpath(@__DIR__, "results")
+    mkpath(outdir)
     outfile = joinpath(outdir, "$(date)_mm2_smoke.md")
     open(outfile, "w") do f
         println(f, "# MM2_Structuring_Code smoke test — $date\n")
-        println(f, "Each program run through the port (step cap $CAP). **CAP** = hit the cap",
-            " (intentional loops, e.g. `Control_07_Recursive`); **CRASH** = a port error (real gap).\n")
+        println(f,
+            "Each program run through the port (step cap $CAP). **CAP** = hit the cap",
+            " (intentional loops, e.g. `Control_07_Recursive`); **CRASH** = a port error (real gap).\n"
+        )
         println(f, "**$ok OK · $capped CAP · $crash CRASH** of $(length(files))\n")
         println(f, "| program | status | detail |")
         println(f, "|---|---|---|")
@@ -55,7 +62,9 @@ function run_and_save()
         end
     end
     println("MM2_SMOKE: $ok OK  $capped CAP  $crash CRASH  → $outfile")
-    for (fn, st, _, d) in rows; st == "CRASH" && println("  CRASH  $fn : $d"); end
+    for (fn, st, _, d) in rows
+        st == "CRASH" && println("  CRASH  $fn : $d")
+    end
 end
 
 run_and_save()

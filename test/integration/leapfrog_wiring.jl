@@ -21,7 +21,7 @@
 using MORK, Test, Random
 const _W = MORK.Leapfrog
 
-_w_space(src) = (s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
+_w_space(src) = (s=MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
 
 "Engine answers — the oracle."
 function _w_engine(s, body::AbstractString)
@@ -33,7 +33,9 @@ end
 "Leapfrog answers through the engine-facing entry, or `nothing` when the body is not routable."
 function _w_leapfrog(s, body::AbstractString)
     n = Ref(0)
-    r = MORK.space_query_multi_leapfrog(s.btm, MORK.sexpr_to_expr(body), (_b, _l) -> (n[] += 1; true))
+    r = MORK.space_query_multi_leapfrog(
+        s.btm, MORK.sexpr_to_expr(body), (_b, _l) -> (n[] += 1; true)
+    )
     r === nothing ? nothing : n[]
 end
 
@@ -49,7 +51,7 @@ end
         # A well-formed conjunction routes; anything that is not one returns `nothing` so the caller
         # falls back to the ProductZipper rather than silently answering the wrong question.
         for body in ["(, (edge \$x \$y))", "(, (edge \$x \$y) (edge \$y \$z))",
-                     "(, (edge a b))", "(, \$x)", "(, (edge \$x \$x))"]
+            "(, (edge a b))", "(, \$x)", "(, (edge \$x \$x))"]
             @test _W.parse_body_factors(MORK.sexpr_to_expr(body)) !== nothing
         end
         # 🔴 A BARE COMPOUND IS A CONJUNCTION TO THIS ENGINE, AND THE HEAD IS NEVER CHECKED FOR `,`.
@@ -80,11 +82,14 @@ end
         # conjunct a DIFFERENT variable from `$y` in the first, so the join stops joining and
         # answers a cross product. It would still be a well-formed join, and every structural
         # assertion would pass.
-        (fs, nv) = _W.parse_body_factors(MORK.sexpr_to_expr("(, (edge \$x \$y) (edge \$y \$z))"))
+        (fs, nv) = _W.parse_body_factors(
+            MORK.sexpr_to_expr("(, (edge \$x \$y) (edge \$y \$z))")
+        )
         @test length(fs) == 2
         @test nv == 3                       # $x $y $z — THREE, not two-per-conjunct
         # …and the shared variable is literally the same id in both factors.
-        st1 = _W.factor_steps(fs[1]); st2 = _W.factor_steps(fs[2])
+        st1 = _W.factor_steps(fs[1])
+        st2 = _W.factor_steps(fs[2])
         v1 = [s.v for s in st1 if s.kind == _W.STEP_VAR]
         v2 = [s.v for s in st2 if s.kind == _W.STEP_VAR]
         @test v1 == [0, 1]
@@ -93,13 +98,13 @@ end
 
     @testset "🔑 ENGINE PARITY on hand-picked shapes" begin
         for (src, body) in [
-            ("(edge a b)\n(edge b c)\n(edge c d)\n",              "(, (edge \$x \$y) (edge \$y \$z))"),
-            ("(edge a b)\n(edge \$w b)\n(edge b c)\n",            "(, (edge \$x \$y) (edge \$y \$z))"),
-            ("(edge a a)\n(edge a b)\n",                          "(, (edge \$x \$x))"),
-            ("(edge (f a) b)\n(edge (f c) d)\n",                  "(, (edge (f \$x) \$y))"),
-            ("(edge a b)\n(link b c)\n",                          "(, (edge \$x \$y) (link \$y \$z))"),
-            ("(edge a b)\n",                                      "(, (edge a b))"),
-            ("(edge a b)\n",                                      "(, (edge a zzz))"),
+            ("(edge a b)\n(edge b c)\n(edge c d)\n", "(, (edge \$x \$y) (edge \$y \$z))"),
+            ("(edge a b)\n(edge \$w b)\n(edge b c)\n", "(, (edge \$x \$y) (edge \$y \$z))"),
+            ("(edge a a)\n(edge a b)\n", "(, (edge \$x \$x))"),
+            ("(edge (f a) b)\n(edge (f c) d)\n", "(, (edge (f \$x) \$y))"),
+            ("(edge a b)\n(link b c)\n", "(, (edge \$x \$y) (link \$y \$z))"),
+            ("(edge a b)\n", "(, (edge a b))"),
+            ("(edge a b)\n", "(, (edge a zzz))")
         ]
             s = _w_space(src)
             @test _w_leapfrog(s, body) == _w_engine(s, body)
@@ -127,7 +132,8 @@ end
         # such a space silently answers differently. Porting `warn_top_level_variable` (an O(1) root
         # child-mask probe) belongs WITH that change, not after it.
         control = _w_space("(edge a b)\n(edge b c)\n")
-        @test _w_leapfrog(control, "(, (edge \$x \$y))") == _w_engine(control, "(, (edge \$x \$y))")
+        @test _w_leapfrog(control, "(, (edge \$x \$y))") ==
+            _w_engine(control, "(, (edge \$x \$y))")
 
         loose = _w_space("(edge a b)\n(edge b c)\n\$loose\n")
         @test occursin("\$", MORK.space_dump_all_sexpr(loose))   # anti-vacuity: it really is stored
@@ -143,14 +149,20 @@ end
         syms = ["a", "b", "c"]
         rels = ["edge", "link"]
         nonempty = 0
-        routed   = 0
+        routed = 0
 
         for _ in 1:300
             lines = String[]
             for _ in 1:rand(rng, 2:5)
                 r = rand(rng, rels)
-                arg() = (t = rand(rng);
-                         t < 0.20 ? "\$w" : t < 0.35 ? "(f $(rand(rng, syms)))" : rand(rng, syms))
+                arg() = (t=rand(rng);
+                    if t < 0.20
+                        "\$w"
+                    elseif t < 0.35
+                        "(f $(rand(rng, syms)))"
+                    else
+                        rand(rng, syms)
+                    end)
                 push!(lines, "($r $(arg()) $(arg()))")
             end
             s = _w_space(join(unique(lines), "\n") * "\n")
@@ -159,20 +171,25 @@ end
             conj = String[]
             for _ in 1:rand(rng, 1:3)
                 r = rand(rng, rels)
-                a() = (t = rand(rng);
-                       t < 0.60 ? "\$v$(rand(rng, 0:(nv - 1)))" :
-                       t < 0.78 ? "(f \$v$(rand(rng, 0:(nv - 1))))" : rand(rng, syms))
+                a() = (t=rand(rng);
+                    if t < 0.60
+                        "\$v$(rand(rng, 0:(nv - 1)))"
+                    elseif t < 0.78
+                        "(f \$v$(rand(rng, 0:(nv - 1))))"
+                    else
+                        rand(rng, syms)
+                    end)
                 push!(conj, "($r $(a()) $(a()))")
             end
             body = "(, " * join(conj, " ") * ")"
 
-            eng  = _w_engine(s, body)
+            eng = _w_engine(s, body)
             ours = _w_leapfrog(s, body)
             eng > 0 && (nonempty += 1)
             ours === nothing || (routed += 1)
             ours === nothing || ours == eng ||
                 println("  🔴 body=", body, "  engine=", eng, " ours=", ours,
-                        "\n     space: ", replace(MORK.space_dump_all_sexpr(s), "\n" => " | "))
+                    "\n     space: ", replace(MORK.space_dump_all_sexpr(s), "\n" => " | "))
             @test ours !== nothing && ours == eng
         end
 

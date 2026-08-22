@@ -159,7 +159,11 @@ function sink_write!(k::ExprSink, item::SourceItem)
     else
         payload = (item::SourceSymbol).bytes
         length(payload) <= 63 ||
-            throw(EvalError("symbol payload $(length(payload)) exceeds the 63-byte SymbolSize limit"))
+            throw(
+                EvalError(
+                    "symbol payload $(length(payload)) exceeds the 63-byte SymbolSize limit"
+                )
+            )
         push!(k.buf, item_byte(ExprSymbol(UInt8(length(payload)))))
         append!(k.buf, payload)
     end
@@ -203,7 +207,11 @@ end
 # expression instead of evaluating it. Ported as a sentinel function for the same identity test —
 # calling it is a bug, and it says so.
 _quote_sentinel(::ExprSource, ::ExprSink) =
-    throw(EvalError("quote is a sentinel and must never be called; push_eval splices it by identity"))
+    throw(
+        EvalError(
+            "quote is a sentinel and must never be called; push_eval splices it by identity"
+        )
+    )
 _nothing_func(::ExprSource, ::ExprSink) = nothing      # upstream `nothing`, the bottom frame's func
 
 mutable struct StackFrame
@@ -248,7 +256,7 @@ eval_scope_sharing(s::EvalScope) =
 
 "upstream `EvalScope::add_func` (lib.rs:64-66). `arity === nothing` = undeclared, see `Func`."
 function add_func!(s::EvalScope, name::AbstractString, func::Function, ty::FuncType,
-                   arity::Union{Vector{Int}, Nothing} = nothing)
+    arity::Union{Vector{Int}, Nothing}=nothing)
     s.fns[String(name)] = Func(func, ty, arity)
     nothing
 end
@@ -418,8 +426,12 @@ function op_skeleton(name::String, body::Function, arity::Union{Vector{Int}, Not
     (src::ExprSource, snk::ExprSink) -> begin
         items = source_consume_head_check!(src, name)
         if arity !== nothing && !(items in arity)
-            throw(EvalError("$name takes $(join(arity, " or ")) argument" *
-                            (arity == [1] ? "" : "s") * ", got $items"))
+            throw(
+                EvalError(
+                    "$name takes $(join(arity, " or ")) argument" *
+                    (arity == [1] ? "" : "s") * ", got $items"
+                )
+            )
         end
         # upstream reads each operand with `expr.consume::<$tx>()`, whose check is EXACT:
         # `*e.ptr == item_byte(SymbolSize(size_of::<T>()))`. A symbol of any other length is
@@ -434,8 +446,13 @@ function op_skeleton(name::String, body::Function, arity::Union{Vector{Int}, Not
             item isa SourceSymbol ||
                 throw(EvalError("$name: argument $i is not a symbol"))
             bytes = (item::SourceSymbol).bytes
-            want = nary_w !== nothing ? nary_w :
-                   (widths !== nothing && i <= length(widths)) ? widths[i] : nothing
+            want = if nary_w !== nothing
+                nary_w
+            elseif (widths !== nothing && i <= length(widths))
+                widths[i]
+            else
+                nothing
+            end
             want === nothing || length(bytes) == want ||
                 throw(EvalError("failed to consume <T> ($name argument $i is \
 $(length(bytes)) bytes, expected $want)"))
@@ -516,10 +533,10 @@ pure_scope_arity_coverage() =
     (count(f -> f.arity !== nothing, values(PURE_SCOPE.fns)), length(PURE_SCOPE.fns))
 
 export EvalError, SourceItem, SourceTag, SourceSymbol, ExprSource, ExprSink,
-       source_read!, source_consume_head!, source_consume_head_check!,
-       sink_write!, sink_extend!, sink_finish, source_consume_expr!,
-       EvalScope, Func, FuncType, FuncMacro, FuncPure, StackFrame,
-       PURE_SCOPE, PURE_SCOPE_UNREGISTERED, PURE_SCOPE_EXTRA,
-       add_func!, get_alloc!, return_alloc!, op_skeleton, pure_scope_arity_coverage,
-       eval_scope_sharing,
-       scope_eval!
+    source_read!, source_consume_head!, source_consume_head_check!,
+    sink_write!, sink_extend!, sink_finish, source_consume_expr!,
+    EvalScope, Func, FuncType, FuncMacro, FuncPure, StackFrame,
+    PURE_SCOPE, PURE_SCOPE_UNREGISTERED, PURE_SCOPE_EXTRA,
+    add_func!, get_alloc!, return_alloc!, op_skeleton, pure_scope_arity_coverage,
+    eval_scope_sharing,
+    scope_eval!

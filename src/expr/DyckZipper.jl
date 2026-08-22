@@ -413,7 +413,7 @@ function dsz_breadth_first_leaves(z::DyckStructureZipperU64)::Vector{Int}
 
     ring = Vector{SubtreeSlice}(undef, MAX_DEFERED)
     ring[1] = _dsz_cur(z)
-    front = 1;
+    front = 1
     tail = 2
 
     result = Int[]

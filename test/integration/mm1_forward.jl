@@ -23,7 +23,9 @@
 # (upstream compares it with starts_with, making it a weaker prefix test).
 using MORK, Test
 
-const MM1_PROBE = joinpath(@__DIR__, "..", "conformance", "space", "mm1_forward_full_proof.mm2")
+const MM1_PROBE = joinpath(
+    @__DIR__, "..", "conformance", "space", "mm1_forward_full_proof.mm2"
+)
 
 @testset "mm1_forward — full proof of ⊢ (t = t) (3- and 4-source execs)" begin
     s = new_space()

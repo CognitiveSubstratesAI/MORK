@@ -19,7 +19,7 @@ using MORK, Test
         )
         steps = space_metta_calculus!(s, 10_000)
         @test steps >= 1
-        io = IOBuffer();
+        io = IOBuffer()
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
         # CountSink writes (bird-count 3): robin/sparrow/eagle are bird edges, dog isn't.
@@ -41,7 +41,7 @@ using MORK, Test
         )
         steps = space_metta_calculus!(s, 10_000)
         @test steps >= 1
-        io = IOBuffer();
+        io = IOBuffer()
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
         # AUSink writes the least-general generalisation of the matched (likes …)
@@ -62,16 +62,21 @@ using MORK, Test
     # template functor `,` (direct set) and the sink never runs (the old test here
     # did that and passed vacuously, keeping 0). head/tail also had to be added to
     # `_is_accumulating_sink` or they cap nothing (fresh-per-match).
-    kept_letters(out) = sort([strip(l) for l in split(out, '\n') if strip(l) in ["a","b","c","d","e"]])
+    kept_letters(out) =
+        sort([strip(l) for l in split(out, '\n') if strip(l) in ["a", "b", "c", "d", "e"]])
     function run_topk(sink, n)
         s = new_space()
-        space_add_all_sexpr!(s, """
+        space_add_all_sexpr!(
+            s,
+            """
 (pattern a) (pattern b) (pattern c) (pattern d) (pattern e)
 (exec 0 (, (pattern \$x)) (O ($sink $n \$x)))
-""")
+"""
+        )
         steps = space_metta_calculus!(s, 10_000)
         @test steps >= 1
-        io = IOBuffer(); space_dump_all_sexpr(s, io)
+        io = IOBuffer()
+        space_dump_all_sexpr(s, io)
         kept_letters(String(take!(io)))
     end
 
@@ -104,7 +109,7 @@ using MORK, Test
 """
         )
         steps = space_metta_calculus!(s, 10_000)
-        io = IOBuffer();
+        io = IOBuffer()
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
         # 3 click events (btn-a/b/c), hover is not click → (click-count 3).

@@ -36,13 +36,14 @@ using MORK, Test
 # Replicate a byte pattern across all bytes of T, so every byte position independently exercises the
 # identity (a width bug that only corrupts the high bytes cannot hide).
 _tt_rep(::Type{T}, b::UInt8) where {T <: Unsigned} =
-    foldl((acc, i) -> acc | (T(b) << (8 * i)), 0:(sizeof(T) - 1); init = zero(T))
+    foldl((acc, i) -> acc | (T(b) << (8 * i)), 0:(sizeof(T) - 1); init=zero(T))
 
 @testset "ternary_table — computed LUT3 == upstream's 256 arms" begin
     @testset "identity holds for all 256 selectors ($nm)" for (T, nm) in
-                                                             ((UInt8, "u8"), (UInt16, "u16"),
-                                                              (UInt32, "u32"), (UInt64, "u64"),
-                                                              (UInt128, "u128"))
+                                                              ((UInt8, "u8"),
+        (UInt16, "u16"),
+        (UInt32, "u32"), (UInt64, "u64"),
+        (UInt128, "u128"))
         x, y, z = _tt_rep(T, 0xF0), _tt_rep(T, 0xCC), _tt_rep(T, 0xAA)
 
         # (a) the helper itself
@@ -55,15 +56,17 @@ _tt_rep(::Type{T}, b::UInt8) where {T <: Unsigned} =
         bad_op = Tuple{UInt8, Vector{UInt8}, Vector{UInt8}}[]
         for s in 0x00:0xff
             got = MORK.pure_apply("$(nm)_ternarylogic",
-                                  [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z),
-                                   UInt8[s]])
+                [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z),
+                    UInt8[s]])
             want = MORK._be_bytes(_tt_rep(T, s))
             got == want || push!(bad_op, (s, got, want))
         end
         @test isempty(bad_op)
-        @test length(MORK.pure_apply("$(nm)_ternarylogic",
-                                     [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z),
-                                      UInt8[0x96]])) == sizeof(T)
+        @test length(
+            MORK.pure_apply("$(nm)_ternarylogic",
+                [MORK._be_bytes(x), MORK._be_bytes(y), MORK._be_bytes(z),
+                    UInt8[0x96]])
+        ) == sizeof(T)
     end
 
     # Spot-check three arms by their upstream TEXT, independently of the identity above, so a

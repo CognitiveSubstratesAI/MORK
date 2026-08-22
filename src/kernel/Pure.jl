@@ -162,8 +162,7 @@ were "Rust-compatible as-is and NOT narrowed by the guard" for the integers, bec
 agreeing on ten accepted inputs says nothing about what it wrongly accepts; only the REJECT cases
 test strictness.
 """
-const _RUST_FLOAT_RE =
-    r"^[+-]?(?:(?i:inf(?:inity)?|nan)|(?:[0-9]+|[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$"
+const _RUST_FLOAT_RE = r"^[+-]?(?:(?i:inf(?:inity)?|nan)|(?:[0-9]+|[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)(?:[eE][+-]?[0-9]+)?)$"
 
 function _rust_parse_float(::Type{T}, s::AbstractString) where {T <: AbstractFloat}
     occursin(_RUST_FLOAT_RE, s) || error("not a Rust float literal: $s")
@@ -171,8 +170,8 @@ function _rust_parse_float(::Type{T}, s::AbstractString) where {T <: AbstractFlo
 end
 _read_f64(b) = ntoh(only(reinterpret(Float64, b[1:8])))
 _read_u32s(b) = _read_u32(b)   # shift amount is u32 (4 bytes): upstream shl/shr all take `y: u32`
-                               # (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
-                               # BoundsError'd on the 4-byte shift ip_sudoku passes (sub_i32 → i32).
+# (pure.rs, e.g. u8_shr(x: u8, y: u32)). Was _read_u64 (8 bytes), which
+# BoundsError'd on the 4-byte shift ip_sudoku passes (sub_i32 → i32).
 
 # General 3-input bitwise LUT (x86 vpternlog) — the result bit for each bit position
 # is bit ((x<<2)|(y<<1)|z) of the selector `s`. Computed via the 8 minterms, which is
@@ -395,9 +394,25 @@ end
 # because our code encoded the rule. Both now state it explicitly, so max's agreement is principled
 # rather than accidental. `x == y` is the right test: it is true for ±0.0 and false for NaN.
 _rust_fmax(x::T, y::T) where {T <: AbstractFloat} =
-    isnan(x) ? y : isnan(y) ? x : x == y ? y : max(x, y)
+    if isnan(x)
+        y
+    elseif isnan(y)
+        x
+    elseif x == y
+        y
+    else
+        max(x, y)
+    end
 _rust_fmin(x::T, y::T) where {T <: AbstractFloat} =
-    isnan(x) ? y : isnan(y) ? x : x == y ? y : min(x, y)
+    if isnan(x)
+        y
+    elseif isnan(y)
+        x
+    elseif x == y
+        y
+    else
+        min(x, y)
+    end
 
 # `f32::signum`/`f64::signum` are a SIGN-BIT test, not a three-way compare:
 #     if self.is_nan() { Self::NAN } else { 1.0.copysign(self) }
@@ -470,7 +485,7 @@ function _rust_parse_int(::Type{T}, s::AbstractString) where {T <: Integer}
     for c in SubString(s, i)
         ('0' <= c <= '9') || error("not a Rust integer literal: $s")
     end
-    parse(T, s; base = 10)
+    parse(T, s; base=10)
 end
 
 """
@@ -576,7 +591,7 @@ right oracle there and its raw-payload contract is more convenient.
 """
 function pure_apply_native(name::String, args::Vector{Vector{UInt8}})::Vector{UInt8}
     buf = UInt8[item_byte(ExprArity(UInt8(1 + length(args)))),
-                item_byte(ExprSymbol(UInt8(length(name))))]
+        item_byte(ExprSymbol(UInt8(length(name))))]
     append!(buf, Vector{UInt8}(name))
     for a in args
         append!(buf, a)
@@ -911,12 +926,16 @@ const PURE_OPS = Dict{String, Function}(
     # the sign — verified against the binary for BOTH input signs (2.5 and -2.5 give -NaN), whereas
     # `acos`/`asin` give +NaN. `atanh(±1)` is `±Inf` in Julia and does not throw, so only |x| > 1
     # is redirected.
-    "atanh_f32" => (a) -> (let x = _read_f32(a[1])
-        abs(x) > 1.0f0 ? -Float32(NaN) : atanh(x)
-    end),
-    "atanh_f64" => (a) -> (let x = _read_f64(a[1])
-        abs(x) > 1.0 ? -Float64(NaN) : atanh(x)
-    end),
+    "atanh_f32" => (a) -> (
+        let x = _read_f32(a[1])
+            abs(x) > 1.0f0 ? -Float32(NaN) : atanh(x)
+        end
+    ),
+    "atanh_f64" => (a) -> (
+        let x = _read_f64(a[1])
+            abs(x) > 1.0 ? -Float64(NaN) : atanh(x)
+        end
+    ),
     "to_radians_f32" => (a) -> deg2rad(_read_f32(a[1])),
     "to_radians_f64" => (a) -> deg2rad(_read_f64(a[1])),
     # Rust's `f32::to_degrees` multiplies by a PRECOMPUTED f32 constant, i.e. the ratio is formed
@@ -1028,11 +1047,13 @@ const PURE_OPS = Dict{String, Function}(
             catch
                 error("collapse_symbol: can only concat symbols in collapse")
             end
-            st isa ExprSymbol || error("collapse_symbol: can only concat symbols in collapse")
+            st isa ExprSymbol ||
+                error("collapse_symbol: can only concat symbols in collapse")
             n = Int(st.size)
             length(result) + n >= 64 &&
                 error("collapse_symbol: new symbol can not be larger than 63 bytes")
-            off + n <= length(buf) || error("collapse_symbol: truncated symbol payload")
+            off + n <= length(buf) ||
+                error("collapse_symbol: truncated symbol payload")
             append!(result, buf[(off + 1):(off + n)])
             off += 1 + n
         end
@@ -1115,7 +1136,7 @@ const PURE_OPS = Dict{String, Function}(
     # WITH padding, so we emitted `+/8=` where upstream gives `-_8`, and `YWJjZA==` for `YWJjZA`
     # (fixed 2026-07-26). The op is literally named base64**url**; URL-safe unpadded is its spec.
     "encode_base64url" => (a) -> Vector{UInt8}(_b64url_encode(a[1])),
-    "decode_base64url" => (a) -> _b64url_decode(String(a[1])),
+    "decode_base64url" => (a) -> _b64url_decode(String(a[1]))
 
     # 🔴 `"ifnz"` USED TO BE A TABLE ENTRY HERE AND IT WAS BOTH DEAD AND WRONG. Dead because
     # `_pure_eval_formula` (Sinks.jl) intercepts `ifnz` before dispatch — it MUST, since the whole
@@ -1145,9 +1166,10 @@ const PURE_OPS = Dict{String, Function}(
 # these comparisons plus `ifnz`. Without them that derivability story was false for every type —
 # `(gte_i32 ...)` simply errored as an unknown op.
 for (suffix, rd) in (("i8", _read_i8), ("i16", _read_i16), ("i32", _read_i32),
-                     ("i64", _read_i64), ("i128", _read_i128),
-                     ("f32", _read_f32), ("f64", _read_f64))
-    for (name, cmp) in (("lt", <), ("gt", >), ("lte", <=), ("gte", >=), ("eq", ==), ("ne", !=))
+    ("i64", _read_i64), ("i128", _read_i128),
+    ("f32", _read_f32), ("f64", _read_f64))
+    for (name, cmp) in
+        (("lt", <), ("gt", >), ("lte", <=), ("gte", >=), ("eq", ==), ("ne", !=))
         # `let` binds the loop vars per-iteration so each closure captures its own reader/comparator.
         PURE_OPS["$(name)_$(suffix)"] = let rd = rd, cmp = cmp
             (a) -> Int8(cmp(rd(a[1]), rd(a[2])))
@@ -1185,18 +1207,26 @@ end
 # :672-675 f64, :735-738 f32): 0/1 for sum/product, and the fold IDENTITY for min/max — typemin and
 # typemax for integers, ∓Inf for floats.
 for (suffix, rd, T) in (("i8", _read_i8, Int8), ("i16", _read_i16, Int16),
-                        ("i32", _read_i32, Int32), ("i64", _read_i64, Int64),
-                        ("i128", _read_i128, Int128),
-                        ("f32", _read_f32, Float32), ("f64", _read_f64, Float64))
+    ("i32", _read_i32, Int32), ("i64", _read_i64, Int64),
+    ("i128", _read_i128, Int128),
+    ("f32", _read_f32, Float32), ("f64", _read_f64, Float64))
     isflt = T <: AbstractFloat
     seed_max = isflt ? T(-Inf) : typemin(T)
-    seed_min = isflt ? T(Inf)  : typemax(T)
+    seed_min = isflt ? T(Inf) : typemax(T)
     fmax = isflt ? _rust_fmax : max      # Rust's float max/min IGNORE NaN; the integer ones are plain
     fmin = isflt ? _rust_fmin : min
-    PURE_OPS["sum_$(suffix)"]     = let rd = rd, z = zero(T); (a) -> _nary_fold(+, rd, z, a) end
-    PURE_OPS["product_$(suffix)"] = let rd = rd, o = one(T);  (a) -> _nary_fold(*, rd, o, a) end
-    PURE_OPS["max_$(suffix)"] = let rd = rd, s = seed_max, f = fmax; (a) -> _nary_fold(f, rd, s, a) end
-    PURE_OPS["min_$(suffix)"] = let rd = rd, s = seed_min, f = fmin; (a) -> _nary_fold(f, rd, s, a) end
+    PURE_OPS["sum_$(suffix)"] = let rd = rd, z = zero(T)
+        (a) -> _nary_fold(+, rd, z, a)
+    end
+    PURE_OPS["product_$(suffix)"] = let rd = rd, o = one(T)
+        (a) -> _nary_fold(*, rd, o, a)
+    end
+    PURE_OPS["max_$(suffix)"] = let rd = rd, s = seed_max, f = fmax
+        (a) -> _nary_fold(f, rd, s, a)
+    end
+    PURE_OPS["min_$(suffix)"] = let rd = rd, s = seed_min, f = fmin
+        (a) -> _nary_fold(f, rd, s, a)
+    end
     PURE_OPS["clamp_$(suffix)"] = let rd = rd
         (a) -> _rust_clamp(rd(a[1]), rd(a[2]), rd(a[3]))
     end
@@ -1204,7 +1234,7 @@ end
 
 # `pow_i*` — integers only; upstream defines no float `pow` in this family (`powf_f64` is separate).
 for (suffix, rd) in (("i8", _read_i8), ("i16", _read_i16), ("i32", _read_i32),
-                     ("i64", _read_i64), ("i128", _read_i128))
+    ("i64", _read_i64), ("i128", _read_i128))
     PURE_OPS["pow_$(suffix)"] = let rd = rd
         (a) -> _rust_pow(rd(a[1]), _as_u32(rd(a[2])))
     end
@@ -1217,7 +1247,7 @@ PURE_OPS["signum_f64"] = (a) -> _rust_signum(_read_f64(a[1]))
 
 # `u*_shl/shr` — the shift operand is `u32` at every width, and the shift is CHECKED.
 for (suffix, rd) in (("u8", _read_u8), ("u16", _read_u16), ("u32", _read_u32),
-                     ("u64", _read_u64), ("u128", _read_u128))
+    ("u64", _read_u64), ("u128", _read_u128))
     PURE_OPS["$(suffix)_shl"] = let rd = rd
         (a) -> _checked_shl(rd(a[1]), _read_u32s(a[2]))
     end
@@ -1379,8 +1409,11 @@ condition symbol is zero.
 """
 function _nat_ifnz(src::ExprSource, snk::ExprSink)
     items = source_consume_head_check!(src, "ifnz")
-    (items == 3 || items == 5) || throw(EvalError(
-        "shaped either (ifnz <symbol> then <nonzero expr>) or (ifnz <symbol> then <nonzero expr> else <zero expr>)"))
+    (items == 3 || items == 5) || throw(
+        EvalError(
+            "shaped either (ifnz <symbol> then <nonzero expr>) or (ifnz <symbol> then <nonzero expr> else <zero expr>)"
+        )
+    )
     cond = source_read!(src)
     cond isa SourceSymbol || throw(EvalError("condition needs to be a symbol"))
     is_nz = !all(==(0x00), (cond::SourceSymbol).bytes)
@@ -1413,7 +1446,7 @@ const PURE_NATIVE_OPS = Dict{String, Function}(
     "collapse_symbol" => _nat_collapse_symbol,
     "explode_symbol" => _nat_explode_symbol,
     "ifnz" => _nat_ifnz,
-    "tuple" => _nat_tuple,
+    "tuple" => _nat_tuple
 )
 
 # =====================================================================
@@ -1458,9 +1491,12 @@ function pure_register!()
             # dispatch. Registered so the name resolves and the classification is truthful; the body
             # is a sentinel that names the real site rather than silently doing the wrong thing.
             add_func!(PURE_SCOPE, name,
-                      (::ExprSource, ::ExprSink) -> throw(EvalError(
-                          "$name is a special form; _pure_eval_formula handles it before dispatch")),
-                      FuncPure, arity)
+                (::ExprSource, ::ExprSink) -> throw(
+                    EvalError(
+                        "$name is a special form; _pure_eval_formula handles it before dispatch"
+                    )
+                ),
+                FuncPure, arity)
         else
             push!(PURE_SCOPE_UNREGISTERED, name)
         end
@@ -1470,10 +1506,12 @@ function pure_register!()
     for (name, body) in PURE_OPS
         name in upstream && continue
         push!(PURE_SCOPE_EXTRA, name)
-        add_func!(PURE_SCOPE, name, op_skeleton(name, body, get(PURE_OP_ARITY, name, nothing)),
-                  FuncPure, get(PURE_OP_ARITY, name, nothing))
+        add_func!(PURE_SCOPE, name,
+            op_skeleton(name, body, get(PURE_OP_ARITY, name, nothing)),
+            FuncPure, get(PURE_OP_ARITY, name, nothing))
     end
-    sort!(PURE_SCOPE_UNREGISTERED); sort!(PURE_SCOPE_EXTRA)
+    sort!(PURE_SCOPE_UNREGISTERED)
+    sort!(PURE_SCOPE_EXTRA)
     nothing
 end
 pure_register!()

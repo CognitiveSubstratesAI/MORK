@@ -5,10 +5,10 @@
 # Run from CLI:        julia --project=. tools/smoke_examples.jl
 
 try
-    ;
-    using Revise;
+
+    using Revise
 catch
-    ;
+
 end
 using MORK
 
@@ -30,19 +30,19 @@ n_pass = 0;
 n_fail = 0
 for name in examples
     path = joinpath(base, "examples", "$name.jl")
-    print("[$name] ... ");
+    print("[$name] ... ")
     flush(stdout)
     try
         elapsed = @elapsed include(path)
-        println("OK ($(round(elapsed, digits=1))s)");
+        println("OK ($(round(elapsed, digits=1))s)")
         flush(stdout)
         global n_pass += 1
     catch e
-        println("FAIL: $e");
+        println("FAIL: $e")
         flush(stdout)
         global n_fail += 1
     end
-    println();
+    println()
     flush(stdout)
 end
 

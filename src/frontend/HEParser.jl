@@ -214,11 +214,11 @@ function he_node_as_atom(
         constr = he_tok_find(tok, text)
         if constr !== nothing
             try
-                ;
+
                 return constr(text)
             catch e
-                ;
-                return "byte range = ($(node.src_range)) | $e";
+
+                return "byte range = ($(node.src_range)) | $e"
             end
         else
             return he_atom_sym(text)
@@ -299,7 +299,7 @@ end
 function _hep_parse_leftovers!(p::HESExprParser, message::String)::HESyntaxNode
     start = _hep_cur_idx(p)
     while _hep_next!(p) !== nothing
-        ;
+
     end
     _he_node_incomplete(HE_LEFTOVER_TEXT, start:_hep_cur_idx(p), HESyntaxNode[], message)
 end
@@ -338,12 +338,12 @@ end
 
 # parse_2_digit_radix_value: hex escape \xNN
 function _hep_parse_2digit_radix!(p::HESExprParser, radix::Int)::Union{UInt8, Nothing}
-    r1 = _hep_next!(p);
+    r1 = _hep_next!(p)
     r1 === nothing && return nothing
     _, d1 = r1
     isdigit(d1) || (radix == 16 && d1 in 'a':'f') || (radix == 16 && d1 in 'A':'F') ||
         return nothing
-    r2 = _hep_next!(p);
+    r2 = _hep_next!(p)
     r2 === nothing && return nothing
     _, d2 = r2
     isdigit(d2) || (radix == 16 && d2 in 'a':'f') || (radix == 16 && d2 in 'A':'F') ||
@@ -379,13 +379,13 @@ function _hep_parse_string!(p::HESExprParser)::HESyntaxNode
             val = if ec == '\'' || ec == '"' || ec == '\\'
                 ec
             elseif ec == 'n'
-                ;
+
                 '\n'
             elseif ec == 'r'
-                ;
+
                 '\r'
             elseif ec == 't'
-                ;
+
                 '\t'
             elseif ec == 'x'
                 code = _hep_parse_2digit_radix!(p, 16)
@@ -414,10 +414,10 @@ function _hep_parse_token!(p::HESExprParser)::Union{HESyntaxNode, Nothing}
     pk === nothing && return nothing
     _, c = pk
     if c == '"'
-        ;
+
         return _hep_parse_string!(p)
     else
-        ;
+
         return _hep_parse_word!(p)
     end
 end

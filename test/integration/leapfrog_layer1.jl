@@ -34,7 +34,7 @@ _lf_buf(s::AbstractString) = MORK.sexpr_to_expr(s).buf
         # ⚠️ ANTI-VACUITY FIRST. If these did not parse, every assertion below would hold over empty
         # buffers and the testset would be green for the wrong reason.
         srcs = ["(edge a b)", "a", "(f (g h) i)", "(edge \$x \$y)", "\$x",
-                "(, (edge \$x0 \$x1) (edge \$x1 \$x2))", "(deeply (nested (thing (here x))))"]
+            "(, (edge \$x0 \$x1) (edge \$x1 \$x2))", "(deeply (nested (thing (here x))))"]
         @test all(!isempty(_lf_buf(s)) for s in srcs)
 
         for s in srcs
@@ -60,7 +60,9 @@ _lf_buf(s::AbstractString) = MORK.sexpr_to_expr(s).buf
                 (cs, cp) = _LF.subterm_parse_step(buf[i], cs, cp)
                 # replay from scratch over the same prefix
                 (rs, rp) = _LF.PARSE_START
-                for j in 1:i; (rs, rp) = _LF.subterm_parse_step(buf[j], rs, rp); end
+                for j in 1:i
+                    (rs, rp) = _LF.subterm_parse_step(buf[j], rs, rp)
+                end
                 @test (cs, cp) == (rs, rp)
                 # and the O(1) boundary test must equal the O(L) one
                 @test (cs == 0 && cp == 0) == _LF.is_complete(view(buf, 1:i))
@@ -92,7 +94,9 @@ _lf_buf(s::AbstractString) = MORK.sexpr_to_expr(s).buf
         # `set_bit(m, b)` and the testset ERRORED rather than failing, which is the more useful
         # outcome: an assertion that cannot run proves nothing at all.
         bits = PathMap.EMPTY_BITS4
-        for b in (0x10, 0x40, 0x41, 0xFE); bits = PathMap.with_bit_set(bits, UInt8(b)); end
+        for b in (0x10, 0x40, 0x41, 0xFE)
+            bits = PathMap.with_bit_set(bits, UInt8(b))
+        end
         m = PathMap.ByteMask(bits)
         @test PathMap.test_bit(m, 0x40) && !PathMap.test_bit(m, 0x11)   # the mask is what I think
 

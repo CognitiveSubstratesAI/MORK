@@ -112,7 +112,7 @@ function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
 
         if c == ';'
             while _cz2_has_next(it) && _cz2_next!(it) != '\n'
-                ;
+
             end
 
         elseif _cz2_is_whitespace(c)
@@ -175,21 +175,21 @@ function cz2_sexpr!(p::CZ2Parser, it::CZ2Iter,
             # Read symbol (quoted or plain)
             sym_str = if _cz2_has_next(it) && _cz2_head(it) == '"'
                 _cz2_next!(it)   # consume '"'
-                sb = IOBuffer();
+                sb = IOBuffer()
                 write(sb, '"')
                 cont = true
                 while _cz2_has_next(it) && cont
                     ch = _cz2_next!(it)
                     if ch == '"'
-                        ;
-                        write(sb, '"');
+
+                        write(sb, '"')
                         cont = false
                     elseif ch == '\\'
                         _cz2_has_next(it) || error("Escaping sequence is not finished")
                         write(sb, _cz2_next!(it))
                     else
-                        ;
-                        write(sb, ch);
+
+                        write(sb, ch)
                     end
                 end
                 String(take!(sb))

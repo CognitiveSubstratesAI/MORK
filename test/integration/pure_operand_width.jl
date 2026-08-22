@@ -47,7 +47,8 @@ const _WIDTH_PROG = """
     @test MORK.PURE_OP_NARY_WIDTH["max_f32"] == 4
     # every declared width is a real Rust type size, and NOTHING else
     @test sort(unique(values(MORK.PURE_OP_NARY_WIDTH))) == [1, 2, 4, 8, 16]
-    @test sort(unique(reduce(vcat, values(MORK.PURE_OP_OPERAND_WIDTHS)))) == [1, 2, 4, 8, 16]
+    @test sort(unique(reduce(vcat, values(MORK.PURE_OP_OPERAND_WIDTHS)))) ==
+        [1, 2, 4, 8, 16]
     # coverage: the tables must span the arms the extraction found
     @test length(MORK.PURE_OP_OPERAND_WIDTHS) == 276
     @test length(MORK.PURE_OP_NARY_WIDTH) == 43

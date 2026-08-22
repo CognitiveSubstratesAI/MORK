@@ -78,8 +78,10 @@
 #   upstream 06cdcf3 · Julia 1.12.7 · steps 2000 · counts are machine-independent by construction
 using MORK, Printf
 
-const DIRS = [joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
-              for d in ("space", "sinks")]
+const DIRS = [
+    joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
+    for d in ("space", "sinks")
+]
 const STEPS = 2000
 #
 # ✅ THE RUNS ARE STEP-ALIGNED WITH UPSTREAM. Upstream's `metta_calculus` is a DO-WHILE —
@@ -152,8 +154,10 @@ for d in DIRS, f in sort(readdir(d))
     # ⚠️ NO BARE `catch`. A reachability probe run earlier today swallowed every program's error and
     # printed a count as though it had measured them — the third swallowed-error incident in one
     # session. `work` returns nothing on failure and the name is RECORDED, never silently dropped.
-    off = work(p, false); off === nothing && (push!(errored, basename(f)); continue)
-    on  = work(p, true);  on  === nothing && (push!(errored, basename(f)); continue)
+    off = work(p, false)
+    off === nothing && (push!(errored, basename(f)); continue)
+    on = work(p, true)
+    on === nothing && (push!(errored, basename(f)); continue)
     # 🔴 ANSWERS MUST MATCH. A work ratio between engines that disagree is meaningless, and a
     # cheaper engine that answers differently is a DEFECT reported as an improvement.
     off[3] == on[3] || push!(disagree, basename(f))
@@ -170,21 +174,33 @@ end
 # report success having measured nothing. Assert against the program count and name the shortfall.
 n_programs = sum(count(f -> endswith(f, ".mm2"), readdir(d)) for d in DIRS)
 if isempty(rows)
-    error("ZERO programs produced a work ratio out of $n_programs — the comparison measured NOTHING")
+    error(
+        "ZERO programs produced a work ratio out of $n_programs — the comparison measured NOTHING"
+    )
 elseif length(rows) < n_programs
     @warn "only $(length(rows))/$n_programs programs compared — a missing tail may hide the outlier"
 end
-isempty(disagree) || error("ENGINES DISAGREE on $(length(disagree)) programs: $(join(disagree, ", "))")
+isempty(disagree) ||
+    error("ENGINES DISAGREE on $(length(disagree)) programs: $(join(disagree, ", "))")
 
-sort!(rows; rev = true)
-@printf("%-42s %10s %10s %8s %10s %10s\n", "program", "lf occurs", "pz occurs", "ratio", "lf MiB", "pz MiB")
+sort!(rows; rev=true)
+@printf(
+    "%-42s %10s %10s %8s %10s %10s\n",
+    "program",
+    "lf occurs",
+    "pz occurs",
+    "ratio",
+    "lf MiB",
+    "pz MiB"
+)
 for r in first(rows, 15)
     @printf("%-42s %10d %10d %7.2fx %10.1f %10.1f\n", r[6], r[2], r[3], r[1], r[4], r[5])
 end
-@printf("\n%d programs compared, answers identical on all. Ratios are DETERMINISTIC: n=1 suffices.\n",
-        length(rows))
+@printf(
+    "\n%d programs compared, answers identical on all. Ratios are DETERMINISTIC: n=1 suffices.\n",
+    length(rows))
 isempty(errored) || @printf("⚠️ %d programs ERRORED and were excluded: %s\n",
-                            length(errored), join(first(errored, 8), ", "))
+    length(errored), join(first(errored, 8), ", "))
 # 🔑 THREE DENOMINATORS, BECAUSE ONLY THE THIRD IS THE REAL ONE. Programs that route says how BROAD
 # the exercise is; bodies says how many joins ran; CANDIDATES REACHING THE BINDER says how many
 # chances the failure branch actually had. One occurs invocation == one candidate through
@@ -192,10 +208,13 @@ isempty(errored) || @printf("⚠️ %d programs ERRORED and were excluded: %s\n"
 # ⚠️ AND IT IS CONCENTRATED: mm1 alone is 61 913 of them. A broad routing count can still describe a
 # corpus whose unification volume lives in one program.
 total_cands = sum(r[2] for r in rows)
-@printf("🔑 match_candidate! FAILURE BRANCH: %d failures, %d dirty — over %d/%d programs routing \
+@printf(
+    "🔑 match_candidate! FAILURE BRANCH: %d failures, %d dirty — over %d/%d programs routing \
 (%d bodies, %d candidates through the binder; mm1 alone is %d of them).\n",
-        MORK.Leapfrog.UNIFY_FAILURES[], MORK.Leapfrog.UNIFY_FAILURES_DIRTY[],
-        routed_programs[], length(rows), routed_bodies[], total_cands, rows[1][2])
+    MORK.Leapfrog.UNIFY_FAILURES[], MORK.Leapfrog.UNIFY_FAILURES_DIRTY[],
+    routed_programs[], length(rows), routed_bodies[], total_cands, rows[1][2])
 MORK.Leapfrog.UNIFY_FAILURES[] == 0 &&
-    println("   ⇒ NEVER TAKEN on this corpus. The unwind there is exercised ONLY by the " *
-            "hand-written case in leapfrog_layer3d.jl. Dead-but-correct, and now labelled.")
+    println(
+        "   ⇒ NEVER TAKEN on this corpus. The unwind there is exercised ONLY by the " *
+        "hand-written case in leapfrog_layer3d.jl. Dead-but-correct, and now labelled."
+    )

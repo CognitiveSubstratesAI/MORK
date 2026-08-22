@@ -195,35 +195,50 @@ ported. `leaves` counts NewVar + VarRef + Symbol (every non-Arity item), `expres
 nodes, `symbols` counts Symbols.
 """
 function expr_leaves(x::MORK.Expr)::Int
-    c = 0; i = 1
+    c = 0
+    i = 1
     @inbounds while i <= length(x.buf)
         t = byte_item(x.buf[i])
-        if t isa ExprSymbol; c += 1; i += 1 + Int(t.size)
-        elseif t isa ExprArity; i += 1
-        else; c += 1; i += 1
+        if t isa ExprSymbol
+            c += 1
+            i += 1 + Int(t.size)
+        elseif t isa ExprArity
+            i += 1
+        else
+            c += 1
+            i += 1
         end
     end
     c
 end
 
 function expr_expressions(x::MORK.Expr)::Int
-    c = 0; i = 1
+    c = 0
+    i = 1
     @inbounds while i <= length(x.buf)
         t = byte_item(x.buf[i])
-        if t isa ExprSymbol; i += 1 + Int(t.size)
-        elseif t isa ExprArity; c += 1; i += 1
-        else; i += 1
+        if t isa ExprSymbol
+            i += 1 + Int(t.size)
+        elseif t isa ExprArity
+            c += 1
+            i += 1
+        else
+            i += 1
         end
     end
     c
 end
 
 function expr_symbols(x::MORK.Expr)::Int
-    c = 0; i = 1
+    c = 0
+    i = 1
     @inbounds while i <= length(x.buf)
         t = byte_item(x.buf[i])
-        if t isa ExprSymbol; c += 1; i += 1 + Int(t.size)
-        else; i += 1
+        if t isa ExprSymbol
+            c += 1
+            i += 1 + Int(t.size)
+        else
+            i += 1
         end
     end
     c
@@ -272,14 +287,14 @@ Upstream marks it `#[deprecated]` and `#[doc(hidden)]`, yet routes its only publ
 point ([`expr_unifiable`]) through it — so the deprecation flags the API, not the behaviour.
 """
 function expr_unify_method(x::MORK.Expr, other::MORK.Expr,
-                           oz::ExprZipper)::Union{Nothing, UnificationFailure}
+    oz::ExprZipper)::Union{Nothing, UnificationFailure}
     stack = [(ExprEnv(0, x), ExprEnv(1, other))]
     bindings = expr_unify(stack)
     bindings isa UnificationFailure && return bindings
 
     cycled = Dict{ExprVar, UInt8}()
     expr_apply(UInt8(0), UInt8(0), UInt8(0), ExprZipper(x, 1), bindings, oz,
-               cycled, ExprVar[], ExprVar[])
+        cycled, ExprVar[], ExprVar[])
     if !isempty(cycled)
         # upstream takes `cycled.first_key_value()` — the BTreeMap's least key, so the choice is
         # ordered, not arbitrary. A Julia Dict has no order, so take the minimum explicitly.
@@ -513,8 +528,8 @@ calls vs 122,933 at 2000 axioms)". Ours, profiled on `mm1_forward_full_proof`: `
 the dominant allocator under the leapfrog.
 """
 function expr_unify_into!(bindings::Bindings,
-                          stack::Vector{Tuple{ExprEnv, ExprEnv}},
-                          trail::Vector{ExprVar})::Union{Bindings, UnificationFailure}
+    stack::Vector{Tuple{ExprEnv, ExprEnv}},
+    trail::Vector{ExprVar})::Union{Bindings, UnificationFailure}
     _expr_unify_core!(stack, bindings, trail)
 end
 
@@ -626,13 +641,13 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
             end
             if tag1 isa ExprSymbol
                 tag2 = tag2::ExprSymbol
-                s1 = Int(tag1.size);
+                s1 = Int(tag1.size)
                 s2 = Int(tag2.size)
                 if s1 != s2
-                    ;
-                    return UnificationFailure(Val(:difference), dt1, dt2);
+
+                    return UnificationFailure(Val(:difference), dt1, dt2)
                 end
-                o1 = Int(dt1.offset);
+                o1 = Int(dt1.offset)
                 o2 = Int(dt2.offset)
                 if dt1.base.buf[(o1 + 2):(o1 + 1 + s1)] !=
                     dt2.base.buf[(o2 + 2):(o2 + 1 + s2)]
@@ -644,14 +659,14 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
                     return UnificationFailure(Val(:difference), dt1, dt2)
                 end
                 # push child pairs with deduplication (mirrors Rust encountered set)
-                children1 = ExprEnv[];
+                children1 = ExprEnv[]
                 ee_args!(dt1, children1)
-                children2 = ExprEnv[];
+                children2 = ExprEnv[]
                 ee_args!(dt2, children2)
                 for i in length(children1):-1:1
-                    c1 = children1[i];
+                    c1 = children1[i]
                     c2 = children2[i]
-                    v1 = ee_var_opt(c1);
+                    v1 = ee_var_opt(c1)
                     v2 = ee_var_opt(c2)
                     # Always push unbound-variable pairs (mirrors Rust special case)
                     if v1 !== nothing && v2 !== nothing && _is_unbound(v1) &&
@@ -851,13 +866,19 @@ end
 
 # Count NewVars in buf[from:to]. Ports Expr::newvars (lib.rs:331).
 function _expr_newvars(buf::AbstractVector{UInt8}, from::Int, to::Int)::Int
-    c = 0; i = from
+    c = 0
+    i = from
     @inbounds while i <= to
         t = byte_item(buf[i])
-        if t isa ExprNewVar; c += 1; i += 1
-        elseif t isa ExprVarRef; i += 1
-        elseif t isa ExprSymbol; i += 1 + Int(t.size)
-        else; i += 1   # Arity
+        if t isa ExprNewVar
+            c += 1
+            i += 1
+        elseif t isa ExprVarRef
+            i += 1
+        elseif t isa ExprSymbol
+            i += 1 + Int(t.size)
+        else
+            i += 1   # Arity
         end
     end
     c
@@ -866,17 +887,24 @@ end
 # Write `sub` to `out` with every VarRef index incremented by `n` (NewVars unchanged). Returns the
 # number of NewVars written. Ports Expr::shift (lib.rs:620).
 function _expr_shift!(sub::AbstractVector{UInt8}, n::Int, out::Vector{UInt8})::Int
-    nvar = 0; i = 1
+    nvar = 0
+    i = 1
     @inbounds while i <= length(sub)
         t = byte_item(sub[i])
         if t isa ExprNewVar
-            push!(out, item_byte(ExprNewVar())); i += 1; nvar += 1
+            push!(out, item_byte(ExprNewVar()))
+            i += 1
+            nvar += 1
         elseif t isa ExprVarRef
-            push!(out, item_byte(ExprVarRef(UInt8(Int(t.idx) + n)))); i += 1
+            push!(out, item_byte(ExprVarRef(UInt8(Int(t.idx) + n))))
+            i += 1
         elseif t isa ExprSymbol
-            m = Int(t.size); append!(out, @view sub[i:(i + m)]); i += m + 1
+            m = Int(t.size)
+            append!(out, @view sub[i:(i + m)])
+            i += m + 1
         else  # Arity
-            push!(out, sub[i]); i += 1
+            push!(out, sub[i])
+            i += 1
         end
     end
     nvar
@@ -885,17 +913,24 @@ end
 # Write `sub` to `out` with NewVar → VarRef(n + running-newvar-count) and VarRef(i) → VarRef(n + i).
 # Ports Expr::bind (lib.rs:598).
 function _expr_bind!(sub::AbstractVector{UInt8}, n::Int, out::Vector{UInt8})
-    var_count = 0; i = 1
+    var_count = 0
+    i = 1
     @inbounds while i <= length(sub)
         t = byte_item(sub[i])
         if t isa ExprNewVar
-            push!(out, item_byte(ExprVarRef(UInt8(n + var_count)))); i += 1; var_count += 1
+            push!(out, item_byte(ExprVarRef(UInt8(n + var_count))))
+            i += 1
+            var_count += 1
         elseif t isa ExprVarRef
-            push!(out, item_byte(ExprVarRef(UInt8(n + Int(t.idx))))); i += 1
+            push!(out, item_byte(ExprVarRef(UInt8(n + Int(t.idx)))))
+            i += 1
         elseif t isa ExprSymbol
-            m = Int(t.size); append!(out, @view sub[i:(i + m)]); i += m + 1
+            m = Int(t.size)
+            append!(out, @view sub[i:(i + m)])
+            i += m + 1
         else  # Arity
-            push!(out, sub[i]); i += 1
+            push!(out, sub[i])
+            i += 1
         end
     end
 end
@@ -916,24 +951,31 @@ end
 # InexactError converting the index back to UInt8. Neither can represent a VarRef above 63 anyway
 # (Rule of 64), so both are already outside the encodable range well before the widths diverge.
 function _expr_substitute_de_bruijn_ivc!(out::Vector{UInt8}, buf::AbstractVector{UInt8},
-        from::Int, to::Int, substitutions::Vector{<:AbstractVector{UInt8}},
-        var_count::Base.RefValue{Int}, additions::Vector{Int})::Vector{UInt8}
+    from::Int, to::Int, substitutions::Vector{<:AbstractVector{UInt8}},
+    var_count::Base.RefValue{Int}, additions::Vector{Int})::Vector{UInt8}
     i = from
     @inbounds while i <= to
         t = byte_item(buf[i])
         if t isa ExprNewVar
-            nvars = _expr_shift!(substitutions[var_count[] + 1], additions[var_count[] + 1], out)
+            nvars = _expr_shift!(
+                substitutions[var_count[] + 1], additions[var_count[] + 1], out
+            )
             var_count[] += 1
-            for j in (var_count[] + 1):length(additions); additions[j] += nvars; end
+            for j in (var_count[] + 1):length(additions)
+                additions[j] += nvars
+            end
             i += 1
         elseif t isa ExprVarRef
             r = Int(t.idx)
             _expr_bind!(substitutions[r + 1], additions[r + 1], out)
             i += 1
         elseif t isa ExprSymbol
-            m = Int(t.size); append!(out, @view buf[i:(i + m)]); i += m + 1
+            m = Int(t.size)
+            append!(out, @view buf[i:(i + m)])
+            i += m + 1
         else  # Arity
-            push!(out, buf[i]); i += 1
+            push!(out, buf[i])
+            i += 1
         end
     end
     out
@@ -941,19 +983,21 @@ end
 
 # Ports Expr::substitute_de_bruijn (lib.rs:571) — the _ivc loop with fresh, private re-basing state.
 function _expr_substitute_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
-        substitutions::Vector{<:AbstractVector{UInt8}})::Vector{UInt8}
+    substitutions::Vector{<:AbstractVector{UInt8}})::Vector{UInt8}
     _expr_substitute_de_bruijn_ivc!(UInt8[], buf, from, to, substitutions,
-                                    Ref(0), zeros(Int, length(substitutions)))
+        Ref(0), zeros(Int, length(substitutions)))
 end
 
 # Substitute the single NewVar at de-Bruijn index `idx` with `substitution` (a complete sub-expr),
 # keeping every other var (identity) but re-based. Ports Expr::substitute_one_de_bruijn (lib.rs:539).
 function _expr_substitute_one_de_bruijn(buf::AbstractVector{UInt8}, from::Int, to::Int,
-        idx::Int, substitution::AbstractVector{UInt8})::Vector{UInt8}
+    idx::Int, substitution::AbstractVector{UInt8})::Vector{UInt8}
     nvs = _expr_newvars(buf, from, to)   # upstream: self.newvars(); vars[idx] indexes it (panics if idx>=nvs)
     subs = Vector{Vector{UInt8}}(undef, nvs)
     nv = UInt8[item_byte(ExprNewVar())]
-    for k in 1:nvs; subs[k] = nv; end
+    for k in 1:nvs
+        subs[k] = nv
+    end
     subs[idx + 1] = Vector{UInt8}(substitution)
     _expr_substitute_de_bruijn(buf, from, to, subs)
 end
@@ -1022,11 +1066,11 @@ end
 upstream `Expr::variables` (lib.rs:344-346) — count of variable ITEMS: every `NewVar` **and** every
 `VarRef`. Not the same as `_expr_newvars`, which counts only the binders.
 """
-expr_variables(x::MORK.Expr, j0::Int = 0)::Int =
+expr_variables(x::MORK.Expr, j0::Int=0)::Int =
     expr_traverseh(nothing, x, j0,
-                   (h, o) -> (h, 1), (h, o, r) -> (h, 1), (h, o, sl) -> (h, 0),
-                   (h, o, a) -> (h, 0), (h, o, acc, sub) -> (h, acc + sub),
-                   (h, o, acc) -> (h, acc))[2]
+        (h, o) -> (h, 1), (h, o, r) -> (h, 1), (h, o, sl) -> (h, 0),
+        (h, o, a) -> (h, 0), (h, o, acc, sub) -> (h, acc + sub),
+        (h, o, acc) -> (h, acc))[2]
 
 """
     expr_is_ground(x) → Bool
@@ -1044,10 +1088,10 @@ distinction is upstream's `Option<u8>` and is preserved here.
 """
 function expr_max_arity(x::MORK.Expr)::Union{Nothing, UInt8}
     expr_traverseh(nothing, x, 0,
-                   (h, o) -> (h, nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
-                   (h, o, a) -> (h, a),
-                   (h, o, acc, sub) -> (h, max(acc, sub === nothing ? UInt8(0) : sub)),
-                   (h, o, acc) -> (h, acc))[2]
+        (h, o) -> (h, nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
+        (h, o, a) -> (h, a),
+        (h, o, acc, sub) -> (h, max(acc, sub === nothing ? UInt8(0) : sub)),
+        (h, o, acc) -> (h, acc))[2]
 end
 
 """
@@ -1061,10 +1105,10 @@ The carried state is that binder count: `|c, _| { *c += 1; false }` on a binder,
 """
 function expr_has_unbound(x::MORK.Expr)::Bool
     expr_traverseh(UInt8(0), x, 0,
-                   (c, o) -> (c + UInt8(1), false),
-                   (c, o, r) -> (c, r >= c),
-                   (c, o, sl) -> (c, false), (c, o, a) -> (c, false),
-                   (c, o, acc, sub) -> (c, acc || sub), (c, o, acc) -> (c, acc))[2]
+        (c, o) -> (c + UInt8(1), false),
+        (c, o, r) -> (c, r >= c),
+        (c, o, sl) -> (c, false), (c, o, a) -> (c, false),
+        (c, o, acc, sub) -> (c, acc || sub), (c, o, acc) -> (c, acc))[2]
 end
 
 """
@@ -1077,13 +1121,13 @@ The carried state is a 64-bit occupancy mask seeded to the low `at` bits. A bind
 free bit (`1 << trailing_ones(c)`); a reference counts 1 only the FIRST time its bit is unset, then
 sets it — so repeated forward references to the same variable count once.
 """
-function expr_forward_references(x::MORK.Expr, at::Integer = 0)::Int
+function expr_forward_references(x::MORK.Expr, at::Integer=0)::Int
     seed = at > 0 ? (typemax(UInt64) >> (64 - at)) : UInt64(0)
     expr_traverseh(seed, x, 0,
-                   (c, o) -> (c | (UInt64(1) << trailing_ones(c)), 0),
-                   (c, o, r) -> ((UInt64(1) << r) & c == 0 ? (c | (UInt64(1) << r), 1) : (c, 0)),
-                   (c, o, sl) -> (c, 0), (c, o, a) -> (c, 0),
-                   (c, o, acc, sub) -> (c, acc + sub), (c, o, acc) -> (c, acc))[2]
+        (c, o) -> (c | (UInt64(1) << trailing_ones(c)), 0),
+        (c, o, r) -> ((UInt64(1) << r) & c == 0 ? (c | (UInt64(1) << r), 1) : (c, 0)),
+        (c, o, sl) -> (c, 0), (c, o, a) -> (c, 0),
+        (c, o, acc, sub) -> (c, acc + sub), (c, o, acc) -> (c, acc))[2]
 end
 
 """
@@ -1207,7 +1251,9 @@ by one (`r > new_var => VarRef(r-1)`).
 Upstream asserts `new_var > refer_to` (strict), unlike `equate_var_inplace` which allows equality.
 """
 function expr_equate_var(x::MORK.Expr, new_var::UInt8, refer_to::UInt8, oz::ExprZipper)
-    new_var > refer_to || throw(ArgumentError("equate_var: new_var ($new_var) must exceed refer_to ($refer_to)"))
+    new_var > refer_to || throw(
+        ArgumentError("equate_var: new_var ($new_var) must exceed refer_to ($refer_to)")
+    )
     ez = ExprZipper(x, 1)
     var_count = 0
     while true
@@ -1243,7 +1289,9 @@ arity nodes are left untouched (upstream's arms are empty), and only variable by
 The precondition is `new_var >= refer_to` here — WEAKER than `equate_var`'s strict `>`.
 """
 function expr_equate_var_inplace!(x::MORK.Expr, new_var::UInt8, refer_to::UInt8)
-    new_var >= refer_to || throw(ArgumentError("equate_var_inplace: new_var ($new_var) < refer_to ($refer_to)"))
+    new_var >= refer_to || throw(
+        ArgumentError("equate_var_inplace: new_var ($new_var) < refer_to ($refer_to)")
+    )
     ez = ExprZipper(x, 1)
     var_count = 0
     while true
@@ -1290,7 +1338,8 @@ function expr_equate_vars_inplace!(x::MORK.Expr, refers::Vector{UInt8})
         elseif t isa ExprVarRef
             r = Int(t.idx)
             # upstream's else arm is a commented-out `unreachable!()` — an unmapped ref is left alone
-            refers[r + 1] != 0xff && (ez.root.buf[ez.loc] = item_byte(ExprVarRef(refers[r + 1])))
+            refers[r + 1] != 0xff &&
+                (ez.root.buf[ez.loc] = item_byte(ExprVarRef(refers[r + 1])))
         end
         ez_next!(ez) || return nothing
     end
@@ -1331,8 +1380,11 @@ struct AntiUnificationFailure <: Exception
 end
 Base.showerror(io::IO, e::AntiUnificationFailure) =
     print(io, "AntiUnificationFailure: ",
-          e.kind === AU_TOO_MANY_VARS ? "> 64 distinct disagreement classes" :
-          "max depth exceeded ($(e.depth))")
+        if e.kind === AU_TOO_MANY_VARS
+            "> 64 distinct disagreement classes"
+        else
+            "max depth exceeded ($(e.depth))"
+        end)
 
 const AU_MAX_DEPTH_LIMIT = 1000        # upstream `const AU_MAX_DEPTH` (lib.rs:2206)
 
@@ -1347,12 +1399,12 @@ function _au_relkey(ee::ExprEnv)::Vector{UInt8}
     out = UInt8[]
     v = Ref(ee.v)
     _ee_traverseh(nothing, ee,
-                  (h, o) -> (push!(out, 0x00); push!(out, v[]); v[] += UInt8(1); (h, nothing)),
-                  (h, o, r) -> (push!(out, 0x00); push!(out, r); (h, nothing)),
-                  (h, o, s) -> (push!(out, 0x01); append!(out, s); (h, nothing)),
-                  (h, o, a) -> (push!(out, 0x02); push!(out, a); (h, nothing)),
-                  (h, o, x, y) -> (h, nothing),
-                  (h, o, acc) -> (h, acc))
+        (h, o) -> (push!(out, 0x00); push!(out, v[]); v[] += UInt8(1); (h, nothing)),
+        (h, o, r) -> (push!(out, 0x00); push!(out, r); (h, nothing)),
+        (h, o, s) -> (push!(out, 0x01); append!(out, s); (h, nothing)),
+        (h, o, a) -> (push!(out, 0x02); push!(out, a); (h, nothing)),
+        (h, o, x, y) -> (h, nothing),
+        (h, o, acc) -> (h, acc))
     out
 end
 
@@ -1372,7 +1424,8 @@ function _au_decomposable(lhs::ExprEnv, rhs::ExprEnv)::Bool
         n = Int(lt.size)
         lo = Int(lhs.offset) + 1
         ro = Int(rhs.offset) + 1
-        return view(lhs.base.buf, (lo + 1):(lo + n)) == view(rhs.base.buf, (ro + 1):(ro + n))
+        return view(lhs.base.buf, (lo + 1):(lo + n)) ==
+               view(rhs.base.buf, (ro + 1):(ro + n))
     elseif lt isa ExprArity && rt isa ExprArity
         return lt.arity == rt.arity
     end
@@ -1478,7 +1531,7 @@ so it does not read as a missed detail.
 (Upstream's `(VarRef, Arity)` branch also carries two leftover `println!` debug lines; not ported.)
 """
 function expr_extract_data(pattern::MORK.Expr,
-                           iz::ExprZipper)::Union{Vector{MORK.Expr}, ExtractFailure}
+    iz::ExprZipper)::Union{Vector{MORK.Expr}, ExtractFailure}
     ez = ExprZipper(pattern, 1)
     bindings = MORK.Expr[]
     while true
@@ -1488,7 +1541,7 @@ function expr_extract_data(pattern::MORK.Expr,
         if dt isa ExprNewVar
             return (ExtractFailure(EF_INTRODUCED_VAR))
         elseif dt isa ExprVarRef
-            return (ExtractFailure(EF_RECURRENT_VAR; idx = dt.idx))
+            return (ExtractFailure(EF_RECURRENT_VAR; idx=dt.idx))
         elseif pt isa ExprNewVar
             push!(bindings, ez_subexpr(iz))
             if dt isa ExprSymbol
@@ -1502,45 +1555,55 @@ function expr_extract_data(pattern::MORK.Expr,
             bt = byte_item(bindings[i + 1].buf[1])
             if dt isa ExprSymbol
                 bt isa ExprSymbol ||
-                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx,
-                                         tag_a = pt, tag_b = dt))
+                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx=pt.idx,
+                        tag_a=pt, tag_b=dt))
                 bt.size == dt.size ||
-                    return (ExtractFailure(EF_REF_SYMBOL_EARLY_MISMATCH; idx = pt.idx, a = bt.size, b = dt.size))
+                    return (ExtractFailure(
+                        EF_REF_SYMBOL_EARLY_MISMATCH; idx=pt.idx, a=bt.size, b=dt.size
+                    ))
                 n = Int(dt.size)
                 av = bindings[i + 1].buf[2:(1 + n)]
                 bv = iz.root.buf[(iz.loc + 1):(iz.loc + n)]
-                av == bv || return (ExtractFailure(EF_REF_SYMBOL_MISMATCH; idx = pt.idx, sym_a = av, sym_b = bv))
+                av == bv || return (ExtractFailure(
+                    EF_REF_SYMBOL_MISMATCH; idx=pt.idx, sym_a=av, sym_b=bv
+                ))
                 ez_next!(iz)
             elseif dt isa ExprArity
                 bt isa ExprArity ||
-                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx,
-                                         tag_a = pt, tag_b = dt))
+                    return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx=pt.idx,
+                        tag_a=pt, tag_b=dt))
                 bt.arity == dt.arity ||
-                    return (ExtractFailure(EF_REF_EXPR_EARLY_MISMATCH; idx = pt.idx, a = bt.arity, b = dt.arity))
+                    return (ExtractFailure(
+                        EF_REF_EXPR_EARLY_MISMATCH; idx=pt.idx, a=bt.arity, b=dt.arity
+                    ))
                 av = collect(expr_span(bindings[i + 1]))
                 bv = collect(expr_span(iz.root, iz.loc))
-                av == bv || return (ExtractFailure(EF_REF_EXPR_MISMATCH; idx = pt.idx, sym_a = av, sym_b = bv))
+                av == bv || return (ExtractFailure(
+                    EF_REF_EXPR_MISMATCH; idx=pt.idx, sym_a=av, sym_b=bv
+                ))
                 ez_next!(iz)
             else
-                return (ExtractFailure(EF_REF_TYPE_MISMATCH; idx = pt.idx, tag_a = pt, tag_b = dt))
+                return (ExtractFailure(
+                    EF_REF_TYPE_MISMATCH; idx=pt.idx, tag_a=pt, tag_b=dt
+                ))
             end
             ez_next!(ez) || return bindings
         elseif pt isa ExprSymbol && dt isa ExprSymbol
             pt.size == dt.size ||
-                return (ExtractFailure(EF_SYMBOL_EARLY_MISMATCH; a = pt.size, b = dt.size))
+                return (ExtractFailure(EF_SYMBOL_EARLY_MISMATCH; a=pt.size, b=dt.size))
             n = Int(pt.size)
             av = ez.root.buf[(ez.loc + 1):(ez.loc + n)]
             bv = iz.root.buf[(iz.loc + 1):(iz.loc + n)]
-            av == bv || return (ExtractFailure(EF_SYMBOL_MISMATCH; sym_a = av, sym_b = bv))
+            av == bv || return (ExtractFailure(EF_SYMBOL_MISMATCH; sym_a=av, sym_b=bv))
             ez_next!(iz)
             ez_next!(ez) || return bindings
         elseif pt isa ExprArity && dt isa ExprArity
             pt.arity == dt.arity ||
-                return (ExtractFailure(EF_EXPR_EARLY_MISMATCH; a = pt.arity, b = dt.arity))
+                return (ExtractFailure(EF_EXPR_EARLY_MISMATCH; a=pt.arity, b=dt.arity))
             ez_next!(iz)
             ez_next!(ez) || return bindings
         else
-            return (ExtractFailure(EF_TYPE_MISMATCH; tag_a = pt, tag_b = dt))
+            return (ExtractFailure(EF_TYPE_MISMATCH; tag_a=pt, tag_b=dt))
         end
     end
 end
@@ -1639,7 +1702,7 @@ Two live consumers upstream (space.rs:542 and space.rs:879), which is why the `_
 at all: it takes a caller-owned output zipper instead of allocating, so a sweep can reuse one buffer.
 """
 function expr_transform_data(x::MORK.Expr, pattern::MORK.Expr, template::MORK.Expr,
-                             oz::ExprZipper)::Union{Nothing, ExtractFailure}
+    oz::ExprZipper)::Union{Nothing, ExtractFailure}
     ez = ExprZipper(x, 1)
     bindings = expr_extract_data(pattern, ez)
     bindings isa ExtractFailure && return bindings
@@ -1675,7 +1738,7 @@ a pattern like `(axiom (= _2 _1))` whose variables are BARE back-references intr
 side. Unification binds across both, which is what upstream's own test vectors exercise.
 """
 function expr_transformed(x::MORK.Expr, template::MORK.Expr,
-                          pattern::MORK.Expr)::Union{MORK.Expr, ExtractFailure}
+    pattern::MORK.Expr)::Union{MORK.Expr, ExtractFailure}
     transformation = UInt8[item_byte(ExprArity(0x02))]
     append!(transformation, template.buf)
     append!(transformation, pattern.buf)
@@ -1742,7 +1805,8 @@ export expr_substitute, expr_transform_data, expr_transformed
 export expr_traverseh_truncated, FoldTruncated, ee_v_incr_traversal
 export expr_leaves, expr_expressions, expr_symbols, expr_difference
 export expr_unify_method, expr_unifiable
-export expr_anti_unify, AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
+export expr_anti_unify,
+    AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!
 export UnificationFailureKind, UNIF_OCCURS, UNIF_DIFFERENCE, UNIF_MAX_ITER
 export UnificationFailure, expr_unify, _expr_unify_inplace!

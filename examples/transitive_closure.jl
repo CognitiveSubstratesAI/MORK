@@ -45,8 +45,8 @@ space_add_all_sexpr!(
 # chain a→b→c→d→e, we need multiple passes: each pass extends paths by
 # one hop. Run until no new reachable pairs are added.
 function saturate!(space)
-    total = 0;
-    prev = 0;
+    total = 0
+    prev = 0
     passes = 0
     while true
         passes += 1

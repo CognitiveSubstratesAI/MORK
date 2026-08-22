@@ -104,8 +104,8 @@ end
 
     @testset "INCREMENTAL == FROM-SCRATCH, by deref (not by map shape)" begin
         pairs = [(_t_var(0, 0), _t_env(1, "(f \$u)")),
-                 (_t_var(0, 1), _t_var(0, 0)),
-                 (_t_var(1, 0), _t_env(3, "c"))]
+            (_t_var(0, 1), _t_var(0, 0)),
+            (_t_var(1, 0), _t_env(3, "c"))]
 
         scratch = MORK.expr_unify(copy(pairs))
         @test !(scratch isa MORK.UnificationFailure)
@@ -126,14 +126,18 @@ end
         for _ in 1:200
             b = MORK.Bindings()
             trail = MORK.ExprVar[]
-            MORK.expr_unify_into!(b, [(_t_env(0, "\$x"), _t_env(1, rand(rng, terms)))], trail)
+            MORK.expr_unify_into!(
+                b, [(_t_env(0, "\$x"), _t_env(1, rand(rng, terms)))], trail
+            )
             base_len, base_closure = length(b), _t_closure(b)
 
             # a nest of marks, unwound in reverse — the shape the join's recursion actually makes
             marks = Int[]
             for d in 1:rand(rng, 1:3)
                 push!(marks, length(trail))
-                MORK.expr_unify_into!(b, [(_t_var(0, d), _t_env(d + 1, rand(rng, terms)))], trail)
+                MORK.expr_unify_into!(
+                    b, [(_t_var(0, d), _t_env(d + 1, rand(rng, terms)))], trail
+                )
             end
             for m in reverse(marks)
                 MORK.expr_unify_unwind!(b, trail, m)

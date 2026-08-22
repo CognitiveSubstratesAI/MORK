@@ -25,8 +25,11 @@ const _E2E_ARITY3 = MORK.item_byte(MORK.ExprArity(0x03))
 function _e2e_prefix(h::AbstractString)
     a = MORK.sexpr_to_expr("($h a a)").buf
     b = MORK.sexpr_to_expr("($h bb bb)").buf
-    k = 0; n = min(length(a), length(b))
-    while k < n && a[k + 1] == b[k + 1]; k += 1; end
+    k = 0
+    n = min(length(a), length(b))
+    while k < n && a[k + 1] == b[k + 1]
+        k += 1
+    end
     a[1:k]
 end
 
@@ -54,11 +57,16 @@ end
 "The two-hop chain `(, (edge \$x \$y) (edge \$y \$z))` as unify-join factors."
 function _e2e_chain()
     head = _E2E.unify_term_col(MORK.sexpr_to_expr("edge"))
-    [ _E2E.UnifyFactor(UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(0), _E2E.unify_var_col(1)]),
-      _E2E.UnifyFactor(UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(1), _E2E.unify_var_col(2)]) ]
+    [
+        _E2E.UnifyFactor(
+            UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(0), _E2E.unify_var_col(1)]
+        ),
+        _E2E.UnifyFactor(
+            UInt8[_E2E_ARITY3], [head, _E2E.unify_var_col(1), _E2E.unify_var_col(2)]
+        )]
 end
 
-_e2e_space(src) = (s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
+_e2e_space(src) = (s=MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
 const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
 
 @testset "leapfrog end-to-end vs the live engine" begin
@@ -92,8 +100,8 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
 
     @testset "wildcards in BOTH columns, and the degenerate spaces" begin
         for (src, nv) in [("(edge a b)\n(edge \$u \$v)\n(edge b c)\n", 3),
-                          ("(edge a b)\n", 3),
-                          ("(zzz q)\n", 3)]
+            ("(edge a b)\n", 3),
+            ("(zzz q)\n", 3)]
             s = _e2e_space(src)
             @test _e2e_unify(s, _e2e_chain(), nv) == _e2e_engine(s, _E2E_CHAIN_BODY)
         end
@@ -121,8 +129,16 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # ships it, and no test here forces it. Absence of a failure is not proof it is dead code.
         mk(rel, c1, c2) = _E2E.UnifyFactor(UInt8[_E2E_ARITY3],
             [_E2E.unify_term_col(MORK.sexpr_to_expr(rel)),
-             c1 isa Int ? _E2E.unify_var_col(c1) : _E2E.unify_term_col(MORK.sexpr_to_expr(c1[1]), c1[2]),
-             c2 isa Int ? _E2E.unify_var_col(c2) : _E2E.unify_term_col(MORK.sexpr_to_expr(c2[1]), c2[2])])
+                if c1 isa Int
+                    _E2E.unify_var_col(c1)
+                else
+                    _E2E.unify_term_col(MORK.sexpr_to_expr(c1[1]), c1[2])
+                end,
+                if c2 isa Int
+                    _E2E.unify_var_col(c2)
+                else
+                    _E2E.unify_term_col(MORK.sexpr_to_expr(c2[1]), c2[2])
+                end])
 
         cyc = [mk("edge", 0, ("(f \$x)", 0))]
         s1 = _e2e_space("(edge \$w \$w)\n")
@@ -179,7 +195,7 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         code = join([l for l in split(layer4, '\n') if !startswith(strip(l), "#")], '\n')
 
         for f in ("ground_probe!", "stored_wildcard_bytes", "match_candidate!",
-                  "with_bound_bytes!", "cursor_var_counts", "cursor_floor_child_mask")
+            "with_bound_bytes!", "cursor_var_counts", "cursor_floor_child_mask")
             @test occursin(f * "(", code)          # genuinely called from layer 4's body
         end
 
@@ -190,7 +206,7 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         # They gate `fill_lead_candidates!`'s mutual seek: pruning is legal only where unifiability
         # IS equality, and these two are what establish that.
         for f in ("column_matches_by_equality", "is_symbol_head", "fill_lead_candidates!",
-                  "partition_restrictors!", "rank_parts!")
+            "partition_restrictors!", "rank_parts!")
             @test occursin(f * "(", code)
         end
 
@@ -226,7 +242,8 @@ const _E2E_CHAIN_BODY = "(, (edge \$x \$y) (edge \$y \$z))"
         for (root, _, files) in walkdir(srcdir), fn in files
             endswith(fn, ".jl") || continue
             fn == "Leapfrog.jl" && continue
-            occursin("unify_leapfrog(", read(joinpath(root, fn), String)) && push!(callers, fn)
+            occursin("unify_leapfrog(", read(joinpath(root, fn), String)) &&
+                push!(callers, fn)
         end
         @test callers == ["LeapfrogEntry.jl"]        # reachable, from exactly one place
 

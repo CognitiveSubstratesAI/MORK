@@ -31,16 +31,16 @@ Julia translation notes:
 abstract type CZ3Item end
 struct CZ3NewVar <: CZ3Item end
 struct CZ3VarRef <: CZ3Item
-    ;
-    index::UInt8;
+
+    index::UInt8
 end
 struct CZ3Symbol <: CZ3Item
-    ;
-    value::UInt32;
+
+    value::UInt32
 end
 struct CZ3Arity <: CZ3Item
-    ;
-    arity::UInt8;
+
+    arity::UInt8
 end
 
 # =====================================================================
@@ -78,41 +78,41 @@ CZ3ExprZipper() = CZ3ExprZipper(CZ3Item[])
 
 function _cz3_write_arity!(z::CZ3ExprZipper, a::UInt8)
     if z.loc > length(z.buf)
-        ;
+
         push!(z.buf, CZ3Arity(a))
     else
-        ;
-        z.buf[z.loc] = CZ3Arity(a);
+
+        z.buf[z.loc] = CZ3Arity(a)
     end
 end
 
 function _cz3_write_symbol!(z::CZ3ExprZipper, v::UInt32)
     if z.loc > length(z.buf)
-        ;
+
         push!(z.buf, CZ3Symbol(v))
     else
-        ;
-        z.buf[z.loc] = CZ3Symbol(v);
+
+        z.buf[z.loc] = CZ3Symbol(v)
     end
 end
 
 function _cz3_write_new_var!(z::CZ3ExprZipper)
     if z.loc > length(z.buf)
-        ;
+
         push!(z.buf, CZ3NewVar())
     else
-        ;
-        z.buf[z.loc] = CZ3NewVar();
+
+        z.buf[z.loc] = CZ3NewVar()
     end
 end
 
 function _cz3_write_var_ref!(z::CZ3ExprZipper, idx::UInt8)
     if z.loc > length(z.buf)
-        ;
+
         push!(z.buf, CZ3VarRef(idx))
     else
-        ;
-        z.buf[z.loc] = CZ3VarRef(idx);
+
+        z.buf[z.loc] = CZ3VarRef(idx)
     end
 end
 
@@ -150,8 +150,8 @@ CZ3Iter(s::String) = CZ3Iter(Vector{UInt8}(s), 1)
 _cz3_has_next(it::CZ3Iter) = it.cursor <= length(it.data)
 _cz3_head(it::CZ3Iter) = _cz3_has_next(it) ? Char(it.data[it.cursor]) : '\0'
 function _cz3_next!(it::CZ3Iter)::Char
-    c = Char(it.data[it.cursor]);
-    it.cursor += 1;
+    c = Char(it.data[it.cursor])
+    it.cursor += 1
     c
 end
 
@@ -179,7 +179,7 @@ function cz3_sexpr!(p::CZ3Parser, it::CZ3Iter,
 
         if c == ';'
             while _cz3_has_next(it) && _cz3_next!(it) != '\n'
-                ;
+
             end
 
         elseif _cz3_is_whitespace(c)
@@ -229,21 +229,21 @@ function cz3_sexpr!(p::CZ3Parser, it::CZ3Iter,
         else
             sym_str = if _cz3_has_next(it) && _cz3_head(it) == '"'
                 _cz3_next!(it)
-                sb = IOBuffer();
+                sb = IOBuffer()
                 write(sb, '"')
                 cont = true
                 while _cz3_has_next(it) && cont
                     ch = _cz3_next!(it)
                     if ch == '"'
-                        ;
-                        write(sb, '"');
+
+                        write(sb, '"')
                         cont = false
                     elseif ch == '\\'
                         _cz3_has_next(it) || error("Escaping sequence is not finished")
                         write(sb, _cz3_next!(it))
                     else
-                        ;
-                        write(sb, ch);
+
+                        write(sb, ch)
                     end
                 end
                 String(take!(sb))

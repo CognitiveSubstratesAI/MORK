@@ -230,9 +230,13 @@ function source_factor(s::CmpSource, btm::PathMap{UnitVal})
                 # three-way unwrap PathMap's own prestrict uses. (Was: `read_zipper` on the
                 # raw AlgResElement → MethodError; source_cmp_ne / source_cmp_rel crashed.)
                 res = psubtract(btm, single)
-                complement = res isa AlgResElement ? res.value :
-                             res isa AlgResIdentity ? btm :
-                             PathMap{UnitVal}()
+                complement = if res isa AlgResElement
+                    res.value
+                elseif res isa AlgResIdentity
+                    btm
+                else
+                    PathMap{UnitVal}()
+                end
                 return (payload, read_zipper(complement))
             end
         else
@@ -485,8 +489,8 @@ function _grounded_decode_args(expr::MORK.Expr)::Vector{String}
         s = try
             expr_serialize(Vector{UInt8}(span))
         catch
-            ;
-            bytes2hex(Vector{UInt8}(span));
+
+            bytes2hex(Vector{UInt8}(span))
         end
         push!(result, s)
     end
@@ -524,7 +528,12 @@ end
 # handle, mirroring upstream's per-space `z3s` map at the session granularity that actually works here).
 const _Z3_BIN = Ref{String}("z3")
 const _Z3_POOL = Dict{String, Base.Process}()
-z3_available() = try; success(`$(_Z3_BIN[]) --version`); catch; false; end
+z3_available() =
+    try
+        success(`$(_Z3_BIN[]) --version`)
+    catch
+        false
+    end
 function z3_instance!(name::AbstractString)::Base.Process
     p = get(_Z3_POOL, name, nothing)
     (p !== nothing && process_running(p)) && return p
@@ -533,7 +542,16 @@ function z3_instance!(name::AbstractString)::Base.Process
     proc
 end
 "Close all live z3 subprocesses and clear the pool (session cleanup / test isolation)."
-z3_reset!() = (for p in values(_Z3_POOL); try; close(p); catch; end; end; empty!(_Z3_POOL); nothing)
+z3_reset!() = (
+    for p in values(_Z3_POOL)
+        try
+            close(p)
+        catch
+        end
+    end;
+    empty!(_Z3_POOL);
+    nothing
+)
 
 struct Z3Source
     expr::MORK.Expr
@@ -542,22 +560,27 @@ end
 source_requests(s::Z3Source) = [ResourceRequest(RREQ_Z3, s.ins)]
 
 function source_factor(s::Z3Source, btm::PathMap{UnitVal})
-    prefix = UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))), UInt8('z'), UInt8('3'),
-                   item_byte(ExprSymbol(UInt8(length(s.ins))))]
+    prefix = UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(2))),
+        UInt8('z'), UInt8('3'),
+        item_byte(ExprSymbol(UInt8(length(s.ins))))]
     append!(prefix, codeunits(s.ins))
     model = PathMap{UnitVal}()
     proc = z3_instance!(s.ins)
-    write(proc, "(check-sat)\n(get-model)\n"); flush(proc)
+    write(proc, "(check-sat)\n(get-model)\n")
+    flush(proc)
     if strip(readline(proc)) == "sat"                          # read model lines until the lone closing ")"
         lines = String[]
         while true
-            ln = readline(proc); push!(lines, ln)
+            ln = readline(proc)
+            push!(lines, ln)
             (strip(ln) == ")" || eof(proc)) && break
         end
         text = strip(join(lines, "\n"))
         if length(text) >= 2                                    # strip the outer ( … ) wrapper (upstream v[1..last])
             inner = text[nextind(text, firstindex(text)):prevind(text, lastindex(text))]
-            tmp = new_space(); space_add_all_sexpr!(tmp, inner); model = tmp.btm
+            tmp = new_space()
+            space_add_all_sexpr!(tmp, inner)
+            model = tmp.btm
         end
     end
     PrefixZipper(prefix, read_zipper_at_path(model, UInt8[]))
@@ -572,7 +595,9 @@ Union type dispatching to the correct concrete source implementation.
 Mirrors `ASource` enum in sources.rs; extended with `GroundedSource`
 for Julia-native grounded function dispatch (Phase 2) and `Z3Source` (real SMT).
 """
-const ASource = Union{CompatSource, BTMSource, ACTSource, CmpSource, GroundedSource, Z3Source}
+const ASource = Union{
+    CompatSource, BTMSource, ACTSource, CmpSource, GroundedSource, Z3Source
+}
 
 """
     asource_new(expr) → ASource

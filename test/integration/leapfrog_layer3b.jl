@@ -20,10 +20,18 @@ _b(s) = MORK.sexpr_to_expr(s).buf
     @testset "🔴 every SYMBOL byte sorts above every COMPOUND and VARIABLE byte" begin
         syms, vars, arities, reserved = UInt8[], UInt8[], UInt8[], UInt8[]
         for b in 0x00:0xFF
-            t = try MORK.byte_item(b) catch; push!(reserved, b); continue end
-            if     t isa MORK.ExprSymbol; push!(syms, b)
-            elseif t isa MORK.ExprNewVar || t isa MORK.ExprVarRef; push!(vars, b)
-            elseif t isa MORK.ExprArity;  push!(arities, b)
+            t = try
+                MORK.byte_item(b)
+            catch
+                push!(reserved, b)
+                continue
+            end
+            if t isa MORK.ExprSymbol
+                push!(syms, b)
+            elseif t isa MORK.ExprNewVar || t isa MORK.ExprVarRef
+                push!(vars, b)
+            elseif t isa MORK.ExprArity
+                push!(arities, b)
             end
         end
         # ANTI-VACUITY: each class must be non-empty or the comparisons below hold trivially.
@@ -35,9 +43,9 @@ _b(s) = MORK.sexpr_to_expr(s).buf
 
         # …and the exact boundaries upstream's comment names, so a drift is legible not just failing.
         @test maximum(arities) == 0x3F
-        @test minimum(vars)    == 0x80
-        @test maximum(vars)    == 0xC0          # NewVar is the top of the variable range
-        @test minimum(syms)    == 0xC1
+        @test minimum(vars) == 0x80
+        @test maximum(vars) == 0xC0          # NewVar is the top of the variable range
+        @test minimum(syms) == 0xC1
         @test reserved == collect(0x40:0x7F)    # our byte_item throws exactly here
     end
 
@@ -65,9 +73,11 @@ _b(s) = MORK.sexpr_to_expr(s).buf
     end
 
     @testset "column_matches_by_equality — a stored variable disables pruning" begin
-        mk(bs) = (bits = PathMap.EMPTY_BITS4;
-                  for b in bs; bits = PathMap.with_bit_set(bits, UInt8(b)); end;
-                  PathMap.ByteMask(bits))
+        mk(bs) = (bits=PathMap.EMPTY_BITS4;
+            for b in bs
+                bits = PathMap.with_bit_set(bits, UInt8(b))
+            end;
+            PathMap.ByteMask(bits))
 
         # Only symbols present ⇒ equality is the only way to match ⇒ prunable.
         @test _LF.column_matches_by_equality(mk([0xC1, 0xD0, 0xFF]))
@@ -85,7 +95,7 @@ _b(s) = MORK.sexpr_to_expr(s).buf
 
         # BOUNDARY, both sides: 0xC0 (NewVar) is a variable, 0xC1 (the least symbol) is not.
         @test !_LF.column_matches_by_equality(mk([0xC0]))
-        @test  _LF.column_matches_by_equality(mk([0xC1]))
+        @test _LF.column_matches_by_equality(mk([0xC1]))
     end
 
     @testset "the predicates agree on a real stored wildcard" begin

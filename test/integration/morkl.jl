@@ -10,10 +10,10 @@ is_pm(x) = x isa PathMap.PathMap
     it = CfIter(mask)
     bits = UInt8[]
     for _ in 1:10
-        ;
-        b = cfiter_next!(it);
-        b === nothing && break;
-        push!(bits, b);
+
+        b = cfiter_next!(it)
+        b === nothing && break
+        push!(bits, b)
     end
     @test bits == UInt8[0, 1, 3]
 

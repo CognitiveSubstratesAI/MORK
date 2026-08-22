@@ -66,8 +66,8 @@ space_add_all_sexpr!(
 println("Initial alive cells:")
 initial = filter(l -> startswith(l, "(alive"), split(space_dump_all_sexpr(s), "\n"))
 for c in initial
-    ;
-    println("  $c");
+
+    println("  $c")
 end
 
 # Hexlife converges in O(alive_cells) steps — numbered execs (0-4) are not self-referential
@@ -78,7 +78,7 @@ alive_after = filter(l -> startswith(l, "(alive"), split(result, "\n"))
 println("\nAfter $steps steps ($(round(hl_elapsed*1000, digits=1)) ms):")
 println("Alive cells: $(length(alive_after))")
 for c in alive_after
-    ;
-    println("  $c");
+
+    println("  $c")
 end
 println("\nDone!")

@@ -33,14 +33,19 @@
 # of this tool against space.rs reported 39 of 40 "missing" because `space_` was not in the list.
 
 function strip_comments(src::AbstractString)::String
-    out = IOBuffer(); i = 1; n = lastindex(src)
+    out = IOBuffer()
+    i = 1
+    n = lastindex(src)
     while i <= n
         if i + 1 <= n && src[i] == '/' && src[i + 1] == '/'
-            j = findnext('\n', src, i); i = j === nothing ? n + 1 : j
+            j = findnext('\n', src, i)
+            i = j === nothing ? n + 1 : j
         elseif i + 1 <= n && src[i] == '/' && src[i + 1] == '*'
-            j = findnext("*/", src, i); i = j === nothing ? n + 1 : last(j) + 1
+            j = findnext("*/", src, i)
+            i = j === nothing ? n + 1 : last(j) + 1
         else
-            write(out, src[i]); i = nextind(src, i)
+            write(out, src[i])
+            i = nextind(src, i)
         end
     end
     String(take!(out))
@@ -60,7 +65,8 @@ function drop_gated(src::AbstractString, attr::AbstractString)::String
         m === nothing && return s
         b = findnext('{', s, last(m))
         b === nothing && return s
-        d = 0; k = b
+        d = 0
+        k = b
         while k <= lastindex(s)
             s[k] == '{' && (d += 1)
             s[k] == '}' && (d -= 1; d == 0 && break)
@@ -86,7 +92,10 @@ function default_features(path::AbstractString)::Set{String}
         if isfile(f)
             m = match(r"^\s*default\s*=\s*\[([^\]]*)\]"m, read(f, String))
             m === nothing && return Set{String}()
-            return Set{String}(strip(x, [' ', '"', '\t']) for x in split(m.captures[1], ",") if !isempty(strip(x)))
+            return Set{String}(
+                strip(x, [' ', '"', '\t']) for
+                x in split(m.captures[1], ",") if !isempty(strip(x))
+            )
         end
         nd = dirname(d)
         nd == d && return Set{String}()
@@ -97,7 +106,10 @@ end
 "`pub fn`s under a cfg(feature=…) gate, split into enabled-by-default (port surface) and not."
 function feature_gated(src::AbstractString, defaults::Set{String})
     on, off = String[], String[]
-    for m in eachmatch(r"#\[cfg\(feature\s*=\s*\"([^\"]+)\"\)\]\s*(?:pub )?fn\s+([A-Za-z_][A-Za-z0-9_]*)", src)
+    for m in eachmatch(
+        r"#\[cfg\(feature\s*=\s*\"([^\"]+)\"\)\]\s*(?:pub )?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+        src
+    )
         feat, fn = m.captures[1], m.captures[2]
         push!(feat in defaults ? on : off, fn * "  (feature=\"" * feat * "\")")
     end
@@ -107,15 +119,17 @@ end
 snake(n) = lowercase(replace(n, r"(?<!^)(?=[A-Z])" => "_"))
 
 # Every owner-prefix convention this port uses. See the PREFIXES note in the header.
-const PREFIXES = ("", "expr_", "ez_", "ee_", "_expr_", "space_", "_space_", "sink_", "_sink_",
-                  "source_", "_source_", "pure_", "_pure_", "scope_", "eval_", "trie_", "morkl_",
-                  "fe_", "sexpr_", "json_", "dyck_", "zipper_", "_",
-                  # PathMap conventions
-                  "wz_", "_wz_", "rz_", "_rz_", "node_", "_node_", "bn_", "_bn_", "ll_", "_ll_",
-                  "pm_", "_pm_", "zh_", "_zh_", "trie_", "_trie_", "cf_", "_cf_")
+const PREFIXES = ("", "expr_", "ez_", "ee_", "_expr_", "space_", "_space_", "sink_",
+    "_sink_",
+    "source_", "_source_", "pure_", "_pure_", "scope_", "eval_", "trie_", "morkl_",
+    "fe_", "sexpr_", "json_", "dyck_", "zipper_", "_",
+    # PathMap conventions
+    "wz_", "_wz_", "rz_", "_rz_", "node_", "_node_", "bn_", "_bn_", "ll_", "_ll_",
+    "pm_", "_pm_", "zh_", "_zh_", "trie_", "_trie_", "cf_", "_cf_")
 
 function main(args)
-    isempty(args) && (println("usage: rust_fn_inventory.jl <upstream.rs> [our_dirs...]"); return)
+    isempty(args) &&
+        (println("usage: rust_fn_inventory.jl <upstream.rs> [our_dirs...]"); return nothing)
     rs = args[1]
     dirs = length(args) > 1 ? args[2:end] : ["src"]
 
@@ -123,28 +137,54 @@ function main(args)
     defaults = default_features(rs)
     gated_on, gated_off = feature_gated(raw, defaults)
     clean = drop_gated(raw, "#[cfg(test)]")
-    names = sort(unique(String[m.captures[1] for m in eachmatch(r"\bpub fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
+    names = sort(
+        unique(
+            String[
+                m.captures[1] for
+                m in eachmatch(r"\bpub fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)
+            ]
+        )
+    )
     # `pub(crate) fn` and type definitions are ALSO port surface. They are reported separately
     # because they are noisier, but leaving them out understates: `WriteResourceRequest` --- an enum
     # plus a pub(crate) `pjoin` --- was wholly absent while this tool reported sinks.rs clean.
-    crate_fns = sort(unique(String[m.captures[1] for m in
-        eachmatch(r"\bpub\(crate\)\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
-    types = sort(unique(String[m.captures[1] for m in
-        eachmatch(r"\bpub(?:\(crate\))?\s+(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)", clean)]))
+    crate_fns = sort(
+        unique(
+            String[
+                m.captures[1] for m in
+                eachmatch(r"\bpub\(crate\)\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)", clean)
+            ]
+        )
+    )
+    types = sort(
+        unique(
+            String[
+                m.captures[1] for m in
+                eachmatch(
+                    r"\bpub(?:\(crate\))?\s+(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                    clean
+                )
+            ]
+        )
+    )
 
     ours = IOBuffer()
     for d in dirs, (root, _, files) in walkdir(d), f in files
         endswith(f, ".jl") && write(ours, read(joinpath(root, f), String), "\n")
     end
     body = String(take!(ours))
-    defs = Set{String}(m.captures[1] for m in
-        eachmatch(r"^\s*(?:function\s+|const\s+)?([A-Za-z_][A-Za-z0-9_!]*)\s*(?:\(|=)"m, body))
+    defs = Set{String}(
+        m.captures[1] for m in
+        eachmatch(
+            r"^\s*(?:function\s+|const\s+)?([A-Za-z_][A-Za-z0-9_!]*)\s*(?:\(|=)"m, body
+        )
+    )
     # TYPE definitions too, or every ported struct reads as absent — `WASMSink` did, because the
     # function pattern above matches `name(` / `name =` and a `struct Foo <: Bar` matches neither.
     for pat in (r"^\s*(?:mutable\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)"m,
-                r"^\s*abstract\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m,
-                r"^\s*@enum\s+([A-Za-z_][A-Za-z0-9_]*)"m,
-                r"^\s*primitive\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m)
+        r"^\s*abstract\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m,
+        r"^\s*@enum\s+([A-Za-z_][A-Za-z0-9_]*)"m,
+        r"^\s*primitive\s+type\s+([A-Za-z_][A-Za-z0-9_]*)"m)
         for m in eachmatch(pat, body)
             push!(defs, m.captures[1])
         end
@@ -154,7 +194,7 @@ function main(args)
         # strip BOTH a leading and a trailing underscore: upstream's `_unify` is `expr_unify`, and
         # its `transform_multi_multi_` is `space_transform_multi_multi!`.
         bases = Set{String}([n, snake(n), strip(n, '_'), strip(snake(n), '_'),
-                             lstrip(n, '_'), lstrip(snake(n), '_')])
+            lstrip(n, '_'), lstrip(snake(n), '_')])
         for b in bases, pre in PREFIXES
             (pre * b in defs || pre * b * "!" in defs) && return true
         end
@@ -171,26 +211,44 @@ function main(args)
         println("    ", m)
     end
     miss_crate = filter(!present, crate_fns)
-    miss_types = filter(t -> !(t in defs || snake(t) in defs ||
-                               any(p * snake(t) in defs for p in PREFIXES)), types)
+    miss_types = filter(
+        t -> !(t in defs || snake(t) in defs ||
+          any(p * snake(t) in defs for p in PREFIXES)), types)
     if !isempty(miss_crate)
         println()
-        println("pub(crate) fn with no definition (", length(miss_crate), " of ", length(crate_fns), "):")
+        println(
+            "pub(crate) fn with no definition (",
+            length(miss_crate),
+            " of ",
+            length(crate_fns),
+            "):"
+        )
         for m in miss_crate
             println("    ", m)
         end
     end
     if !isempty(miss_types)
         println()
-        println("pub struct/enum/trait with no definition (", length(miss_types), " of ", length(types), "):")
+        println(
+            "pub struct/enum/trait with no definition (",
+            length(miss_types),
+            " of ",
+            length(types),
+            "):"
+        )
         for m in miss_types
             println("    ", m)
         end
     end
     println()
-    println("Cargo.toml default features: ", isempty(defaults) ? "(none found)" : join(sort(collect(defaults)), ", "))
+    println(
+        "Cargo.toml default features: ",
+        isempty(defaults) ? "(none found)" : join(sort(collect(defaults)), ", ")
+    )
     if !isempty(gated_on)
-        println("cfg(feature=…) gates that are ON by default — PORT SURFACE, listed above if absent:")
+        println(
+            "cfg(feature=…) gates that are ON by default — PORT SURFACE, listed above if absent:"
+        )
         for g in gated_on
             println("    ", g)
         end
@@ -202,7 +260,9 @@ function main(args)
         end
     end
     println()
-    println("⚠️  CANDIDATES, NOT VERDICTS — filter by hand for renames, deliberate non-ports, and")
+    println(
+        "⚠️  CANDIDATES, NOT VERDICTS — filter by hand for renames, deliberate non-ports, and"
+    )
     println("    constructs with no Julia function (see this file's header).")
 end
 

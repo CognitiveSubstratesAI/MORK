@@ -32,9 +32,9 @@ end
 
 @testset "prefix-scoped query — region isolation, no prefix-byte leak" begin
     s = new_space()
-    _addp(s.btm, "a/", "(foo 1)");
+    _addp(s.btm, "a/", "(foo 1)")
     _addp(s.btm, "a/", "(bar 1)")
-    _addp(s.btm, "b/", "(foo 2)");
+    _addp(s.btm, "b/", "(foo 2)")
     _addp(s.btm, "b/", "(bar 2)")
     pat = sexpr_to_expr("(, (foo \$x) (bar \$x))")
 
@@ -46,7 +46,7 @@ end
             pat,
             (b, path) -> begin
                 buf = path isa MORK.Expr ? path.buf : collect(UInt8, path)
-                push!(out, expr_serialize(buf));
+                push!(out, expr_serialize(buf))
                 true
             end
         )

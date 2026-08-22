@@ -19,8 +19,11 @@ const _LF = MORK.Leapfrog
 _lf3_prefix(h, arity) = begin
     a = MORK.sexpr_to_expr("($h " * join(fill("a", arity), " ") * ")").buf
     b = MORK.sexpr_to_expr("($h " * join(fill("bb", arity), " ") * ")").buf
-    k = 0; n = min(length(a), length(b))
-    while k < n && a[k + 1] == b[k + 1]; k += 1; end
+    k = 0
+    n = min(length(a), length(b))
+    while k < n && a[k + 1] == b[k + 1]
+        k += 1
+    end
     a[1:k]
 end
 
@@ -35,9 +38,12 @@ end
 function _lf3_engine(space, body::String)
     pat = MORK.sexpr_to_expr(body)
     out = Set{String}()
-    MORK.space_query_multi(space.btm, pat, (_b, loc) -> begin
-        push!(out, strip(MORK.expr_serialize(loc))); true
-    end)
+    MORK.space_query_multi(
+        space.btm, pat, (_b, loc) -> begin
+            push!(out, strip(MORK.expr_serialize(loc)))
+            true
+        end
+    )
     out
 end
 
@@ -45,7 +51,9 @@ end
 
     @testset "2-factor chain join agrees with the engine on COUNT" begin
         s = MORK.new_space()
-        MORK.space_add_all_sexpr!(s, "(edge a b)\n(edge b c)\n(edge b d)\n(edge c e)\n(edge d e)\n")
+        MORK.space_add_all_sexpr!(
+            s, "(edge a b)\n(edge b c)\n(edge b d)\n(edge c e)\n(edge d e)\n"
+        )
 
         # (, (edge $x $y) (edge $y $z))  — variables 1,2 / 2,3
         p = _lf3_prefix("edge", 2)
@@ -79,14 +87,16 @@ end
         p = _lf3_prefix("edge", 2)
         # (edge $1 $2)(edge $1 $3)(edge $1 $4)(edge $2 $3)(edge $2 $4)(edge $3 $4)
         factors = [_LF.GroundFactor(p, [1, 2]), _LF.GroundFactor(p, [1, 3]),
-                   _LF.GroundFactor(p, [1, 4]), _LF.GroundFactor(p, [2, 3]),
-                   _LF.GroundFactor(p, [2, 4]), _LF.GroundFactor(p, [3, 4])]
+            _LF.GroundFactor(p, [1, 4]), _LF.GroundFactor(p, [2, 3]),
+            _LF.GroundFactor(p, [2, 4]), _LF.GroundFactor(p, [3, 4])]
         got = _lf3_leapfrog(s, factors, 4)
 
         n_engine = Ref(0)
         MORK.space_query_multi(s.btm,
-            MORK.sexpr_to_expr("(, (edge \$a \$b) (edge \$a \$c) (edge \$a \$d) " *
-                               "(edge \$b \$c) (edge \$b \$d) (edge \$c \$d))"),
+            MORK.sexpr_to_expr(
+                "(, (edge \$a \$b) (edge \$a \$c) (edge \$a \$d) " *
+                "(edge \$b \$c) (edge \$b \$d) (edge \$c \$d))"
+            ),
             (_b, _l) -> (n_engine[] += 1; true))
 
         @test n_engine[] > 0                        # anti-vacuity for the comparison

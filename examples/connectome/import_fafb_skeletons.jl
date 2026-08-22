@@ -46,13 +46,13 @@ r      — radius in nm
 parent — parent node id (-1 = root)
 """
 struct SWCNode
-    id     :: Int32
-    typ    :: UInt8
-    x      :: Float32
-    y      :: Float32
-    z      :: Float32
-    r      :: Float32
-    parent :: Int32
+    id::Int32
+    typ::UInt8
+    x::Float32
+    y::Float32
+    z::Float32
+    r::Float32
+    parent::Int32
 end
 
 """
@@ -77,8 +77,8 @@ function parse_swc(path::AbstractString)::Vector{SWCNode}
                 parse(Float32, toks[4]),
                 parse(Float32, toks[5]),
                 parse(Float32, toks[6]),
-                parse(Int32, toks[7]),
-            ),
+                parse(Int32, toks[7])
+            )
         )
     end
     nodes
@@ -92,17 +92,17 @@ by junctions (soma/forks) or endpoints. Carries enough info for the MORK
 atom: endpoint types + coords, accumulated path length, mean radius, count.
 """
 struct Branch
-    st    :: UInt8    # SWC type of start node
-    sx    :: Float32
-    sy    :: Float32
-    sz    :: Float32
-    et    :: UInt8    # SWC type of end node
-    ex    :: Float32
-    ey    :: Float32
-    ez    :: Float32
-    len   :: Float32   # cumulative euclidean length along the branch
-    rad   :: Float32   # mean radius across the branch
-    nnode :: Int32     # number of nodes in the branch (≥ 2)
+    st::UInt8    # SWC type of start node
+    sx::Float32
+    sy::Float32
+    sz::Float32
+    et::UInt8    # SWC type of end node
+    ex::Float32
+    ey::Float32
+    ez::Float32
+    len::Float32   # cumulative euclidean length along the branch
+    rad::Float32   # mean radius across the branch
+    nnode::Int32     # number of nodes in the branch (≥ 2)
 end
 
 """
@@ -163,8 +163,8 @@ function decompose_branches(nodes::Vector{SWCNode})::Vector{Branch}
         is_junction(start_i) || continue
         for next_i in children[start_i]
             # Walk start_i → next_i → ... until we hit another junction.
-            sx = nodes[start_i].x;
-            sy = nodes[start_i].y;
+            sx = nodes[start_i].x
+            sy = nodes[start_i].y
             sz = nodes[start_i].z
             st = nodes[start_i].typ
             cur_i = next_i
@@ -173,19 +173,31 @@ function decompose_branches(nodes::Vector{SWCNode})::Vector{Branch}
             count = 1   # start node counts
             prev_x, prev_y, prev_z = sx, sy, sz
             while true
-                nx        = nodes[cur_i].x;
-                ny        = nodes[cur_i].y;
-                nz        = nodes[cur_i].z
-                dx        = nx - prev_x;
-                dy        = ny - prev_y;
-                dz        = nz - prev_z
+                nx = nodes[cur_i].x
+                ny = nodes[cur_i].y
+                nz = nodes[cur_i].z
+                dx = nx - prev_x
+                dy = ny - prev_y
+                dz = nz - prev_z
                 len_total += sqrt(dx*dx + dy*dy + dz*dz)
-                rad_sum   += nodes[cur_i].r
-                count     += 1
+                rad_sum += nodes[cur_i].r
+                count += 1
                 if is_junction(cur_i)
                     push!(
                         branches,
-                        Branch(st, sx, sy, sz, nodes[cur_i].typ, nx, ny, nz, len_total, rad_sum / count, Int32(count)),
+                        Branch(
+                            st,
+                            sx,
+                            sy,
+                            sz,
+                            nodes[cur_i].typ,
+                            nx,
+                            ny,
+                            nz,
+                            len_total,
+                            rad_sum / count,
+                            Int32(count)
+                        )
                     )
                     break
                 end
@@ -220,7 +232,9 @@ const SKEL_HEAD = codeunits("skel-br")
     append!(buf, s)
 end
 
-@inline function emit_branch!(btm, buf::Vector{UInt8}, root_id::UInt64, bid::Int32, b::Branch)
+@inline function emit_branch!(
+    btm, buf::Vector{UInt8}, root_id::UInt64, bid::Int32, b::Branch
+)
     empty!(buf)
     # Arity 14: head + 13 args
     push!(buf, item_byte(ExprArity(UInt8(14))))
@@ -246,20 +260,20 @@ end
 rss_mb() = parse(Int, split(read("/proc/self/statm", String))[2]) * 4096 ÷ 1024 ÷ 1024
 
 function parse_args(argv::Vector{String})::NamedTuple
-    limit       = typemax(Int)
-    out_dir     = DEFAULT_OUT_DIR
+    limit = typemax(Int)
+    out_dir = DEFAULT_OUT_DIR
     shard_files = DEFAULT_SHARD_FILES
-    i           = 1
+    i = 1
     while i <= length(argv)
         a = argv[i]
         if a == "--limit"
-            limit = parse(Int, argv[i + 1]);
+            limit = parse(Int, argv[i + 1])
             i += 2
         elseif a == "--out-dir"
-            out_dir = argv[i + 1];
+            out_dir = argv[i + 1]
             i += 2
         elseif a == "--shard-files"
-            shard_files = parse(Int, argv[i + 1]);
+            shard_files = parse(Int, argv[i + 1])
             i += 2
         else
             error("unknown arg: $a")
@@ -277,8 +291,8 @@ function snapshot_shard!(s, path::AbstractString)::Float64
     t_snap = time()
     tree = act_from_zipper(s.btm, _ -> UInt64(0))
     act_save(tree, path)
-    sz_mb = round(filesize(path) / 1024 / 1024; digits = 1)
-    elapsed = round(time() - t_snap; digits = 1)
+    sz_mb = round(filesize(path) / 1024 / 1024; digits=1)
+    elapsed = round(time() - t_snap; digits=1)
     println("    snapshot → $path ($(sz_mb) MB) in $(elapsed)s")
     # Sanity check: file exists, has nonzero size, and mmap-open succeeds.
     @assert filesize(path) > 0
@@ -287,7 +301,7 @@ function snapshot_shard!(s, path::AbstractString)::Float64
     sz_mb
 end
 
-function main(argv::Vector{String} = ARGS)
+function main(argv::Vector{String}=ARGS)
     args = parse_args(argv)
     println("=== FAFB v783 skeleton importer (Tier B, sharded) ===")
     println("input dir:    $SKEL_DIR")
@@ -297,24 +311,24 @@ function main(argv::Vector{String} = ARGS)
     flush(stdout)
 
     # Enumerate input files.
-    files = readdir(SKEL_DIR; sort = true)
+    files = readdir(SKEL_DIR; sort=true)
     filter!(f -> endswith(f, ".swc"), files)
     n_files = min(length(files), args.limit)
     n_shards = cld(n_files, args.shard_files)
     println("plan:         $n_files files → $n_shards shards")
     mkpath(args.out_dir)
 
-    n_branches_total  = 0
+    n_branches_total = 0
     n_processed_total = 0
-    n_failed_total    = 0
-    sz_total_mb       = 0.0
-    t_global          = time()
-    atom_buf          = UInt8[]   # reused per atom
+    n_failed_total = 0
+    sz_total_mb = 0.0
+    t_global = time()
+    atom_buf = UInt8[]   # reused per atom
 
     for shard_i in 1:n_shards
         shard_start = (shard_i - 1) * args.shard_files + 1
-        shard_end   = min(shard_i * args.shard_files, n_files)
-        shard_path  = joinpath(args.out_dir, "shard_" * lpad(shard_i, 3, '0') * ".act")
+        shard_end = min(shard_i * args.shard_files, n_files)
+        shard_path = joinpath(args.out_dir, "shard_" * lpad(shard_i, 3, '0') * ".act")
         if isfile(shard_path)
             println("\n[shard $shard_i/$n_shards] $(shard_path) already exists, skipping")
             continue
@@ -322,12 +336,12 @@ function main(argv::Vector{String} = ARGS)
         println("\n[shard $shard_i/$n_shards] files $(shard_start)..$(shard_end)")
         flush(stdout)
 
-        s         = new_space()
-        btm       = s.btm
+        s = new_space()
+        btm = s.btm
         n_b_shard = 0
         n_p_shard = 0
         n_f_shard = 0
-        t_shard   = time()
+        t_shard = time()
 
         for file_i in shard_start:shard_end
             fname = files[file_i]
@@ -339,9 +353,10 @@ function main(argv::Vector{String} = ARGS)
             end
             path = joinpath(SKEL_DIR, fname)
             nodes = try
-                ; parse_swc(path);
+                parse_swc(path)
             catch
-                ; n_f_shard += 1; continue;
+                n_f_shard += 1
+                continue
             end
             isempty(nodes) && (n_f_shard += 1; continue)
             branches = decompose_branches(nodes)
@@ -351,29 +366,31 @@ function main(argv::Vector{String} = ARGS)
             end
             n_p_shard += 1
             if n_p_shard % 1000 == 0
-                e = round(time() - t_shard; digits = 1)
+                e = round(time() - t_shard; digits=1)
                 println(
                     "    [$n_p_shard/$(shard_end - shard_start + 1)] branches=$n_b_shard  ",
-                    "elapsed=$(e)s  RSS=$(rss_mb()) MB",
+                    "elapsed=$(e)s  RSS=$(rss_mb()) MB"
                 )
                 flush(stdout)
             end
         end
 
-        t_load = round(time() - t_shard; digits = 1)
-        println("    load done: $n_p_shard files, $n_b_shard branches in $(t_load)s, RSS=$(rss_mb()) MB")
+        t_load = round(time() - t_shard; digits=1)
+        println(
+            "    load done: $n_p_shard files, $n_b_shard branches in $(t_load)s, RSS=$(rss_mb()) MB"
+        )
         flush(stdout)
 
-        sz_total_mb       += snapshot_shard!(s, shard_path)
-        n_branches_total  += n_b_shard
+        sz_total_mb += snapshot_shard!(s, shard_path)
+        n_branches_total += n_b_shard
         n_processed_total += n_p_shard
-        n_failed_total    += n_f_shard
+        n_failed_total += n_f_shard
 
         # Drop the space and force GC so the next shard starts from a clean
         # RSS baseline.
-        s = nothing;
+        s = nothing
         btm = nothing
-        GC.gc();
+        GC.gc()
         GC.gc()
         println("    post-GC RSS: $(rss_mb()) MB")
         flush(stdout)

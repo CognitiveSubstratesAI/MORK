@@ -29,10 +29,14 @@ using MORK, JET, Test
     src_path = joinpath(homedir(), "csai-work", "gen", "process_calculus_60p60.mm2")
     # The corpus program is generated, not checked in. Fall back to an inline body so the ratchet
     # still runs in a fresh clone — a gate that silently skips is worse than no gate.
-    src = isfile(src_path) ? read(src_path, String) :
-          "(edge a b)\n(edge b c)\n(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (path \$x \$z)))\n"
+    src = if isfile(src_path)
+        read(src_path, String)
+    else
+        "(edge a b)\n(edge b c)\n(exec 0 (, (edge \$x \$y) (edge \$y \$z)) (, (path \$x \$z)))\n"
+    end
 
-    s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src)
+    s = MORK.new_space()
+    MORK.space_add_all_sexpr!(s, src)
     report = @report_opt MORK.space_metta_calculus!(s, 5)
     txt = sprint(show, report)
 
@@ -74,7 +78,8 @@ using MORK, JET, Test
     PIN = 113
     @test ours <= PIN
     if ours < PIN
-        @info "JET dispatch IMPROVED — lower the pin in this file and record what was typed" ours = ours pin = PIN
+        @info "JET dispatch IMPROVED — lower the pin in this file and record what was typed" ours =
+            ours pin = PIN
     end
 
     # 🔴 A HARD ZERO ON THE CLASS OUR OWN RULE FORBIDS: indexing an untyped container. This is not a

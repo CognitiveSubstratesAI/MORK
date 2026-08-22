@@ -33,7 +33,7 @@ the join can represent. That is a ROUTING answer, not an empty result: the calle
 `loc` is factor 1's stored fact, matching the stock path's contract.
 """
 function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
-                                    effect::Function)::Union{Int, Nothing}
+    effect::Function)::Union{Int, Nothing}
     parsed = Leapfrog.parse_body_factors(pat_expr)
     # ⚠️ `nothing` HERE MEANS THE BODY IS NOT A CONJUNCTION AT ALL — a bare symbol, a bare variable,
     # or an encoding the parse rejects (a `VarRef` naming a variable the body never introduced, more
@@ -76,11 +76,13 @@ function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # suite and the 274/274 conformance corpus were all blind to it. `leapfrog_loc.jl` compares the
     # BYTES. [[feedback_verify_code_body_not_comments]]
     nfac = length(factors)
-    Leapfrog.unify_leapfrog(btm, factors, nvars, function (bindings, st)
-        loc = Leapfrog.fact_bytes(st, 1)
-        for f in 2:nfac
-            append!(loc, Leapfrog.fact_bytes(st, f))
+    Leapfrog.unify_leapfrog(
+        btm, factors, nvars, function (bindings, st)
+            loc = Leapfrog.fact_bytes(st, 1)
+            for f in 2:nfac
+                append!(loc, Leapfrog.fact_bytes(st, f))
+            end
+            effect(bindings, loc)
         end
-        effect(bindings, loc)
-    end)
+    )
 end

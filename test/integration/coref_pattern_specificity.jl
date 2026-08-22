@@ -23,7 +23,7 @@ using MORK, Test
 """
         )
         steps = space_metta_calculus!(s, 10_000)  # bounded: 1 exec fires
-        io = IOBuffer();
+        io = IOBuffer()
         space_dump_all_sexpr(s, io)
         res = String(take!(io))
         @test steps >= 1

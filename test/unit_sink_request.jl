@@ -27,10 +27,13 @@ ari(n::Int) = UInt8[item_byte(ExprArity(UInt8(n)))]
 
     @testset "root is the ground prefix minus the keyword header" begin
         # (and (ok $z) 2 $i): first var $z is INSIDE the result -> root is the partial result
-        @test MORK.sink_request(MORK.AndSink(mk("(and (ok \$z) 2 \$i)"))) == vcat(ari(2), sym("ok"))
+        @test MORK.sink_request(MORK.AndSink(mk("(and (ok \$z) 2 \$i)"))) ==
+            vcat(ari(2), sym("ok"))
         # (fsum (res p $z) $c $x): same shape, two-element result head
-        @test MORK.sink_request(MORK.FloatReductionSink(mk("(fsum (res p \$z) \$c \$x)"), :sum)) ==
-              vcat(ari(3), sym("res"), sym("p"))
+        @test MORK.sink_request(
+            MORK.FloatReductionSink(mk("(fsum (res p \$z) \$c \$x)"), :sum)
+        ) ==
+            vcat(ari(3), sym("res"), sym("p"))
     end
 
     @testset "GROUND result: the root runs past the result into the source slot" begin
@@ -42,10 +45,14 @@ ari(n::Int) = UInt8[item_byte(ExprArity(UInt8(n)))]
 
     @testset "header widths are per-sink (2 + length(keyword))" begin
         # same body, different keyword => different amount stripped, same remaining root
-        @test MORK.sink_request(MORK.SumSink(mk("(sum (r \$z) 1 \$x)")))   == vcat(ari(2), sym("r"))
-        @test MORK.sink_request(MORK.AndSink(mk("(and (r \$z) 1 \$x)")))   == vcat(ari(2), sym("r"))
-        @test MORK.sink_request(MORK.CountSink(mk("(count (r \$z) 1 \$x)"))) == vcat(ari(2), sym("r"))
-        @test MORK.sink_request(MORK.HashSink(mk("(hash (r \$z) \$z \$x)"))) == vcat(ari(2), sym("r"))
+        @test MORK.sink_request(MORK.SumSink(mk("(sum (r \$z) 1 \$x)"))) ==
+            vcat(ari(2), sym("r"))
+        @test MORK.sink_request(MORK.AndSink(mk("(and (r \$z) 1 \$x)"))) ==
+            vcat(ari(2), sym("r"))
+        @test MORK.sink_request(MORK.CountSink(mk("(count (r \$z) 1 \$x)"))) ==
+            vcat(ari(2), sym("r"))
+        @test MORK.sink_request(MORK.HashSink(mk("(hash (r \$z) \$z \$x)"))) ==
+            vcat(ari(2), sym("r"))
     end
 
     @testset "a variable immediately after the header gives the EMPTY root" begin

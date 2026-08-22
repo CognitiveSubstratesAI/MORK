@@ -25,8 +25,10 @@
 # our result matches upstream cell-for-cell.
 using MORK, Test
 
-const _IPS_HARD_FIXTURE  = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.mm2")
-const _IPS_HARD_EXPECTED = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.expected")
+const _IPS_HARD_FIXTURE = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.mm2")
+const _IPS_HARD_EXPECTED = joinpath(
+    @__DIR__, "..", "fixtures", "mm2", "ip_sudoku_hard.expected"
+)
 
 @testset "ip_sudoku hard — byte-exact vs upstream (fixes 2026-07-25)" begin
     prev = MORK._USE_COREF_JOIN[]
@@ -35,14 +37,19 @@ const _IPS_HARD_EXPECTED = joinpath(@__DIR__, "..", "fixtures", "mm2", "ip_sudok
         s = MORK.new_space()
         MORK.space_add_all_sexpr!(s, read(_IPS_HARD_FIXTURE, String))
         steps = MORK.space_metta_calculus!(s, 100_000_000)
-        atoms = sort!([strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))])
+        atoms = sort!([
+            strip(l) for
+            l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))
+        ])
 
         # Step-count parity: the de-Bruijn re-basing fix takes the respawn chain from a truncated 12
         # steps to the full 34 upstream reaches.
         @test steps == 34
 
         # Byte-exact atom set vs the upstream-verified reference (102 atoms, whole set).
-        expected = sort!([strip(l) for l in eachline(_IPS_HARD_EXPECTED) if !isempty(strip(l))])
+        expected = sort!([
+            strip(l) for l in eachline(_IPS_HARD_EXPECTED) if !isempty(strip(l))
+        ])
         @test length(atoms) == 102
         @test length(expected) == 102
         @test atoms == expected

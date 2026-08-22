@@ -410,13 +410,13 @@ function get_sym_or_insert!(wp::WritePermit, bytes::AbstractVector{UInt8})::Mork
         # Symbol stored big-endian: bytes[1..2]=0, bytes[3]=perm_idx, bytes[4..8]=counter.
         new_sym_bytes = ntuple(8) do i
             if i <= 2
-                ;
+
                 UInt8(0)
             elseif i == 3
-                ;
+
                 UInt8(index)
             else
-                ;
+
                 UInt8((raw_id >> ((8-i)*8)) & 0xFF)
             end
         end

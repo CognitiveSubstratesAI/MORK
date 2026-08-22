@@ -31,17 +31,22 @@ const _CONF_DIR = @__DIR__
 # both become V0,V1,… by first occurrence. Symbols/numbers/operators pass through untouched.
 function _conf_canon(s::AbstractString)::String
     toks = collect(eachmatch(r"\$[a-zA-Z][a-zA-Z0-9_]*|\$|_\d+|\(|\)|[^\s()]+", s))
-    out = String[]; named = Dict{String,String}(); newvars = String[]; nk = Ref(0)
-    fresh() = (v = "V$(nk[])"; nk[] += 1; v)
+    out = String[]
+    named = Dict{String, String}()
+    newvars = String[]
+    nk = Ref(0)
+    fresh() = (v="V$(nk[])"; nk[] += 1; v)
     for m in toks
         t = m.match
         if t == "(" || t == ")"
             push!(out, t)
         elseif occursin(r"^\$[a-zA-Z]", t)                    # upstream named var
-            haskey(named, t) || (named[t] = fresh(); push!(newvars, named[t]))
+            haskey(named, t) || (named[t]=fresh(); push!(newvars, named[t]))
             push!(out, named[t])
         elseif t == "\$"                                       # our fresh NewVar
-            v = fresh(); push!(newvars, v); push!(out, v)
+            v = fresh()
+            push!(newvars, v)
+            push!(out, v)
         elseif occursin(r"^_\d+$", t)                          # our back-reference
             n = parse(Int, t[2:end])
             push!(out, 1 <= n <= length(newvars) ? newvars[n] : t)
@@ -57,7 +62,12 @@ function _conf_canon(s::AbstractString)::String
             print(r, ")")
         else
             p = position(r)
-            p > 0 && (seek(r, p - 1); c = read(r, UInt8); seekend(r); c != UInt8('(') && print(r, " "))
+            p > 0 && (
+                seek(r, p - 1);
+                c=read(r, UInt8);
+                seekend(r);
+                c != UInt8('(') && print(r, " ")
+            )
             print(r, tk)
         end
     end
@@ -66,7 +76,11 @@ end
 
 # The `.expected` files hold upstream's RAW bytes; our dump escapes non-printables as `\xNN`.
 _conf_norm_bytes(b::Vector{UInt8}) =
-    join(map(c -> (0x20 <= c < 0x7f) ? string(Char(c)) : "\\x" * string(c; base = 16, pad = 2), b))
+    join(
+        map(
+            c -> (0x20 <= c < 0x7f) ? string(Char(c)) : "\\x" * string(c; base=16, pad=2), b
+        )
+    )
 
 _conf_sorted(lines) = sort!([_conf_canon(strip(l)) for l in lines if !isempty(strip(l))])
 
@@ -105,7 +119,9 @@ end
 
 "Run every vendored probe; return (passing::Set{String}, total::Int, orphans::Vector{String}).\n`orphans` are .mm2 files with NO .expected — they run nothing and must be reported, not skipped."
 function conformance_results()
-    passing = Set{String}(); total = 0; orphans = String[]
+    passing = Set{String}()
+    total = 0
+    orphans = String[]
     for group in ("sinks", "space")
         dir = joinpath(_CONF_DIR, group)
         isdir(dir) || continue

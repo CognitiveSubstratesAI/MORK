@@ -148,8 +148,8 @@ end
     prog = raw"(exec 0 (, (edge $x $y) (edge $y $z)) (, (path $x $z)))"
 
     # via metta_calculus (uses space_interpret! → comma_comma dispatch)
-    s = new_space();
-    space_add_all_sexpr!(s, facts);
+    s = new_space()
+    space_add_all_sexpr!(s, facts)
     space_add_all_sexpr!(s, prog)
     space_metta_calculus!(s, typemax(Int))
     out = space_dump_all_sexpr(s)

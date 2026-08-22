@@ -22,8 +22,9 @@ const _BFC_FIXTURE = joinpath(@__DIR__, "..", "fixtures", "mm2", "bfc_axioms_exe
 
 function _bfc13_program()
     off1 = join(("(dec $x $(x-1))\n(inc $(x-1) $x)\n" for x in 1:26))
-    cmp  = join(("(lte $y $x)\n(gte $x $y)\n" for x in 0:26 for y in 0:x))
-    "(target 13 (C (> (> (> p s) x) (> s x)) \$x))\n" * off1 * cmp * read(_BFC_FIXTURE, String)
+    cmp = join(("(lte $y $x)\n(gte $x $y)\n" for x in 0:26 for y in 0:x))
+    "(target 13 (C (> (> (> p s) x) (> s x)) \$x))\n" * off1 * cmp *
+    read(_BFC_FIXTURE, String)
 end
 
 @testset "BFC size-13 occurs-check regression (coref join, fix 2026-07-25)" begin
@@ -33,7 +34,10 @@ end
         s = MORK.new_space()
         MORK.space_add_all_sexpr!(s, _bfc13_program())
         steps = MORK.space_metta_calculus!(s, 5_000_000)
-        atoms = [strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))]
+        atoms = [
+            strip(l) for
+            l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))
+        ]
         data = filter(l -> !startswith(l, "(exec"), atoms)
         finals = filter(l -> startswith(l, "(final "), data)
 

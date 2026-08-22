@@ -78,8 +78,8 @@ end
 function Base.convert(::Type{ListMap{K, V}}, pairs::Vector{Tuple{K, V}}) where {K, V}
     m = ListMap{K, V}()
     for (k, v) in pairs
-        ;
-        lm_insert!(m, k, v);
+
+        lm_insert!(m, k, v)
     end
     m
 end

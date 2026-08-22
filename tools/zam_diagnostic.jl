@@ -10,23 +10,35 @@
 # MORK-native (no MorkSupercompiler dep) so it runs in the warm MORK REPL.
 # Prefix encoding mirrors Selectivity.jl `dynamic_count`, extended to LEADING GROUND ARGS.
 
-using MORK: ExprArity, ExprSymbol, item_byte, Space, new_space, space_val_count, space_add_all_sexpr!
+using MORK: ExprArity, ExprSymbol, item_byte, Space, new_space, space_val_count,
+    space_add_all_sexpr!
 using PathMap: read_zipper_at_path, zipper_val_count, zipper_to_next_val!
 
 # ── minimal top-level sexpr tokenizer: "(in 12345 $pre $cnt)" → ["in","12345","\$pre","\$cnt"] ──
 function _leg_items(str::AbstractString)::Vector{String}
     s = strip(str)
-    (startswith(s, "(") && endswith(s, ")")) || error("leg must be a parenthesized s-expr: $str")
+    (startswith(s, "(") && endswith(s, ")")) ||
+        error("leg must be a parenthesized s-expr: $str")
     inner = s[nextind(s, 1):prevind(s, lastindex(s))]
-    items = String[]; depth = 0; buf = IOBuffer()
+    items = String[]
+    depth = 0
+    buf = IOBuffer()
     for c in inner
-        if c == '('; depth += 1; print(buf, c)
-        elseif c == ')'; depth -= 1; print(buf, c)
+        if c == '('
+            depth += 1
+            print(buf, c)
+        elseif c == ')'
+            depth -= 1
+            print(buf, c)
         elseif isspace(c) && depth == 0
-            t = String(take!(buf)); isempty(t) || push!(items, t)
-        else; print(buf, c); end
+            t = String(take!(buf))
+            isempty(t) || push!(items, t)
+        else
+            print(buf, c)
+        end
     end
-    t = String(take!(buf)); isempty(t) || push!(items, t)
+    t = String(take!(buf))
+    isempty(t) || push!(items, t)
     return items
 end
 
@@ -55,22 +67,30 @@ function leg_count(btm, str::AbstractString)::Int
     p === nothing && return -1
     rz = read_zipper_at_path(btm, p)
     n = 0
-    while zipper_to_next_val!(rz); n += 1; end
+    while zipper_to_next_val!(rz)
+        n += 1
+    end
     return n
 end
 
-gamma_hat(count::Int, N::Int)::Float64 = (N <= 1 || count <= 0) ? Inf : -log(count / N) / log(N)
+gamma_hat(count::Int, N::Int)::Float64 =
+    (N <= 1 || count <= 0) ? Inf : -log(count / N) / log(N)
 
 # ── join-shape diagnostic (btm + explicit N — works on Space.btm OR a mmap'd ACT tree) ──
 function join_selectivity_btm(btm, N::Int, legs::Vector{<:AbstractString})
     rows = map(legs) do l
-        c = leg_count(btm, l); (leg = l, count = c, gamma = gamma_hat(c, N))
+        c = leg_count(btm, l)
+        (leg=l, count=c, gamma=gamma_hat(c, N))
     end
     Σ = sum(r.gamma for r in rows)
-    regime = Σ > 1 + 1e-9 ? "Σγ̂>1 → O(1)  [ZAM-FAVORABLE]" :
-             isapprox(Σ, 1; atol = 1e-2) ? "Σγ̂≈1 → Θ(1)" :
-             "Σγ̂<1 → Θ(N^(1−Σγ̂)) sublinear"
-    return (N = N, rows = rows, sum_gamma = Σ, regime = regime)
+    regime = if Σ > 1 + 1e-9
+        "Σγ̂>1 → O(1)  [ZAM-FAVORABLE]"
+    elseif isapprox(Σ, 1; atol=1e-2)
+        "Σγ̂≈1 → Θ(1)"
+    else
+        "Σγ̂<1 → Θ(N^(1−Σγ̂)) sublinear"
+    end
+    return (N=N, rows=rows, sum_gamma=Σ, regime=regime)
 end
 
 join_selectivity(s::Space, legs::Vector{<:AbstractString}) =
@@ -80,30 +100,36 @@ function report(r)
     println("  N = ", r.N)
     for row in r.rows
         println("    ", rpad(row.leg, 30), " |P|=", rpad(row.count, 10),
-                " γ̂=", lpad(round(row.gamma; digits = 3), 7))
+            " γ̂=", lpad(round(row.gamma; digits=3), 7))
     end
-    println("    Σγ̂ = ", round(r.sum_gamma; digits = 3), "   → ", r.regime)
+    println("    Σγ̂ = ", round(r.sum_gamma; digits=3), "   → ", r.regime)
 end
 
 # ── self-validation of the encoding (adversarial: symbol AND number leading-ground args) ──
 function zam_selfcheck()
     s = new_space()
-    space_add_all_sexpr!(s, join([
-        "(parent john a)", "(parent john b)", "(parent john c)",   # parent john → 3
-        "(parent mary d)", "(parent mary e)",                       # parent mary → 2
-        "(parent bob f)",                                           # parent → 6 total
-        "(age a 10)", "(age b 20)", "(age c 30)",                   # age → 3
-        "(v 10 a)", "(v 10 b)", "(v 20 c)",                         # NUMBER as leading ground arg
-    ], "\n"))
+    space_add_all_sexpr!(
+        s,
+        join(
+            [
+                "(parent john a)", "(parent john b)", "(parent john c)",   # parent john → 3
+                "(parent mary d)", "(parent mary e)",                       # parent mary → 2
+                "(parent bob f)",                                           # parent → 6 total
+                "(age a 10)", "(age b 20)", "(age c 30)",                   # age → 3
+                "(v 10 a)", "(v 10 b)", "(v 20 c)"                         # NUMBER as leading ground arg
+            ], "\n")
+    )
     btm = s.btm
-    @assert space_val_count(s) == 12          "N"
-    @assert leg_count(btm, "(parent \$x \$y)") == 6   "head+arity"
-    @assert leg_count(btm, "(parent john \$y)") == 3  "symbol-anchored"
-    @assert leg_count(btm, "(parent john a)")  == 1   "fully ground"
-    @assert leg_count(btm, "(age \$x \$y)")     == 3   "head age"
-    @assert leg_count(btm, "(v 10 \$x)")        == 2   "NUMBER-anchored (10 as leading ground arg)"
-    @assert leg_count(btm, "(v 20 \$x)")        == 1   "number-anchored 20"
-    println("zam_selfcheck PASS — constant-anchored prefix encoding (symbols + numbers) verified")
+    @assert space_val_count(s) == 12 "N"
+    @assert leg_count(btm, "(parent \$x \$y)") == 6 "head+arity"
+    @assert leg_count(btm, "(parent john \$y)") == 3 "symbol-anchored"
+    @assert leg_count(btm, "(parent john a)") == 1 "fully ground"
+    @assert leg_count(btm, "(age \$x \$y)") == 3 "head age"
+    @assert leg_count(btm, "(v 10 \$x)") == 2 "NUMBER-anchored (10 as leading ground arg)"
+    @assert leg_count(btm, "(v 20 \$x)") == 1 "number-anchored 20"
+    println(
+        "zam_selfcheck PASS — constant-anchored prefix encoding (symbols + numbers) verified"
+    )
 end
 
 # ── demo on representative join shapes ──

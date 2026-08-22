@@ -40,97 +40,93 @@
 using MORK, Test
 
 # (name, program, expected FULL sorted atom set as upstream produces it, branch under test)
-const _SINK_BRANCH_PROBES = Tuple{String,String,Vector{String},String}[
+const _SINK_BRANCH_PROBES = Tuple{String, String, Vector{String}, String}[
     ("and/varref: substitute at index k, NOT the first NewVar",
-     """
-     (m k1 3)
-     (m k2 5)
-     (exec 0 (, (m \$k \$v)) (O (and (r \$p \$nv) \$nv \$v)))
-     """,
-     ["(m k1 3)", "(m k2 5)", "(r \$a 1)"],
-     "branch 3 — the result template has TWO NewVars and <source> names the SECOND; 0x33 & 0x35 = 0x31 ('1')"),
-
+        """
+        (m k1 3)
+        (m k2 5)
+        (exec 0 (, (m \$k \$v)) (O (and (r \$p \$nv) \$nv \$v)))
+        """,
+        ["(m k1 3)", "(m k2 5)", "(r \$a 1)"],
+        "branch 3 — the result template has TWO NewVars and <source> names the SECOND; 0x33 & 0x35 = 0x31 ('1')"
+    ),
     ("and/varref: re-base trailing de-Bruijn refs",
-     """
-     (m k1 3)
-     (m k2 5)
-     (exec 0 (, (m \$k \$v)) (O (and (r \$nv \$x \$x) \$nv \$v)))
-     """,
-     ["(m k1 3)", "(m k2 5)", "(r 1 \$a \$a)"],
-     "branch 3 — substituting at index 0 removes a binding, so the trailing coref must shift _2 -> _1"),
-
+        """
+        (m k1 3)
+        (m k2 5)
+        (exec 0 (, (m \$k \$v)) (O (and (r \$nv \$x \$x) \$nv \$v)))
+        """,
+        ["(m k1 3)", "(m k2 5)", "(r 1 \$a \$a)"],
+        "branch 3 — substituting at index 0 removes a binding, so the trailing coref must shift _2 -> _1"
+    ),
     ("and/sizes: fixed literal MATCHES the reduced value",
-     """
-     (m k1 3)
-     (m k2 5)
-     (exec 0 (, (m \$k \$v)) (O (and (ok) 1 \$v)))
-     """,
-     ["(m k1 3)", "(m k2 5)", "(ok)"],
-     "branch 1 — literal '1' equals the AND, so the payload is emitted"),
-
+        """
+        (m k1 3)
+        (m k2 5)
+        (exec 0 (, (m \$k \$v)) (O (and (ok) 1 \$v)))
+        """,
+        ["(m k1 3)", "(m k2 5)", "(ok)"],
+        "branch 1 — literal '1' equals the AND, so the payload is emitted"),
     ("and/sizes: fixed literal MISMATCHES — emit nothing",
-     """
-     (m k1 3)
-     (m k2 5)
-     (exec 0 (, (m \$k \$v)) (O (and (nope) 9 \$v)))
-     """,
-     ["(m k1 3)", "(m k2 5)"],
-     "branch 1 (negative) — discriminates a real guard from an unconditional emit"),
-
+        """
+        (m k1 3)
+        (m k2 5)
+        (exec 0 (, (m \$k \$v)) (O (and (nope) 9 \$v)))
+        """,
+        ["(m k1 3)", "(m k2 5)"],
+        "branch 1 (negative) — discriminates a real guard from an unconditional emit"),
     ("and/newvar: ignored guard",
-     """
-     (m k1 3)
-     (m k2 5)
-     (exec 0 (, (m \$k \$v)) (O (and (ig) \$ig \$v)))
-     """,
-     ["(ig)", "(m k1 3)", "(m k2 5)"],
-     "branch 2 — bare NewVar in <source>; emit the path minus that byte"),
-
+        """
+        (m k1 3)
+        (m k2 5)
+        (exec 0 (, (m \$k \$v)) (O (and (ig) \$ig \$v)))
+        """,
+        ["(ig)", "(m k1 3)", "(m k2 5)"],
+        "branch 2 — bare NewVar in <source>; emit the path minus that byte"),
     ("sum/varref: variable <source> is reduced and spliced",
-     """
-     (foo 1)
-     (foo 2)
-     (foo 3)
-     (exec 0 (, (foo \$x)) (O (sum (total \$n) \$n \$x)))
-     """,
-     ["(foo 1)", "(foo 2)", "(foo 3)", "(total 6)"],
-     "branch 3 — SumSink's missing half; 1+2+3 = 6"),
-
+        """
+        (foo 1)
+        (foo 2)
+        (foo 3)
+        (exec 0 (, (foo \$x)) (O (sum (total \$n) \$n \$x)))
+        """,
+        ["(foo 1)", "(foo 2)", "(foo 3)", "(total 6)"],
+        "branch 3 — SumSink's missing half; 1+2+3 = 6"),
     ("sum/sizes: fixed literal MATCHES",
-     """
-     (foo 1)
-     (foo 2)
-     (foo 3)
-     (exec 0 (, (foo \$x)) (O (sum (six) 6 \$x)))
-     """,
-     ["(foo 1)", "(foo 2)", "(foo 3)", "(six)"],
-     "branch 1 — the one branch SumSink already had; guards against regressing it"),
-
+        """
+        (foo 1)
+        (foo 2)
+        (foo 3)
+        (exec 0 (, (foo \$x)) (O (sum (six) 6 \$x)))
+        """,
+        ["(foo 1)", "(foo 2)", "(foo 3)", "(six)"],
+        "branch 1 — the one branch SumSink already had; guards against regressing it"),
     ("sum/sizes: fixed literal MISMATCHES — emit nothing",
-     """
-     (foo 1)
-     (foo 2)
-     (foo 3)
-     (exec 0 (, (foo \$x)) (O (sum (nope) 99 \$x)))
-     """,
-     ["(foo 1)", "(foo 2)", "(foo 3)"],
-     "branch 1 (negative)"),
-
+        """
+        (foo 1)
+        (foo 2)
+        (foo 3)
+        (exec 0 (, (foo \$x)) (O (sum (nope) 99 \$x)))
+        """,
+        ["(foo 1)", "(foo 2)", "(foo 3)"],
+        "branch 1 (negative)"),
     ("sum/newvar: ignored guard",
-     """
-     (foo 1)
-     (foo 2)
-     (exec 0 (, (foo \$x)) (O (sum (ig) \$ig \$x)))
-     """,
-     ["(foo 1)", "(foo 2)", "(ig)"],
-     "branch 2"),
+        """
+        (foo 1)
+        (foo 2)
+        (exec 0 (, (foo \$x)) (O (sum (ig) \$ig \$x)))
+        """,
+        ["(foo 1)", "(foo 2)", "(ig)"],
+        "branch 2")
 ]
 
 function _sink_branch_run(program::String)
     s = MORK.new_space()
     MORK.space_add_all_sexpr!(s, program)
     MORK.space_metta_calculus!(s, 1000)
-    sort!([strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))])
+    sort!([
+        strip(l) for l in split(MORK.space_dump_all_sexpr(s), '\n') if !isempty(strip(l))
+    ])
 end
 
 @testset "AndSink/SumSink three-branch conformance (vs upstream binary)" begin

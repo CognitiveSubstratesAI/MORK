@@ -18,7 +18,8 @@ const SKEL_HEAD = codeunits("skel-br")
 
 "Byte prefix selecting all branches of one neuron: (skel-br <root_id> …)."
 function skel_root_prefix(root_id::AbstractString)::Vector{UInt8}
-    rb = codeunits(root_id); n = length(rb)
+    rb = codeunits(root_id)
+    n = length(rb)
     buf = UInt8[item_byte(ExprArity(UInt8(14))), item_byte(ExprSymbol(UInt8(7)))]
     append!(buf, SKEL_HEAD)
     push!(buf, item_byte(ExprSymbol(UInt8(n))))
@@ -31,9 +32,11 @@ end
     out = String[]
     pos = 1
     while pos <= length(rel)
-        t = byte_item(rel[pos]); t isa ExprSymbol || break
-        len = Int(t.size); pos + len > length(rel) && break
-        push!(out, String(@view rel[pos+1:pos+len]))
+        t = byte_item(rel[pos])
+        t isa ExprSymbol || break
+        len = Int(t.size)
+        pos + len > length(rel) && break
+        push!(out, String(@view rel[(pos + 1):(pos + len)]))
         pos += 1 + len
     end
     isempty(out) ? nothing : out
@@ -45,7 +48,7 @@ end
 Cold-mmap all S_map shards (`m.skel_dir/shard_*.act`). ~0 RAM per shard.
 """
 function open_skeletons(m)
-    files = sort(filter(f -> endswith(f, ".act"), readdir(m.skel_dir; join = true)))
+    files = sort(filter(f -> endswith(f, ".act"), readdir(m.skel_dir; join=true)))
     isempty(files) && error("no skeleton shards under $(m.skel_dir)")
     [act_open_mmap(f) for f in files]
 end
@@ -81,13 +84,15 @@ S_map summary for a neuron: branch count, total cable length (Σ branch len, nm)
 and the S_evid source path + whether it exists. `shards` may be passed to reuse
 already-opened trees.
 """
-function neuron_morphology(m, root_id::AbstractString; shards = open_skeletons(m))
+function neuron_morphology(m, root_id::AbstractString; shards=open_skeletons(m))
     br = query_skeleton(shards, root_id)
     # arg order after root_id: 1=bid 2=st 3=sx 4=sy 5=sz 6=et 7=ex 8=ey 9=ez 10=len 11=rad 12=n
-    total_len = sum((length(b) >= 10 ? something(tryparse(Int, b[10]), 0) : 0) for b in br; init = 0)
+    total_len = sum(
+        (length(b) >= 10 ? something(tryparse(Int, b[10]), 0) : 0) for b in br; init=0
+    )
     (; root_id,
-       n_branches = length(br),
-       total_cable_nm = total_len,
-       evid = evid_swc_path(m, root_id),
-       evid_exists = has_evid(m, root_id))
+        n_branches=length(br),
+        total_cable_nm=total_len,
+        evid=evid_swc_path(m, root_id),
+        evid_exists=has_evid(m, root_id))
 end

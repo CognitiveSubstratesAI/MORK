@@ -88,7 +88,7 @@ println("States reached: $(length(reached))")
 println("\nInitial state props:")
 init_props = filter(l -> startswith(l, "(state init"), split(result, "\n"))
 for p in init_props
-    ;
-    println("  $p");
+
+    println("  $p")
 end
 println("\nDone!")

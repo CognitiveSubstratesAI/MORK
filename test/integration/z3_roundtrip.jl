@@ -13,14 +13,17 @@ using MORK, Test
         s = new_space()
         # declares (priority 0) → asserts (priority 1) → read model (priority 2); priority ordering guarantees
         # z3 sees (declare-const a Int) before the (assert …)s (else z3 errors "unknown constant a").
-        space_add_all_sexpr!(s, """
+        space_add_all_sexpr!(
+            s,
+            """
 (decl (declare-const a Int))
 (asrt (assert (> a 5)))
 (asrt (assert (< a 8)))
 (exec 0 (, (decl \$d)) (O (z3 rt \$d)))
 (exec 1 (, (asrt \$a)) (O (z3 rt \$a)))
 (exec 2 (I (z3 rt \$m)) (, (result \$m)))
-""")
+"""
+        )
         space_metta_calculus!(s, 200)
         out = space_dump_all_sexpr(s)
         z3_reset!()

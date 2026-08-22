@@ -24,7 +24,7 @@
 using MORK, Test
 const _RK = MORK.Leapfrog
 
-_rk_space(src) = (s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
+_rk_space(src) = (s=MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
 
 "Answers and candidates-enumerated for one body, through the leapfrog."
 function _rk_measure(s, body::AbstractString)
@@ -49,8 +49,9 @@ end
 
     @testset "🔑 A SELECTIVE FACTOR DRIVES THE JOIN, even when written second" begin
         # `big` has 300 distinct first-column values; `sel` has 3. Syntactic order puts `big` first.
-        src = join(["(big n$i v$i)" for i in 1:300], "\n") * "\n" *
-              join(["(sel n$i c)" for i in 1:3], "\n") * "\n"
+        src =
+            join(["(big n$i v$i)" for i in 1:300], "\n") * "\n" *
+            join(["(sel n$i c)" for i in 1:3], "\n") * "\n"
         s = _rk_space(src)
         body = "(, (big \$x \$y) (sel \$x c))"
 
@@ -66,8 +67,9 @@ end
 
     @testset "…and the SAME query with the factors written the other way round agrees" begin
         # If ranking works, factor order stops mattering — same answers AND comparable work.
-        src = join(["(big n$i v$i)" for i in 1:300], "\n") * "\n" *
-              join(["(sel n$i c)" for i in 1:3], "\n") * "\n"
+        src =
+            join(["(big n$i v$i)" for i in 1:300], "\n") * "\n" *
+            join(["(sel n$i c)" for i in 1:3], "\n") * "\n"
         s = _rk_space(src)
         a = _rk_measure(s, "(, (big \$x \$y) (sel \$x c))")
         b = _rk_measure(s, "(, (sel \$x c) (big \$x \$y))")
@@ -81,8 +83,9 @@ end
         # that cursor's count is its true domain size and always sorts first. A capped
         # count-to-N estimate could not tell 100 from 100 000 — that is the defect it replaced.
         for k in (1, 2, 5)
-            src = join(["(big n$i v$i)" for i in 1:200], "\n") * "\n" *
-                  join(["(sel n$i c)" for i in 1:k], "\n") * "\n"
+            src =
+                join(["(big n$i v$i)" for i in 1:200], "\n") * "\n" *
+                join(["(sel n$i c)" for i in 1:k], "\n") * "\n"
             s = _rk_space(src)
             body = "(, (big \$x \$y) (sel \$x c))"
             (n, cand) = _rk_measure(s, body)
@@ -122,8 +125,9 @@ end
         # SUFFIX — everything before it (wildcards, schematic compounds) is pushed UNFILTERED and
         # the seek never skips over any of it. [[reference_wfs_bottom_propagation_semantics]]
         N = 1000
-        src = join(["(pa n$i x)" for i in 1:N], "\n") * "\n" *
-              join(["(pb n$i y)" for i in (N - 2):(2N - 3)], "\n") * "\n"   # overlap = exactly 3
+        src =
+            join(["(pa n$i x)" for i in 1:N], "\n") * "\n" *
+            join(["(pb n$i y)" for i in (N - 2):(2N - 3)], "\n") * "\n"   # overlap = exactly 3
         s = _rk_space(src)
         body = "(, (pa \$x x) (pb \$x y))"
 

@@ -28,11 +28,11 @@ end
 @testset "json_to_paths / jsonl_to_paths" begin
     @testset "json_to_paths — same PATH SET as load_json!" begin
         for doc in ("{\"a\": 1, \"b\": [2, 3]}",
-                    "{\"x\": {\"y\": {\"z\": \"deep\"}}}",
-                    "[1, 2, 3]",
-                    "{\"t\": true, \"f\": false, \"n\": null}",
-                    "{\"e\": [], \"o\": {}}",
-                    "\"bare string\"")
+            "{\"x\": {\"y\": {\"z\": \"deep\"}}}",
+            "[1, 2, 3]",
+            "{\"t\": true, \"f\": false, \"n\": null}",
+            "{\"e\": [], \"o\": {}}",
+            "\"bare string\"")
             io = IOBuffer()
             n = M.space_json_to_paths(M.new_space(), doc, io)
             streamed = _paths(_from_paths(take!(io)))

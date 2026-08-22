@@ -1,34 +1,186 @@
 # Auto-extracted from upstream kernel/src/main.rs (git main) — regenerate via
 # /tmp/extract_fixtures.py. Each: (name, input, contains-asserts, wip?).
 const MAIN_RS_FIXTURES = [
-    (name = "variable_priority", input = "(A Z)\n(exec \$p\n      (, (A \$x))\n      (, (B \$x)))\n    ", asserts = ["(B Z)\n"], wip = true),
-    (name = "variables_in_priority", input = "(A Z)\n(exec (0 \$p)\n      (, (A \$x))\n      (, (B \$x)))\n    ", asserts = ["(B Z)\n"], wip = true),
-    (name = "lookup", input = "(exec 0 (, (Something (very specific))) (, MATCHED))\n\n(Something (very specific))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "positive", input = "(exec 0 (, (Something \$unspecific)) (, MATCHED))\n\n(Something (very specific))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "positive_equal", input = "(exec 0 (, (Something \$repeated \$repeated)) (, MATCHED))\n\n(Something (very specific) (very specific))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "negative", input = "(exec 0 (, (Something (very specific))) (, MATCHED))\n\n(Something \$unspecific)\n\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "negative_equal", input = "(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n\n(Something \$repeated \$repeated)\n\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "bipolar", input = "(exec 0 (, (Something (very \$unspecific))) (, MATCHED))\n\n(Something (\$unspecific specific))\n\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "bipolar_equal", input = "(exec 0 (, (Something (\$x Y \$x Y))) (, MATCHED))\n\n(Something (X \$y X \$y))\n\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "two_positive_equal", input = "(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "two_positive_equal_crossed", input = "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "two_bipolar_equal_crossed", input = "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
-    (name = "func_type_unification", input = "(a (: \$a A))\n(b (: f (-> A)))\n(exec 0 (, (a (: (\$f) A))\n           (b (: \$f (-> A))))\n        (, (c OK)))\n    ", asserts = ["(c OK)\n"], wip = true),
-    (name = "top_level_match", input = "(\$f)\nf\n(exec 0 (, (\$f) \$f) (, OK))\n    ", asserts = ["OK\n"], wip = false),
-    (name = "source_space_two_bipolar_equal_crossed", input = "(exec 0 (I (BTM (Something \$x \$y)) (BTM (Else \$x \$y))) (, (MATCHED \$x \$y) ))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
-    (name = "source_cmp_eq", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (, (REM \$o) ))\n    ", asserts = ["(REM (RHS (\$a bar)))\n"], wip = false),
-    (name = "source_sink_cmp_eq_remove", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (O (- \$o) (+ (RES \$p)) ))\n    ", asserts = ["(RES (foo bar))\n"], wip = false),
-    (name = "source_sink_cmp_eq_remove_both", input = "(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (== (LHS \$p) \$lhs) (== (RHS \$p) \$rhs) ) (O (- \$lhs) (- \$rhs) (+ (RES \$p)) ))\n    ", asserts = ["(RES (foo bar))\n"], wip = false),
-    (name = "source_sink_annihilate", input = "((+) (foo \$x) (continue \$x))\n((-) (\$x bar) SUCCESS)\n(exec 0 (I (== ((+) \$loc \$repos)\n               \$l)\n           (== ((-) \$loc \$lepos)\n               \$r) )\n        (O (- \$l)\n           (- \$r)\n           (+ \$repos)\n           (+ \$lepos) )\n)\n    ", asserts = ["(continue bar)\n", "SUCCESS\n"], wip = false),
-    (name = "source_cmp_ne", input = "(VAL X) (VAL Y) (VAL Z)\n(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (OUT (\$x != \$y)) ))\n    ", asserts = ["(X != Y)\n(X != Z)\n(Y != X)\n(Y != Z)\n(Z != X)\n(Z != Y)\n"], wip = false),
-    (name = "source_cmp_rel", input = "(VAL X) (VAL Y) (VAL Z)\n(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (rel \$x \$y !=) ))\n(exec 0 (, (VAL \$x) (VAL \$x) ) (, (rel \$x \$x ==) ))\n    ", asserts = ["(rel X X ==)\n(rel X Y !=)\n(rel X Z !=)\n(rel Y X !=)\n(rel Y Y ==)\n(rel Y Z !=)\n(rel Z X !=)\n(rel Z Y !=)\n(rel Z Z ==)\n"], wip = false),
-    (name = "source_map_reverse", input = "(triple X Y Z)\n(triple P Q R)\n(exec 0 (I (reverse (\$z \$y \$x triple) ) ) (, (res \$z) ))\n    ", asserts = ["(res Z) (res R)\n"], wip = true),
-    (name = "sink_two_bipolar_equal_crossed", input = "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (O (+ (MATCHED \$x \$y))))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ", asserts = ["(MATCHED (foo bar) (foo bar))\n"], wip = false),
-    (name = "sink_two_positive_equal_crossed", input = "(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (O (+ MATCHED) (- (Something \$x \$y))))\n\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n    ", asserts = ["MATCHED\n"], wip = false),
-    (name = "sink_add_remove", input = "A\n(exec a (, A) (O (- A) (+ B)))\n    ", asserts = ["B\n"], wip = false),
-    (name = "sink_add_remove_var", input = "#\n(foo a)\n(exec 0\n  (, (foo \$x))\n  (O (- (foo \$x))\n     (+ (bar \$x))))\n    ", asserts = ["(bar a)\n"], wip = false),
-    (name = "sink_sum_literal", input = "(foo 1) (foo 2) (foo 3)\n(exec 0 (, (foo \$x)) (O (sum (correct) 6 \$x)))\n(exec 0 (, (foo \$x)) (O (sum (incorrect) 5 \$x)))\n    ", asserts = ["correct"], wip = false),
-    (name = "sink_exec_remove_trigger", input = "(state ready)\n\n(exec 0\n  (, (state ready))\n  (O (- (state ready))\n     (+ (trigger x))))\n\n(exec 1\n  (, (trigger x))\n  (O (+ (error x))\n     (- (trigger x))))\n\n(exec 2\n  (, (trigger x))\n  (O (+ (add x))))\n    ", asserts = ["error"], wip = false),
-    (name = "sink_count_double", input = "(item a)\n(item b)\n(item c)\n(item2 a)\n(item2 b)\n(item2 c)\n(item2 d)\n\n(exec 0\n  (, (item \$x) (item2 \$y))\n  (O (count (count-1 \$k) \$k \$x)\n     (count (count-2 \$j) \$j \$y)))\n    ", asserts = ["count-1 3", "count-2 4"], wip = false),
-    (name = "sink_count_double_repeated", input = "(item a)\n(item b)\n(item c)\n(item2 a)\n(item2 b)\n(item2 c)\n(item2 d)\n\n(exec 0\n  (, (item \$x) (item2 \$y))\n  (O (count (count-1 \$k) \$k \$x)\n     (count (count-2 \$k) \$k \$y)))\n    ", asserts = ["count-1 3", "count-2 4"], wip = false),
+    (
+        name="variable_priority",
+        input="(A Z)\n(exec \$p\n      (, (A \$x))\n      (, (B \$x)))\n    ",
+        asserts=["(B Z)\n"],
+        wip=true
+    ),
+    (
+        name="variables_in_priority",
+        input="(A Z)\n(exec (0 \$p)\n      (, (A \$x))\n      (, (B \$x)))\n    ",
+        asserts=["(B Z)\n"],
+        wip=true
+    ),
+    (
+        name="lookup",
+        input="(exec 0 (, (Something (very specific))) (, MATCHED))\n\n(Something (very specific))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="positive",
+        input="(exec 0 (, (Something \$unspecific)) (, MATCHED))\n\n(Something (very specific))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="positive_equal",
+        input="(exec 0 (, (Something \$repeated \$repeated)) (, MATCHED))\n\n(Something (very specific) (very specific))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="negative",
+        input="(exec 0 (, (Something (very specific))) (, MATCHED))\n\n(Something \$unspecific)\n\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="negative_equal",
+        input="(exec 0 (, (Something (very specific) (very specific))) (, MATCHED))\n\n(Something \$repeated \$repeated)\n\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="bipolar",
+        input="(exec 0 (, (Something (very \$unspecific))) (, MATCHED))\n\n(Something (\$unspecific specific))\n\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="bipolar_equal",
+        input="(exec 0 (, (Something (\$x Y \$x Y))) (, MATCHED))\n\n(Something (X \$y X \$y))\n\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="two_positive_equal",
+        input="(exec 0 (, (Something \$x \$x) (Else \$y \$y)) (, MATCHED))\n\n(Something (foo bar) (foo bar))\n(Else (bar baz) (bar baz))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="two_positive_equal_crossed",
+        input="(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, MATCHED))\n\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="two_bipolar_equal_crossed",
+        input="(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (, (MATCHED \$x \$y)))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ",
+        asserts=["(MATCHED (foo bar) (foo bar))\n"],
+        wip=false
+    ),
+    (
+        name="func_type_unification",
+        input="(a (: \$a A))\n(b (: f (-> A)))\n(exec 0 (, (a (: (\$f) A))\n           (b (: \$f (-> A))))\n        (, (c OK)))\n    ",
+        asserts=["(c OK)\n"],
+        wip=true
+    ),
+    (
+        name="top_level_match",
+        input="(\$f)\nf\n(exec 0 (, (\$f) \$f) (, OK))\n    ",
+        asserts=["OK\n"],
+        wip=false
+    ),
+    (
+        name="source_space_two_bipolar_equal_crossed",
+        input="(exec 0 (I (BTM (Something \$x \$y)) (BTM (Else \$x \$y))) (, (MATCHED \$x \$y) ))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ",
+        asserts=["(MATCHED (foo bar) (foo bar))\n"],
+        wip=false
+    ),
+    (
+        name="source_cmp_eq",
+        input="(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (, (REM \$o) ))\n    ",
+        asserts=["(REM (RHS (\$a bar)))\n"],
+        wip=false
+    ),
+    (
+        name="source_sink_cmp_eq_remove",
+        input="(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (BTM (LHS \$p)) (== (RHS \$p) \$o) ) (O (- \$o) (+ (RES \$p)) ))\n    ",
+        asserts=["(RES (foo bar))\n"],
+        wip=false
+    ),
+    (
+        name="source_sink_cmp_eq_remove_both",
+        input="(LHS (foo \$y))\n(RHS (\$x bar))\n(exec 0 (I (== (LHS \$p) \$lhs) (== (RHS \$p) \$rhs) ) (O (- \$lhs) (- \$rhs) (+ (RES \$p)) ))\n    ",
+        asserts=["(RES (foo bar))\n"],
+        wip=false
+    ),
+    (
+        name="source_sink_annihilate",
+        input="((+) (foo \$x) (continue \$x))\n((-) (\$x bar) SUCCESS)\n(exec 0 (I (== ((+) \$loc \$repos)\n               \$l)\n           (== ((-) \$loc \$lepos)\n               \$r) )\n        (O (- \$l)\n           (- \$r)\n           (+ \$repos)\n           (+ \$lepos) )\n)\n    ",
+        asserts=["(continue bar)\n", "SUCCESS\n"],
+        wip=false
+    ),
+    (
+        name="source_cmp_ne",
+        input="(VAL X) (VAL Y) (VAL Z)\n(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (OUT (\$x != \$y)) ))\n    ",
+        asserts=["(X != Y)\n(X != Z)\n(Y != X)\n(Y != Z)\n(Z != X)\n(Z != Y)\n"],
+        wip=false
+    ),
+    (
+        name="source_cmp_rel",
+        input="(VAL X) (VAL Y) (VAL Z)\n(exec 0 (I (!= (VAL \$x) (VAL \$y) ) ) (, (rel \$x \$y !=) ))\n(exec 0 (, (VAL \$x) (VAL \$x) ) (, (rel \$x \$x ==) ))\n    ",
+        asserts=[
+            "(rel X X ==)\n(rel X Y !=)\n(rel X Z !=)\n(rel Y X !=)\n(rel Y Y ==)\n(rel Y Z !=)\n(rel Z X !=)\n(rel Z Y !=)\n(rel Z Z ==)\n"
+        ],
+        wip=false
+    ),
+    (
+        name="source_map_reverse",
+        input="(triple X Y Z)\n(triple P Q R)\n(exec 0 (I (reverse (\$z \$y \$x triple) ) ) (, (res \$z) ))\n    ",
+        asserts=["(res Z) (res R)\n"],
+        wip=true
+    ),
+    (
+        name="sink_two_bipolar_equal_crossed",
+        input="(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (O (+ (MATCHED \$x \$y))))\n\n(Something (foo \$x) (foo \$x))\n(Else (\$x bar) (\$x bar))\n    ",
+        asserts=["(MATCHED (foo bar) (foo bar))\n"],
+        wip=false
+    ),
+    (
+        name="sink_two_positive_equal_crossed",
+        input="(exec 0 (, (Something \$x \$y) (Else \$x \$y)) (O (+ MATCHED) (- (Something \$x \$y))))\n\n(Something (foo bar) (bar baz))\n(Else (foo bar) (bar baz))\n    ",
+        asserts=["MATCHED\n"],
+        wip=false
+    ),
+    (
+        name="sink_add_remove",
+        input="A\n(exec a (, A) (O (- A) (+ B)))\n    ",
+        asserts=["B\n"],
+        wip=false
+    ),
+    (
+        name="sink_add_remove_var",
+        input="#\n(foo a)\n(exec 0\n  (, (foo \$x))\n  (O (- (foo \$x))\n     (+ (bar \$x))))\n    ",
+        asserts=["(bar a)\n"],
+        wip=false
+    ),
+    (
+        name="sink_sum_literal",
+        input="(foo 1) (foo 2) (foo 3)\n(exec 0 (, (foo \$x)) (O (sum (correct) 6 \$x)))\n(exec 0 (, (foo \$x)) (O (sum (incorrect) 5 \$x)))\n    ",
+        asserts=["correct"],
+        wip=false
+    ),
+    (
+        name="sink_exec_remove_trigger",
+        input="(state ready)\n\n(exec 0\n  (, (state ready))\n  (O (- (state ready))\n     (+ (trigger x))))\n\n(exec 1\n  (, (trigger x))\n  (O (+ (error x))\n     (- (trigger x))))\n\n(exec 2\n  (, (trigger x))\n  (O (+ (add x))))\n    ",
+        asserts=["error"],
+        wip=false
+    ),
+    (
+        name="sink_count_double",
+        input="(item a)\n(item b)\n(item c)\n(item2 a)\n(item2 b)\n(item2 c)\n(item2 d)\n\n(exec 0\n  (, (item \$x) (item2 \$y))\n  (O (count (count-1 \$k) \$k \$x)\n     (count (count-2 \$j) \$j \$y)))\n    ",
+        asserts=["count-1 3", "count-2 4"],
+        wip=false
+    ),
+    (
+        name="sink_count_double_repeated",
+        input="(item a)\n(item b)\n(item c)\n(item2 a)\n(item2 b)\n(item2 c)\n(item2 d)\n\n(exec 0\n  (, (item \$x) (item2 \$y))\n  (O (count (count-1 \$k) \$k \$x)\n     (count (count-2 \$k) \$k \$y)))\n    ",
+        asserts=["count-1 3", "count-2 4"],
+        wip=false
+    )
 ]

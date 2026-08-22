@@ -92,8 +92,8 @@ function diff_upstream(; rust_bin::String="")
     end
     include(FIXTURE_FILE)
 
-    pass = 0;
-    fail = 0;
+    pass = 0
+    fail = 0
     crash = 0
     println("\n=== Differential test (Julia vs recorded fixtures) ===\n")
 
@@ -103,7 +103,7 @@ function diff_upstream(; rust_bin::String="")
             r = run_julia(src)
         catch e
             println("CRASH $name  ($(typeof(e)): $(sprint(showerror, e)))")
-            crash += 1;
+            crash += 1
             continue
         end
         expected = get(UPSTREAM_FIXTURES, name, nothing)

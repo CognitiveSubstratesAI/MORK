@@ -48,24 +48,36 @@ const XXH3_DEFAULT_SECRET_SIZE = 192
 
 # xxh3_common.rs:13-26 — kSecret
 const XXH3_DEFAULT_SECRET = UInt8[
-    0xb8, 0xfe, 0x6c, 0x39, 0x23, 0xa4, 0x4b, 0xbe, 0x7c, 0x01, 0x81, 0x2c, 0xf7, 0x21, 0xad, 0x1c,
-    0xde, 0xd4, 0x6d, 0xe9, 0x83, 0x90, 0x97, 0xdb, 0x72, 0x40, 0xa4, 0xa4, 0xb7, 0xb3, 0x67, 0x1f,
-    0xcb, 0x79, 0xe6, 0x4e, 0xcc, 0xc0, 0xe5, 0x78, 0x82, 0x5a, 0xd0, 0x7d, 0xcc, 0xff, 0x72, 0x21,
-    0xb8, 0x08, 0x46, 0x74, 0xf7, 0x43, 0x24, 0x8e, 0xe0, 0x35, 0x90, 0xe6, 0x81, 0x3a, 0x26, 0x4c,
-    0x3c, 0x28, 0x52, 0xbb, 0x91, 0xc3, 0x00, 0xcb, 0x88, 0xd0, 0x65, 0x8b, 0x1b, 0x53, 0x2e, 0xa3,
-    0x71, 0x64, 0x48, 0x97, 0xa2, 0x0d, 0xf9, 0x4e, 0x38, 0x19, 0xef, 0x46, 0xa9, 0xde, 0xac, 0xd8,
-    0xa8, 0xfa, 0x76, 0x3f, 0xe3, 0x9c, 0x34, 0x3f, 0xf9, 0xdc, 0xbb, 0xc7, 0xc7, 0x0b, 0x4f, 0x1d,
-    0x8a, 0x51, 0xe0, 0x4b, 0xcd, 0xb4, 0x59, 0x31, 0xc8, 0x9f, 0x7e, 0xc9, 0xd9, 0x78, 0x73, 0x64,
-    0xea, 0xc5, 0xac, 0x83, 0x34, 0xd3, 0xeb, 0xc3, 0xc5, 0x81, 0xa0, 0xff, 0xfa, 0x13, 0x63, 0xeb,
-    0x17, 0x0d, 0xdd, 0x51, 0xb7, 0xf0, 0xda, 0x49, 0xd3, 0x16, 0x55, 0x26, 0x29, 0xd4, 0x68, 0x9e,
-    0x2b, 0x16, 0xbe, 0x58, 0x7d, 0x47, 0xa1, 0xfc, 0x8f, 0xf8, 0xb8, 0xd1, 0x7a, 0xd0, 0x31, 0xce,
-    0x45, 0xcb, 0x3a, 0x8f, 0x95, 0x16, 0x04, 0x28, 0xaf, 0xd7, 0xfb, 0xca, 0xbb, 0x4b, 0x40, 0x7e,
+    0xb8, 0xfe, 0x6c, 0x39, 0x23, 0xa4, 0x4b, 0xbe, 0x7c, 0x01, 0x81, 0x2c, 0xf7, 0x21,
+    0xad, 0x1c,
+    0xde, 0xd4, 0x6d, 0xe9, 0x83, 0x90, 0x97, 0xdb, 0x72, 0x40, 0xa4, 0xa4, 0xb7, 0xb3,
+    0x67, 0x1f,
+    0xcb, 0x79, 0xe6, 0x4e, 0xcc, 0xc0, 0xe5, 0x78, 0x82, 0x5a, 0xd0, 0x7d, 0xcc, 0xff,
+    0x72, 0x21,
+    0xb8, 0x08, 0x46, 0x74, 0xf7, 0x43, 0x24, 0x8e, 0xe0, 0x35, 0x90, 0xe6, 0x81, 0x3a,
+    0x26, 0x4c,
+    0x3c, 0x28, 0x52, 0xbb, 0x91, 0xc3, 0x00, 0xcb, 0x88, 0xd0, 0x65, 0x8b, 0x1b, 0x53,
+    0x2e, 0xa3,
+    0x71, 0x64, 0x48, 0x97, 0xa2, 0x0d, 0xf9, 0x4e, 0x38, 0x19, 0xef, 0x46, 0xa9, 0xde,
+    0xac, 0xd8,
+    0xa8, 0xfa, 0x76, 0x3f, 0xe3, 0x9c, 0x34, 0x3f, 0xf9, 0xdc, 0xbb, 0xc7, 0xc7, 0x0b,
+    0x4f, 0x1d,
+    0x8a, 0x51, 0xe0, 0x4b, 0xcd, 0xb4, 0x59, 0x31, 0xc8, 0x9f, 0x7e, 0xc9, 0xd9, 0x78,
+    0x73, 0x64,
+    0xea, 0xc5, 0xac, 0x83, 0x34, 0xd3, 0xeb, 0xc3, 0xc5, 0x81, 0xa0, 0xff, 0xfa, 0x13,
+    0x63, 0xeb,
+    0x17, 0x0d, 0xdd, 0x51, 0xb7, 0xf0, 0xda, 0x49, 0xd3, 0x16, 0x55, 0x26, 0x29, 0xd4,
+    0x68, 0x9e,
+    0x2b, 0x16, 0xbe, 0x58, 0x7d, 0x47, 0xa1, 0xfc, 0x8f, 0xf8, 0xb8, 0xd1, 0x7a, 0xd0,
+    0x31, 0xce,
+    0x45, 0xcb, 0x3a, 0x8f, 0x95, 0x16, 0x04, 0x28, 0xaf, 0xd7, 0xfb, 0xca, 0xbb, 0x4b,
+    0x40, 0x7e
 ]
 
 # const_xxh3.rs:12-15
 const XXH3_INITIAL_ACC = UInt64[
     UInt64(XXH32_PRIME_3), XXH64_PRIME_1, XXH64_PRIME_2, XXH64_PRIME_3,
-    XXH64_PRIME_4, UInt64(XXH32_PRIME_2), XXH64_PRIME_5, UInt64(XXH32_PRIME_1),
+    XXH64_PRIME_4, UInt64(XXH32_PRIME_2), XXH64_PRIME_5, UInt64(XXH32_PRIME_1)
 ]
 
 # ── primitive reads / mults (const_xxh3.rs:17-38, xxh3_common.rs:28-59) ──────
@@ -74,22 +86,22 @@ const XXH3_INITIAL_ACC = UInt64[
 @inline function _xxh3_read_u32(input, cursor::Int)::UInt32
     b = firstindex(input) + cursor
     @inbounds UInt32(input[b]) |
-              (UInt32(input[b+1]) << 8) |
-              (UInt32(input[b+2]) << 16) |
-              (UInt32(input[b+3]) << 24)
+              (UInt32(input[b + 1]) << 8) |
+              (UInt32(input[b + 2]) << 16) |
+        (UInt32(input[b + 3]) << 24)
 end
 
 """`u64::from_le_bytes` at 0-based `cursor` (const_xxh3.rs:24)."""
 @inline function _xxh3_read_u64(input, cursor::Int)::UInt64
     b = firstindex(input) + cursor
     @inbounds UInt64(input[b]) |
-              (UInt64(input[b+1]) << 8) |
-              (UInt64(input[b+2]) << 16) |
-              (UInt64(input[b+3]) << 24) |
-              (UInt64(input[b+4]) << 32) |
-              (UInt64(input[b+5]) << 40) |
-              (UInt64(input[b+6]) << 48) |
-              (UInt64(input[b+7]) << 56)
+              (UInt64(input[b + 1]) << 8) |
+              (UInt64(input[b + 2]) << 16) |
+              (UInt64(input[b + 3]) << 24) |
+              (UInt64(input[b + 4]) << 32) |
+              (UInt64(input[b + 5]) << 40) |
+              (UInt64(input[b + 6]) << 48) |
+        (UInt64(input[b + 7]) << 56)
 end
 
 # const_xxh3.rs:36
@@ -129,7 +141,9 @@ end
 
 # ── mixers (const_xxh3.rs:41-61) ─────────────────────────────────────────────
 
-@inline function _xxh3_mix16_b(input, input_offset::Int, secret, secret_offset::Int, seed::UInt64)::UInt64
+@inline function _xxh3_mix16_b(
+    input, input_offset::Int, secret, secret_offset::Int, seed::UInt64
+)::UInt64
     input_lo = _xxh3_read_u64(input, input_offset)
     input_hi = _xxh3_read_u64(input, input_offset + 8)
 
@@ -140,9 +154,9 @@ end
 end
 
 @inline function _xxh3_mix32_b(acc0::UInt64, acc1::UInt64,
-                               input_1, input_1_off::Int,
-                               input_2, input_2_off::Int,
-                               secret, secret_offset::Int, seed::UInt64)
+    input_1, input_1_off::Int,
+    input_2, input_2_off::Int,
+    secret, secret_offset::Int, seed::UInt64)
     acc0 += _xxh3_mix16_b(input_1, input_1_off, secret, secret_offset, seed)
     acc0 ⊻= _xxh3_read_u64(input_2, input_2_off) + _xxh3_read_u64(input_2, input_2_off + 8)
 
@@ -165,7 +179,8 @@ end
     input_hi = bitrotate(bswap(input_lo), 13)
 
     flip_lo = (UInt64(_xxh3_read_u32(secret, 0)) ⊻ UInt64(_xxh3_read_u32(secret, 4))) + seed
-    flip_hi = (UInt64(_xxh3_read_u32(secret, 8)) ⊻ UInt64(_xxh3_read_u32(secret, 12))) - seed
+    flip_hi =
+        (UInt64(_xxh3_read_u32(secret, 8)) ⊻ UInt64(_xxh3_read_u32(secret, 12))) - seed
     keyed_lo = UInt64(input_lo) ⊻ flip_lo
     keyed_hi = UInt64(input_hi) ⊻ flip_hi
 
@@ -208,7 +223,9 @@ end
 
     mul_low = mul_low + ((UInt64(n) - UInt64(1)) << 54)
     input_hi ⊻= flip_hi
-    mul_high = mul_high + (input_hi + _xxh3_mult32_to64(input_hi % UInt32, XXH32_PRIME_2 - UInt32(1)))
+    mul_high =
+        mul_high +
+        (input_hi + _xxh3_mult32_to64(input_hi % UInt32, XXH32_PRIME_2 - UInt32(1)))
 
     mul_low ⊻= bswap(mul_high)
 
@@ -230,7 +247,8 @@ end
     else
         flip_lo = _xxh3_read_u64(secret, 64) ⊻ _xxh3_read_u64(secret, 72)
         flip_hi = _xxh3_read_u64(secret, 80) ⊻ _xxh3_read_u64(secret, 88)
-        UInt128(_xxh64_avalanche(seed ⊻ flip_lo)) | (UInt128(_xxh64_avalanche(seed ⊻ flip_hi)) << 64)
+        UInt128(_xxh64_avalanche(seed ⊻ flip_lo)) |
+        (UInt128(_xxh64_avalanche(seed ⊻ flip_hi)) << 64)
     end
 end
 
@@ -243,9 +261,13 @@ function _xxh3_128_17to128(input, seed::UInt64, secret)::UInt128
     if n > 32
         if n > 64
             if n > 96
-                acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 48, input, n - 64, secret, 96, seed)
+                acc0, acc1 = _xxh3_mix32_b(
+                    acc0, acc1, input, 48, input, n - 64, secret, 96, seed
+                )
             end
-            acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 32, input, n - 48, secret, 64, seed)
+            acc0, acc1 = _xxh3_mix32_b(
+                acc0, acc1, input, 32, input, n - 48, secret, 64, seed
+            )
         end
         acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 16, input, n - 32, secret, 32, seed)
     end
@@ -253,7 +275,8 @@ function _xxh3_128_17to128(input, seed::UInt64, secret)::UInt128
     acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 0, input, n - 16, secret, 0, seed)
 
     result_lo = acc0 + acc1
-    result_hi = acc0 * XXH64_PRIME_1 + acc1 * XXH64_PRIME_4 + (UInt64(n) - seed) * XXH64_PRIME_2
+    result_hi =
+        acc0 * XXH64_PRIME_1 + acc1 * XXH64_PRIME_4 + (UInt64(n) - seed) * XXH64_PRIME_2
 
     UInt128(_xxh3_avalanche(result_lo)) | (UInt128(-_xxh3_avalanche(result_hi)) << 64)
 end
@@ -271,7 +294,7 @@ function _xxh3_128_129to240(input, seed::UInt64, secret)::UInt128
     idx = 0
     while idx < 4
         acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 32 * idx, input, 32 * idx + 16,
-                                   secret, 32 * idx, seed)
+            secret, 32 * idx, seed)
         idx += 1
     end
 
@@ -280,32 +303,39 @@ function _xxh3_128_129to240(input, seed::UInt64, secret)::UInt128
 
     while idx < nb_rounds
         acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, 32 * idx, input, 32 * idx + 16,
-                                   secret, START_OFFSET + 32 * (idx - 4), seed)
+            secret, START_OFFSET + 32 * (idx - 4), seed)
         idx += 1
     end
 
     acc0, acc1 = _xxh3_mix32_b(acc0, acc1, input, n - 16, input, n - 32,
-                               secret, XXH3_SECRET_SIZE_MIN - LAST_OFFSET - 16, -seed)
+        secret, XXH3_SECRET_SIZE_MIN - LAST_OFFSET - 16, -seed)
 
     result_lo = acc0 + acc1
-    result_hi = acc0 * XXH64_PRIME_1 + acc1 * XXH64_PRIME_4 + (UInt64(n) - seed) * XXH64_PRIME_2
+    result_hi =
+        acc0 * XXH64_PRIME_1 + acc1 * XXH64_PRIME_4 + (UInt64(n) - seed) * XXH64_PRIME_2
 
     # Rust: `avalanche(lo) as u128 | 0u128.wrapping_sub(avalanche(hi) as u128) << 64`
     # (`<<` binds tighter than `|`); the low 64 bits of the negation are shifted out,
     # leaving the 64-bit wrapping negation in the high half.
-    UInt128(_xxh3_avalanche(result_lo)) | ((UInt128(0) - UInt128(_xxh3_avalanche(result_hi))) << 64)
+    UInt128(_xxh3_avalanche(result_lo)) |
+    ((UInt128(0) - UInt128(_xxh3_avalanche(result_hi))) << 64)
 end
 
 # ── long path (241+) — const_xxh3.rs:167-245, 425 ────────────────────────────
 
 # const_xxh3.rs:167
-@inline function _xxh3_mix_two_accs(acc::Vector{UInt64}, acc_offset::Int, secret, secret_offset::Int)::UInt64
-    @inbounds _xxh3_mul128_fold64(acc[acc_offset + 1] ⊻ _xxh3_read_u64(secret, secret_offset),
-                                  acc[acc_offset + 2] ⊻ _xxh3_read_u64(secret, secret_offset + 8))
+@inline function _xxh3_mix_two_accs(
+    acc::Vector{UInt64}, acc_offset::Int, secret, secret_offset::Int
+)::UInt64
+    @inbounds _xxh3_mul128_fold64(
+        acc[acc_offset + 1] ⊻ _xxh3_read_u64(secret, secret_offset),
+        acc[acc_offset + 2] ⊻ _xxh3_read_u64(secret, secret_offset + 8))
 end
 
 # const_xxh3.rs:173
-function _xxh3_merge_accs(acc::Vector{UInt64}, secret, secret_offset::Int, result::UInt64)::UInt64
+function _xxh3_merge_accs(
+    acc::Vector{UInt64}, secret, secret_offset::Int, result::UInt64
+)::UInt64
     for idx in 0:3
         result += _xxh3_mix_two_accs(acc, idx * 2, secret, secret_offset + idx * 16)
     end
@@ -324,13 +354,16 @@ function _xxh3_scramble_acc!(acc::Vector{UInt64}, secret, secret_offset::Int)
 end
 
 # const_xxh3.rs:198
-function _xxh3_accumulate_512!(acc::Vector{UInt64}, input, input_offset::Int, secret, secret_offset::Int)
+function _xxh3_accumulate_512!(
+    acc::Vector{UInt64}, input, input_offset::Int, secret, secret_offset::Int
+)
     for idx in 0:(XXH3_ACC_NB - 1)
         data_val = _xxh3_read_u64(input, input_offset + 8 * idx)
         data_key = data_val ⊻ _xxh3_read_u64(secret, secret_offset + 8 * idx)
 
         @inbounds acc[(idx ⊻ 1) + 1] = acc[(idx ⊻ 1) + 1] + data_val
-        @inbounds acc[idx + 1] = acc[idx + 1] +
+        @inbounds acc[idx + 1] =
+            acc[idx + 1] +
             _xxh3_mult32_to64((data_key & 0xFFFFFFFF) % UInt32, (data_key >> 32) % UInt32)
     end
     acc
@@ -338,10 +371,10 @@ end
 
 # const_xxh3.rs:214
 function _xxh3_accumulate_loop!(acc::Vector{UInt64}, input, input_offset::Int, secret,
-                                secret_offset::Int, nb_stripes::Int)
+    secret_offset::Int, nb_stripes::Int)
     for idx in 0:(nb_stripes - 1)
         _xxh3_accumulate_512!(acc, input, input_offset + idx * XXH3_STRIPE_LEN,
-                              secret, secret_offset + idx * XXH3_SECRET_CONSUME_RATE)
+            secret, secret_offset + idx * XXH3_SECRET_CONSUME_RATE)
     end
     acc
 end
@@ -365,7 +398,7 @@ function _xxh3_hash_long_internal_loop(input, secret)::Vector{UInt64}
 
     _xxh3_accumulate_loop!(acc, input, nb_blocks * block_len, secret, 0, nb_stripes2)
     _xxh3_accumulate_512!(acc, input, n - XXH3_STRIPE_LEN, secret,
-                          slen - XXH3_STRIPE_LEN - XXH3_SECRET_LASTACC_START)
+        slen - XXH3_STRIPE_LEN - XXH3_SECRET_LASTACC_START)
     acc
 end
 
@@ -377,8 +410,8 @@ function _xxh3_128_long_impl(input, secret)::UInt128
 
     lo = _xxh3_merge_accs(acc, secret, XXH3_SECRET_MERGEACCS_START, n * XXH64_PRIME_1)
     hi = _xxh3_merge_accs(acc, secret,
-                          slen - XXH3_ACC_NB * 8 - XXH3_SECRET_MERGEACCS_START,
-                          ~(n * XXH64_PRIME_2))
+        slen - XXH3_ACC_NB * 8 - XXH3_SECRET_MERGEACCS_START,
+        ~(n * XXH64_PRIME_2))
 
     UInt128(lo) | (UInt128(hi) << 64)
 end

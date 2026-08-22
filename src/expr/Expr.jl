@@ -28,15 +28,15 @@ abstract type ExprTag end
 
 struct ExprNewVar <: ExprTag end
 struct ExprVarRef <: ExprTag
-    ;
+
     idx::UInt8
 end   # 0-based back-reference
 struct ExprSymbol <: ExprTag
-    ;
+
     size::UInt8
 end   # 1..63 bytes follow
 struct ExprArity <: ExprTag
-    ;
+
     arity::UInt8
 end  # 0..63 children follow
 
@@ -90,8 +90,8 @@ string indexing'. Store digests/paths/payloads as VALUES, not in symbol position
         @assert tag.arity < 64 "arity $(tag.arity) exceeds the Rule of 64 (max 63)"
         return 0b00000000 | (tag.arity & 0x3f)
     else
-        ;
-        error("Unknown ExprTag");
+
+        error("Unknown ExprTag")
     end
 end
 
@@ -451,8 +451,13 @@ function ez_next_skip!(z::ExprZipper)::Bool
     if bc.seen < bc.arity
         tr[end] = Breadcrumb(bc.parent, bc.arity, bc.seen + UInt8(0x01))
         t = byte_item(z.root.buf[z.loc])
-        z.loc += t isa ExprSymbol ? Int(t.size) + 1 :
-                 t isa ExprArity  ? length(expr_span(z.root, z.loc)) : 1
+        z.loc += if t isa ExprSymbol
+            Int(t.size) + 1
+        elseif t isa ExprArity
+            length(expr_span(z.root, z.loc))
+        else
+            1
+        end
         return true
     else
         pop!(tr)
@@ -752,8 +757,8 @@ path and is required for byte-exactness; see the long note in [`expr_serialize`]
 that used to corrupt round-trips here.
 """
 function expr_serialize2(bytes::AbstractVector{UInt8};
-                         map_symbol = nothing,
-                         map_variable = expr_varname)::String
+    map_symbol=nothing,
+    map_variable=expr_varname)::String
     io = IOBuffer()
     stack = Int[]
     transient = false
@@ -839,11 +844,11 @@ put raw ANSI escapes into those strings on the strength of a line upstream marks
 mechanism is here if it is ever wanted.
 """
 function expr_serialize_highlight(bytes::AbstractVector{UInt8};
-                                  target::Int,
-                                  map_symbol = nothing,
-                                  map_variable = expr_varname,
-                                  start_code::String = "\e[43m",
-                                  end_code::String = "\e[0m")::String
+    target::Int,
+    map_symbol=nothing,
+    map_variable=expr_varname,
+    start_code::String="\e[43m",
+    end_code::String="\e[0m")::String
     io = IOBuffer()
     stack = Tuple{Int, String}[]      # (children remaining, closing code to emit after `)`)
     transient = false
@@ -931,7 +936,7 @@ Recursive there, iterative here, and it renders like `expr_serialize` (a NewVar 
 so a RESERVED byte prints as its decimal value and counts as one item instead of raising — upstream's
 `Err(b) => print!("{}", b as usize)` arm, which is what makes this usable on a malformed buffer.
 """
-function ez_traverse(z::ExprZipper, i::Int = 0; io::IO = stdout)::Int
+function ez_traverse(z::ExprZipper, i::Int=0; io::IO=stdout)::Int
     start = z.loc + i
     j = start
     depth = Int[]                      # children remaining at each open Arity
@@ -1122,12 +1127,14 @@ Base.length(b::Bindings)::Int = length(b.touched)
 Base.isempty(b::Bindings)::Bool = isempty(b.touched)
 
 function Base.empty!(b::Bindings)
-    for z in b.touched; b.slots[z + 1] = nothing; end   # only the occupied ones
+    for z in b.touched
+        b.slots[z + 1] = nothing
+    end   # only the occupied ones
     empty!(b.touched)
     b
 end
 
-function Base.iterate(b::Bindings, state::Int = 1)
+function Base.iterate(b::Bindings, state::Int=1)
     state > length(b.touched) && return nothing
     z = b.touched[state]
     (_bind_key(z) => b.slots[z + 1]::ExprEnv, state + 1)
@@ -1145,14 +1152,14 @@ end
 function ee_var_opt(ee::ExprEnv)::Union{Nothing, ExprVar}
     tag = byte_item(ee.base.buf[Int(ee.offset) + 1])
     if tag isa ExprNewVar
-        ;
+
         return (ee.n, ee.v)
     elseif tag isa ExprVarRef
-        ;
+
         return (ee.n, tag.idx)
     else
-        ;
-        return nothing;
+
+        return nothing
     end
 end
 
@@ -1230,8 +1237,8 @@ ExtractFailure(k::ExtractFailureKind, a::UInt8, b::UInt8) =
     ExtractFailure(k, a, b, UInt8[], UInt8[], nothing, nothing, 0x00)
 
 "Keyword form — only the fields a variant actually carries need naming."
-ExtractFailure(k::ExtractFailureKind; a = 0x00, b = 0x00, sym_a = UInt8[], sym_b = UInt8[],
-               tag_a = nothing, tag_b = nothing, idx = 0x00) =
+ExtractFailure(k::ExtractFailureKind; a=0x00, b=0x00, sym_a=UInt8[], sym_b=UInt8[],
+    tag_a=nothing, tag_b=nothing, idx=0x00) =
     ExtractFailure(k, UInt8(a), UInt8(b), sym_a, sym_b, tag_a, tag_b, UInt8(idx))
 
 # =====================================================================
@@ -1257,8 +1264,8 @@ function expr_parse_str(s::AbstractString)::MORK.Expr
     while i <= n
         # skip spaces
         while i <= n && s[i] == ' '
-            ;
-            i += 1;
+
+            i += 1
         end
         i > n && break
         c = s[i]

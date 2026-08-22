@@ -36,7 +36,7 @@ function _build_space_mask(predicate::Function)
         tag = try
             byte_item(b)
         catch
-            ;
+
             continue
         end   # skip reserved bytes
         if predicate(tag)
@@ -368,7 +368,9 @@ mutable struct ASpaceTranscriber <: JSONTranscriber
     emit::Function
 end
 
-ASpaceTranscriber(emit::Function; buf::Vector{UInt8} = UInt8[], parser::SpaceParser = SpaceParser()) =
+ASpaceTranscriber(
+    emit::Function; buf::Vector{UInt8}=UInt8[], parser::SpaceParser=SpaceParser()
+) =
     ASpaceTranscriber(0, buf, parser, emit)
 
 function _ast_write!(t::ASpaceTranscriber, bytes::AbstractVector{UInt8})
@@ -489,24 +491,26 @@ function space_jsonl_to_paths(s::Space, src, target::IO)::Tuple{Int, Int}
     # (JSONL <8-byte index> <document>) — the constant head, built once
     jsonl_tok = fe_tokenizer(parser, Vector{UInt8}("JSONL"))
     head = UInt8[item_byte(ExprArity(UInt8(3))),
-                 item_byte(ExprSymbol(UInt8(length(jsonl_tok))))]
+        item_byte(ExprSymbol(UInt8(length(jsonl_tok))))]
     append!(head, jsonl_tok)
     push!(head, item_byte(ExprSymbol(UInt8(8))))
 
-    count = _paths_stream_to(target, function (emit)
-        total = 0
-        buf = copy(head)
-        for line in split(String(copy(bv)), '\n')
-            isempty(line) && continue
-            append!(buf, reinterpret(UInt8, [hton(UInt64(lines[]))]))   # 8 bytes, big-endian
-            st = ASpaceTranscriber(emit; buf = buf, parser = parser)
-            json_parse!(JSONParser(Vector{UInt8}(line)), st)
-            resize!(buf, length(buf) - 8)                                # upstream's truncate(len-8)
-            lines[] += 1
-            total += st.count
+    count = _paths_stream_to(
+        target, function (emit)
+            total = 0
+            buf = copy(head)
+            for line in split(String(copy(bv)), '\n')
+                isempty(line) && continue
+                append!(buf, reinterpret(UInt8, [hton(UInt64(lines[]))]))   # 8 bytes, big-endian
+                st = ASpaceTranscriber(emit; buf=buf, parser=parser)
+                json_parse!(JSONParser(Vector{UInt8}(line)), st)
+                resize!(buf, length(buf) - 8)                                # upstream's truncate(len-8)
+                lines[] += 1
+                total += st.count
+            end
+            total
         end
-        total
-    end)
+    )
     (lines[], count)
 end
 
@@ -556,7 +560,10 @@ function space_load_jsonl!(s::Space, src)::Tuple{Int, Int}
     bv = src isa Vector{UInt8} ? src : Vector{UInt8}(src)
     wz = write_zipper(s.btm)
     tok = fe_tokenizer(SpaceParser(), Vector{UInt8}("JSONL"))
-    prefix = vcat(UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(length(tok))))], tok)
+    prefix = vcat(
+        UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(length(tok))))],
+        tok
+    )
     wz_descend_to!(wz, prefix)
     lines = 0
     count = 0
@@ -765,8 +772,10 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # an abstract eltype so the comprehension can't be statically narrow; `identity.(…)` re-infers the
     # eltype from the actual factors — concrete when the query's sources are homogeneous (the common
     # case), a small union otherwise, which the parameterized ProductZipperG union-splits.
-    factors = identity.([src isa ACTSource ? source_factor(src, btm, mmaps) : source_factor(src, btm)
-                         for src in trie_srcs])
+    factors = identity.([
+        src isa ACTSource ? source_factor(src, btm, mmaps) : source_factor(src, btm)
+        for src in trie_srcs
+    ])
 
     primary = popfirst!(factors)
     prz = ProductZipperG(primary, factors)
@@ -790,7 +799,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
             lo = boundaries[i] + 1
             hi = boundaries[i + 1]
             if lo > hi || lo > length(combined)
-                all_sliced = false;
+                all_sliced = false
                 break
             end
             expr = MORK.Expr(combined[lo:hi])
@@ -842,10 +851,12 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         crefs = Int[]
         _coref_work = function ()
             try
-                _coreferential_transition!(prz, cstack, crefs, function (loc)
-                    process_match(loc) || throw(BreakQuery())
-                    nothing
-                end)
+                _coreferential_transition!(
+                    prz, cstack, crefs, function (loc)
+                        process_match(loc) || throw(BreakQuery())
+                        nothing
+                    end
+                )
             catch e
                 e isa BreakQuery || rethrow()
             end
@@ -874,8 +885,8 @@ function _grounded_call_no_args(src::GroundedSource)::Vector{Vector{UInt8}}
     raw = try
         f(args)
     catch e
-        ;
-        @warn "GroundedSource $(src.name): $e";
+
+        @warn "GroundedSource $(src.name): $e"
         nothing
     end
     _grounded_encode_results(raw)
@@ -901,8 +912,8 @@ function _grounded_call_with_bindings(src::GroundedSource,
     raw = try
         f(bound_args)
     catch e
-        ;
-        @warn "GroundedSource $(src.name): $e";
+
+        @warn "GroundedSource $(src.name): $e"
         nothing
     end
     _grounded_encode_results(raw)
@@ -946,7 +957,7 @@ function _expr_apply_bindings(e::MORK.Expr, bindings::Bindings)::MORK.Expr
             push!(out, b)
             i += 1
         else
-            push!(out, b);
+            push!(out, b)
             i += 1
         end
     end
@@ -999,19 +1010,22 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # 2m30 -> 3m17 across two runs each side). The classifies are pattern-only and cheap; the scan
     # touches data, so it must come second.
     _tj_var_safe = Ref{Union{Nothing, Bool}}(nothing)
-    _tj_safe() = (_tj_var_safe[] === nothing &&
-                      (_tj_var_safe[] = !_any_factor_relation_has_var_atom(btm, sources));
-                  _tj_var_safe[]::Bool)
+    _tj_safe() = (
+        _tj_var_safe[] === nothing &&
+            (_tj_var_safe[] = !_any_factor_relation_has_var_atom(btm, sources));
+        _tj_var_safe[]::Bool)
     if isempty(prefix) && _TRIE_JOIN_ENABLED[]
         _tj_ok, _tj_hps = _classify_empty_tail(sources)
         if _tj_ok && _tj_safe()
-            return _trie_join_emit!(btm, sources, _tj_hps, effect, bindings_scratch, pairs_scratch)
+            return _trie_join_emit!(
+                btm, sources, _tj_hps, effect, bindings_scratch, pairs_scratch
+            )
         end
         # P2: general binary join (e.g. (edge $x $y)(edge $y $z)) via key-rotation.
         _bj_ok, _bj_k1, _bj_k2, _bj_h1, _bj_h2 = _classify_binary_join(sources)
         if _bj_ok && _tj_safe()
             return _binary_join_emit!(btm, sources, _bj_k1, _bj_k2, _bj_h1, _bj_h2,
-                                            effect, bindings_scratch, pairs_scratch)
+                effect, bindings_scratch, pairs_scratch)
         end
         # P2c: compound-arg binary join — shared var NESTED in a compound argument,
         # e.g. ((join ($ctx case/0)) $a)(eval ($a) -> $b). Tried only after the
@@ -1019,14 +1033,16 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _nbj_ok, _nlp1, _nvp1, _nlp2, _nvp2 = _classify_binary_join_nested(sources)
         if _nbj_ok && _tj_safe()
             _nh, _nc = _nested_binary_join_emit!(btm, sources, _nlp1, _nvp1, _nlp2, _nvp2,
-                                            effect, bindings_scratch, pairs_scratch)
+                effect, bindings_scratch, pairs_scratch)
             _nh && return _nc      # else: stored higher-order key — fall through to ProductZipper
         end
         # P3: strict k≥3 chain join (e.g. (edge $x $y)(edge $y $z)(edge $z $w)) via
         # recursive streaming. Non-chain k≥3 shapes fall through to ProductZipper.
         _ch_ok, _ch_hps = _classify_chain(sources)
         if _ch_ok && _tj_safe()
-            return _chain_join_emit!(btm, sources, _ch_hps, effect, bindings_scratch, pairs_scratch)
+            return _chain_join_emit!(
+                btm, sources, _ch_hps, effect, bindings_scratch, pairs_scratch
+            )
         end
         # P5: pipelined hash join for any CONNECTED k≥3 conjunction the chain rejects
         # (e.g. going-wide (0 join) case/2 = k-way star + eval consumer). Defined in
@@ -1034,7 +1050,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         _cn_ok, _cn_ord, _cn_occ, _cn_lps = _classify_connected(sources)
         if _cn_ok && _tj_safe()
             _cnh, _cnc = _connected_join_emit!(btm, sources, _cn_ord, _cn_occ, _cn_lps,
-                                           effect, bindings_scratch, pairs_scratch)
+                effect, bindings_scratch, pairs_scratch)
             _cnh && return _cnc
         end
     end
@@ -1124,10 +1140,16 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         crefs = Int[]
         _coref_work = function ()
             try
-                _coreferential_transition!(prz, cstack, crefs, function (loc)
-                    process_combined(collect(pz_path(loc)), loc.factor_paths) || throw(BreakQuery())
-                    nothing
-                end)
+                _coreferential_transition!(
+                    prz,
+                    cstack,
+                    crefs,
+                    function (loc)
+                        process_combined(collect(pz_path(loc)), loc.factor_paths) ||
+                            throw(BreakQuery())
+                        nothing
+                    end
+                )
             catch e
                 e isa BreakQuery || rethrow()
             end
@@ -1143,7 +1165,8 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
         try
             while pz_to_next_val!(prz)
                 pz_focus_factor(prz) != pz_factor_count(prz) - 1 && continue
-                process_combined(collect(pz_path(prz)), prz.factor_paths) || throw(BreakQuery())
+                process_combined(collect(pz_path(prz)), prz.factor_paths) ||
+                    throw(BreakQuery())
             end
         catch e
             e isa BreakQuery || rethrow()
@@ -1191,7 +1214,8 @@ space_query_multi(s::Space, pat::MORK.Expr, f::Function) =
 # Zero-alloc length of _coref_path — mirrors upstream `loc.path().len()` (space.rs:129). Avoids
 # building a SubArray via _coref_path just to take its length. (prefix_buf.len - origin_path_len =
 # the same UnitRange length the view would report; origin<=len invariant keeps it non-negative.)
-@inline _coref_path_length(loc::ReadZipperCore) = length(loc.prefix_buf) - loc.origin_path_len
+@inline _coref_path_length(loc::ReadZipperCore) =
+    length(loc.prefix_buf) - loc.origin_path_len
 @inline _coref_path_length(loc::ProductZipper) = _coref_path_length(loc.z)
 
 # The live path buffer + its origin, for a zero-COPY bound-VarRef alias — mirrors upstream's raw
@@ -1280,9 +1304,12 @@ end
 @inline _coref_descend_byte!(loc::ProductZipperG, b::UInt8) = pzg_descend_to_byte!(loc, b)
 @inline _coref_ascend_byte!(loc::ProductZipperG) = pzg_ascend_byte!(loc)
 @inline _coref_ascend!(loc::ProductZipperG, n::Int) = pzg_ascend!(loc, n)
-@inline _coref_descend_to_existing_byte!(loc::ProductZipperG, b::UInt8) = pzg_descend_to_existing_byte!(loc, b)
-@inline _coref_descend_to_check!(loc::ProductZipperG, bytes) = pzg_descend_to_check!(loc, bytes)
-@inline _coref_descend_first_k_path!(loc::ProductZipperG, k::Int) = pzg_descend_first_k_path!(loc, k)
+@inline _coref_descend_to_existing_byte!(loc::ProductZipperG, b::UInt8) =
+    pzg_descend_to_existing_byte!(loc, b)
+@inline _coref_descend_to_check!(loc::ProductZipperG, bytes) =
+    pzg_descend_to_check!(loc, bytes)
+@inline _coref_descend_first_k_path!(loc::ProductZipperG, k::Int) =
+    pzg_descend_first_k_path!(loc, k)
 @inline _coref_to_next_k_path!(loc::ProductZipperG, k::Int) = pzg_to_next_k_path!(loc, k)
 
 # A DependentZipper (the `!=` source) can BE ProductZipperG's primary; its path bottoms out in a
@@ -1581,7 +1608,8 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
     nfac = Int(t0.arity) - 1                            # arity counts the functor + nfac conjuncts
     nfac >= 1 || return false                           # empty pattern — interpret rejects it anyway
     tf = byte_item(buf[2])
-    @inbounds (tf isa ExprSymbol && Int(tf.size) == 1 && buf[3] == UInt8(',')) || return true
+    @inbounds (tf isa ExprSymbol && Int(tf.size) == 1 && buf[3] == UInt8(',')) ||
+        return true
     i = 4                                               # past [Arity][Sym1][','] → first conjunct
     @inbounds for _ in 1:nfac
         i <= n || break
@@ -1589,14 +1617,15 @@ space_query_multi_i(s::Space, pat::MORK.Expr, pat_v::UInt8, f::Function) =
         if th isa ExprNewVar || th isa ExprVarRef
             return true                                 # (a) bare-variable conjunct
         elseif th isa ExprArity && i + 1 <= n
-            hh = byte_item(buf[i+1])
+            hh = byte_item(buf[i + 1])
             if (hh isa ExprNewVar || hh isa ExprVarRef) && Int(th.arity) == 4
                 # (b) variable head AND exec's arity (`(exec loc pat tpl)` == 4) → could bind the
                 # exec. Arity is REQUIRED: a var-head conjunct of a different arity (e.g. `($x $y)`,
                 # arity 2) can never unify with the arity-4 exec atom, so it keeps the fast path.
                 return true
             elseif hh isa ExprSymbol && Int(hh.size) == 4 && i + 5 <= n &&
-                   buf[i+2] == 0x65 && buf[i+3] == 0x78 && buf[i+4] == 0x65 && buf[i+5] == 0x63
+                buf[i + 2] == 0x65 && buf[i + 3] == 0x78 && buf[i + 4] == 0x65 &&
+                buf[i + 5] == 0x63
                 return true                             # (c) literal (exec …) head
             end
         end
@@ -1636,7 +1665,8 @@ function _is_accumulating_sink(raw_bytes::Vector{UInt8})::Bool
     sz = Int(t2.size)
     3 + sz > length(raw_bytes) && return false
     name = String(raw_bytes[3:(3 + sz - 1)])
-    name in ("AU", "count", "fsum", "fmin", "fmax", "fprod", "sum", "head", "tail") && return true
+    name in ("AU", "count", "fsum", "fmin", "fmax", "fprod", "sum", "head", "tail") &&
+        return true
     # "and" (AndSink) MUST accumulate: it groups matched entries by <result> key and bitwise-ANDs
     # their values ACROSS all matches of the query (e.g. ip_sudoku narrows each cell's candidate
     # bitmask by AND-ing the current cell value with every incoming message for that cell). Treated
@@ -1739,7 +1769,14 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         for ee in template_ees
             tpl_span = expr_span(ee.base, Int(ee.offset) + 1)
             raw_bytes = Vector{UInt8}(tpl_span)
-            push!(out, _is_accumulating_sink(raw_bytes) ? asink_new(MORK.Expr(raw_bytes)) : nothing)
+            push!(
+                out,
+                if _is_accumulating_sink(raw_bytes)
+                    asink_new(MORK.Expr(raw_bytes))
+                else
+                    nothing
+                end
+            )
         end
         out
     end
@@ -1779,7 +1816,11 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     # re-inserted into the isolated read_btm to see its own just-popped fact.
     read_btm = if !_pat_overlaps_exec_prefix(pat_expr)
         _ensure_root!(s.btm)   # exported from PathMap, in scope via `using PathMap`
-        PathMap{UnitVal, GlobalAlloc}(copy(s.btm.root::TrieNodeODRc{UnitVal, GlobalAlloc}), s.btm.root_val, s.btm.alloc)
+        PathMap{UnitVal, GlobalAlloc}(
+            copy(s.btm.root::TrieNodeODRc{UnitVal, GlobalAlloc}),
+            s.btm.root_val,
+            s.btm.alloc
+        )
     else
         # Meta-pattern: re-insert exec atom into an isolated read_btm so the
         # pattern can see it without the driver re-selecting it.
@@ -1880,8 +1921,8 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                 length(LEAPFROG_DECLINED_BODIES) < 16 &&
                     push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
                 @warn "leapfrog dispatch DECLINED a body — falling back to the ProductZipper. " *
-                      "Measured decline rate over the conformance corpus is ZERO, so this is " *
-                      "a shape neither engine was written for." maxlog=4
+                    "Measured decline rate over the conformance corpus is ZERO, so this is " *
+                    "a shape neither engine was written for." maxlog=4
                 length(LEAPFROG_DECLINED_BODIES) < 16 &&
                     push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
             end
@@ -1899,7 +1940,8 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
             # (_ee_traverseh stops at the expr boundary — NOT a full-buffer walk, which would run
             # past the pattern into the template and over-count). Template NewVars then number from
             # oi so they don't collide with pattern-bound vars at key (0, k<oi).
-            (pat_nv, _, _) = _ee_traverseh(UInt8(0), ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
+            (pat_nv, _, _) = _ee_traverseh(UInt8(0),
+                ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
                 (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing),
                 (h, o, sl) -> (h, nothing), (h, o, a) -> (h, nothing),
                 (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
@@ -1907,12 +1949,12 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
             if no_sink
                 # `,` template functor — apply each template and insert result directly
                 for (k, ee) in enumerate(template_ees)
-                    ez = tpl_ezs[k];
+                    ez = tpl_ezs[k]
                     ez.loc = 1          # reset read position
-                    oz = tpl_ozs[k];
+                    oz = tpl_ozs[k]
                     oz.loc = 1          # reset write position (≡ buffer.clear())
-                    empty!(tpl_rdicts[k]);
-                    empty!(tpl_fvecs[k]);
+                    empty!(tpl_rdicts[k])
+                    empty!(tpl_fvecs[k])
                     empty!(tpl_nvecs[k])
                     (toi, _) = expr_apply(UInt8(0), oi, UInt8(0), ez, bindings, oz,
                         tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
@@ -1940,12 +1982,12 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                 # Accumulating sinks (CountSink) use persistent_sinks created before query.
                 ps = persistent_sinks::Vector{Union{Nothing, AbstractSink}}
                 for (k, ee) in enumerate(template_ees)
-                    ez = tpl_ezs[k];
+                    ez = tpl_ezs[k]
                     ez.loc = 1
-                    oz = tpl_ozs[k];
+                    oz = tpl_ozs[k]
                     oz.loc = 1
-                    empty!(tpl_rdicts[k]);
-                    empty!(tpl_fvecs[k]);
+                    empty!(tpl_rdicts[k])
+                    empty!(tpl_fvecs[k])
                     empty!(tpl_nvecs[k])
                     (toi, _) = expr_apply(UInt8(0), oi, UInt8(0), ez, bindings, oz,
                         tpl_rdicts[k], tpl_fvecs[k], tpl_nvecs[k])
@@ -1971,7 +2013,8 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
             if dd_active[]
                 dd_matches[] += 1
                 if dd_matches[] >= DD_PROBE && dd_hits[] == 0
-                    dd_active[] = false; empty!(dd_seen)
+                    dd_active[] = false
+                    empty!(dd_seen)
                 end
             end
             true
@@ -2096,7 +2139,7 @@ function space_interpret!(s::Space, rt::MORK.Expr;
     dbg = () -> try
         expr_serialize(buf)
     catch
-        ;
+
         bytes2hex(buf)
     end
 
@@ -2177,8 +2220,8 @@ function space_interpret!(s::Space, rt::MORK.Expr;
     pat_functor = pat_buf[pat_off + 3]
     tpl_functor = tpl_buf[tpl_off + 3]
 
-    comma = UInt8(',');
-    i_src = UInt8('I');
+    comma = UInt8(',')
+    i_src = UInt8('I')
     o_snk = UInt8('O')
 
     # Prefix-scoped exec covers comma source with comma OR O-sink templates:
@@ -2196,22 +2239,22 @@ function space_interpret!(s::Space, rt::MORK.Expr;
 
     if pat_functor == comma && tpl_functor == comma
         space_transform_comma_comma!(s, pat_expr, tpl_expr, rt; prefix=prefix)
-    # ── pat_v / tpl_v are ALWAYS 0. Upstream builds every pattern and template env with
-    # `ExprEnv::new(0, expr)` (expr/src/lib.rs:1756-1763, whose body hardcodes `v: 0`), uniformly at
-    # space.rs:1023 :1131 (query_multi / query_multi_i) and :1338 :1413 :1488 :1574 (all four
-    # transform_multi_multi_* template decompositions). It never threads a loc-relative offset here.
-    #
-    # We passed `pat_ee.v` / `tpl_ee.v` — the WHOLE-EXEC-relative offset, which counts variables in
-    # the exec's `loc` arg. With a var-free loc that offset is 0 and the two agree, which is why this
-    # hid: every ground-loc probe passes either way. With a var in `loc` (e.g. `(exec (0 $j) ...)`)
-    # the pattern's NewVar keys got counted from the shifted base, so they lined up with the
-    # template's VarRef indices and we GROUNDED a variable upstream leaves free.
-    #
-    # The `,`/`,` arm was already right — `space_transform_comma_comma!` hardcodes 0. So did the
-    # three named wrappers `space_transform_i_comma!` / `space_transform_comma_o!` /
-    # `space_transform_i_o!` added by ba34df5 (2026-05-01) — but the dispatcher was never rewired to
-    # call them and kept the pre-refactor inline calls. A correct fix that nothing invokes is
-    # indistinguishable from no fix.
+        # ── pat_v / tpl_v are ALWAYS 0. Upstream builds every pattern and template env with
+        # `ExprEnv::new(0, expr)` (expr/src/lib.rs:1756-1763, whose body hardcodes `v: 0`), uniformly at
+        # space.rs:1023 :1131 (query_multi / query_multi_i) and :1338 :1413 :1488 :1574 (all four
+        # transform_multi_multi_* template decompositions). It never threads a loc-relative offset here.
+        #
+        # We passed `pat_ee.v` / `tpl_ee.v` — the WHOLE-EXEC-relative offset, which counts variables in
+        # the exec's `loc` arg. With a var-free loc that offset is 0 and the two agree, which is why this
+        # hid: every ground-loc probe passes either way. With a var in `loc` (e.g. `(exec (0 $j) ...)`)
+        # the pattern's NewVar keys got counted from the shifted base, so they lined up with the
+        # template's VarRef indices and we GROUNDED a variable upstream leaves free.
+        #
+        # The `,`/`,` arm was already right — `space_transform_comma_comma!` hardcodes 0. So did the
+        # three named wrappers `space_transform_i_comma!` / `space_transform_comma_o!` /
+        # `space_transform_i_o!` added by ba34df5 (2026-05-01) — but the dispatcher was never rewired to
+        # call them and kept the pre-refactor inline calls. A correct fix that nothing invokes is
+        # indistinguishable from no fix.
     elseif pat_functor == i_src && tpl_functor == comma
         space_transform_multi_multi!(s, pat_expr, UInt8(0), tpl_expr, UInt8(0), rt;
             no_source=false, no_sink=true)
@@ -2266,7 +2309,8 @@ const _METTA_CALCULUS_MAX_RETRIES = 2000
 # truncation here would corrupt the trie rather than fail.
 function _timing_sym(str::AbstractString)::Vector{UInt8}
     b = codeunits(str)
-    1 <= length(b) <= 63 || error("_timing_sym: payload must be 1..63 bytes, got $(length(b))")
+    1 <= length(b) <= 63 ||
+        error("_timing_sym: payload must be 1..63 bytes, got $(length(b))")
     out = UInt8[item_byte(ExprSymbol(UInt8(length(b))))]
     append!(out, b)
     out
@@ -2612,11 +2656,11 @@ function _space_load_sexpr_impl!(
         expr_transform_data(data_expr, pattern, template, oz) === nothing || continue
         result_bytes = oz.root.buf[1:(oz.loc - 1)]
         if add
-            ;
+
             set_val_at!(s.btm, result_bytes, UNIT_VAL)
         else
-            ;
-            remove_val_at!(s.btm, result_bytes);
+
+            remove_val_at!(s.btm, result_bytes)
         end
         count += 1
     end
@@ -2685,15 +2729,15 @@ end
 
 function space_backup_paths(s::Space, path::AbstractString)
     open(path, "w") do io
-        ;
-        serialize_paths(s.btm, io);
+
+        serialize_paths(s.btm, io)
     end
 end
 
 function space_restore_paths!(s::Space, path::AbstractString)
     open(path, "r") do io
-        ;
-        deserialize_paths(s.btm, io, UNIT_VAL);
+
+        deserialize_paths(s.btm, io, UNIT_VAL)
     end
 end
 
@@ -2710,7 +2754,8 @@ export Space, new_space, space_val_count, space_statistics
 export space_add_all_sexpr!, space_remove_all_sexpr!
 export space_add_sexpr!, space_remove_sexpr!
 export ASpaceTranscriber, space_json_to_paths, space_jsonl_to_paths
-export space_dump_all_sexpr, space_dump_sexpr, space_load_json!, space_load_jsonl!, space_load_json_!
+export space_dump_all_sexpr,
+    space_dump_sexpr, space_load_json!, space_load_jsonl!, space_load_json_!
 export space_backup_tree, space_restore_tree!
 export space_backup_paths, space_restore_paths!
 # =====================================================================

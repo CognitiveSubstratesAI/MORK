@@ -61,7 +61,7 @@ const _JOIN_TRACE = Ref(false)
 #   • AlgResNone     → empty meet
 _trie_meet(a::PathMap{UnitVal}, b::PathMap{UnitVal})::PathMap{UnitVal} = begin
     r = pmeet(a, b)
-    r isa AlgResElement  && return r.value
+    r isa AlgResElement && return r.value
     r isa AlgResIdentity && return (val_count(a) <= val_count(b) ? a : b)
     PathMap{UnitVal}()
 end
@@ -73,7 +73,9 @@ The set of argument-value byte-encodings stored under `head_prefix` — the rela
 prefix (e.g. the `[Arity2][Sym r]` bytes of `(r \$v)`) — materialized as a fresh PathMap
 whose keys are the encoded argument values.
 """
-function trie_argset(btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8})::PathMap{UnitVal}
+function trie_argset(
+    btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8}
+)::PathMap{UnitVal}
     m = PathMap{UnitVal}()
     rz = read_zipper_at_path(btm, collect(head_prefix))
     while zipper_to_next_val!(rz)
@@ -91,7 +93,7 @@ encodings shared by ALL relations — i.e. the bindings of the join variable. Eq
 to `(, (r1 \$v) (r2 \$v) ...)` but computed by trie meet rather than ProductZipper.
 """
 function trie_join_unary(btm::PathMap{UnitVal},
-        head_prefixes::Vector{<:AbstractVector{UInt8}})::PathMap{UnitVal}
+    head_prefixes::Vector{<:AbstractVector{UInt8}})::PathMap{UnitVal}
     isempty(head_prefixes) && return PathMap{UnitVal}()
     acc = trie_argset(btm, head_prefixes[1])
     for i in 2:length(head_prefixes)
@@ -113,12 +115,15 @@ end
 function _classify_empty_tail(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UInt8}}}
     length(sources) < 2 && return (false, Vector{UInt8}[])
     hps = Vector{UInt8}[]
-    n_newvar = 0; n_varref = 0
+    n_newvar = 0
+    n_varref = 0
     for src in sources
-        fa = ExprEnv[]; ee_args!(src, fa)
+        fa = ExprEnv[]
+        ee_args!(src, fa)
         length(fa) == 2 || return (false, Vector{UInt8}[])         # not (head + 1 arg)
         buf = src.base.buf
-        (byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol) || return (false, Vector{UInt8}[])
+        (byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol) ||
+            return (false, Vector{UInt8}[])
         atag = byte_item(buf[Int(fa[2].offset) + 1])
         if atag isa ExprNewVar
             n_newvar += 1
@@ -136,9 +141,9 @@ end
 # byte-path and driving the SAME value-gate / unify / effect contract as the ProductZipper
 # tail (so bindings + `combined` are byte-identical). Returns the candidate count.
 function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
-        hps::Vector{Vector{UInt8}}, effect::Function,
-        bindings_scratch::Bindings,
-        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    hps::Vector{Vector{UInt8}}, effect::Function,
+    bindings_scratch::Bindings,
+    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     common = trie_join_unary(btm, hps)
     candidate = 0
     rz = read_zipper_at_path(common, UInt8[])
@@ -147,21 +152,28 @@ function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             v = collect(zipper_path(rz))                 # the shared-variable binding (arg encoding)
             combined = UInt8[]
             for hp in hps
-                append!(combined, hp); append!(combined, v)
+                append!(combined, hp)
+                append!(combined, v)
             end
             empty!(pairs_scratch)
-            boundary = 0; allok = true
+            boundary = 0
+            allok = true
             for (k, src) in enumerate(sources)
                 hi = boundary + length(hps[k]) + length(v)
                 sub = combined[(boundary + 1):hi]
                 boundary = hi
                 if get_val_at(btm, sub) === nothing      # value-gate (mirrors ProductZipper tail)
-                    allok = false; break
+                    allok = false
+                    break
                 end
-                push!(pairs_scratch, (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), MORK.Expr(sub))))
+                push!(
+                    pairs_scratch,
+                    (src, ExprEnv(UInt8(k), UInt8(0), UInt32(0), MORK.Expr(sub)))
+                )
             end
             if !allok || length(pairs_scratch) != length(sources)
-                empty!(bindings_scratch); continue
+                empty!(bindings_scratch)
+                continue
             end
             empty!(bindings_scratch)
             if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
@@ -187,14 +199,15 @@ end
 # args handled via expr_span, not just symbols).
 function _split2(argbytes::Vector{UInt8})::Tuple{Vector{UInt8}, Vector{UInt8}}
     l1 = length(expr_span(MORK.Expr(argbytes), 1))
-    (argbytes[1:l1], argbytes[(l1+1):end])
+    (argbytes[1:l1], argbytes[(l1 + 1):end])
 end
 
 # byte-span of the sub-expression at 1-based arg position `pos` — generalizes _split2 to
 # arity-N factors (walk `pos` sub-expressions; no need to know the total arity). Lets the
 # binary join handle higher-arity relations like `(syn $a $b $w)` joining at any position.
 function _arg_at(argbytes::Vector{UInt8}, pos::Int)::Vector{UInt8}
-    p = 1; sp = UInt8[]
+    p = 1
+    sp = UInt8[]
     for _ in 1:pos
         sp = Vector{UInt8}(expr_span(MORK.Expr(argbytes[p:end]), 1))
         p += length(sp)
@@ -208,27 +221,34 @@ end
 # `(syn $a $b $w)(syn $b $c $w2)`. Resolves the shared var's arg-position in each factor
 # (NewVars numbered in factor order; VarRef.idx is the absolute var index). Returns
 # (matches, keypos1, keypos2, head_prefix1, head_prefix2). Validated ≡ space_query_multi.
-function _classify_binary_join(sources::Vector{ExprEnv})::Tuple{Bool, Int, Int, Vector{UInt8}, Vector{UInt8}}
+function _classify_binary_join(
+    sources::Vector{ExprEnv}
+)::Tuple{Bool, Int, Int, Vector{UInt8}, Vector{UInt8}}
     fail = (false, 0, 0, UInt8[], UInt8[])
     length(sources) == 2 || return fail
-    occ = Dict{Int, Vector{Tuple{Int,Int}}}(); nv = 0; hps = Vector{UInt8}[]
+    occ = Dict{Int, Vector{Tuple{Int, Int}}}()
+    nv = 0
+    hps = Vector{UInt8}[]
     for (fi, src) in enumerate(sources)
-        fa = ExprEnv[]; ee_args!(src, fa)
+        fa = ExprEnv[]
+        ee_args!(src, fa)
         length(fa) >= 3 || return fail                                   # head + ≥2 args
         buf = src.base.buf
-        (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return fail
+        (byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol) || return fail
         for ap in 2:length(fa)
-            tag = byte_item(buf[Int(fa[ap].offset)+1])
+            tag = byte_item(buf[Int(fa[ap].offset) + 1])
             vid = if tag isa ExprNewVar
-                      v = nv; nv += 1; v
-                  elseif tag isa ExprVarRef
-                      Int(tag.idx)
-                  else
-                      return fail                                        # arg not a variable
-                  end
-            push!(get!(occ, vid, Tuple{Int,Int}[]), (fi, ap - 1))
+                v = nv
+                nv += 1
+                v
+            elseif tag isa ExprVarRef
+                Int(tag.idx)
+            else
+                return fail                                        # arg not a variable
+            end
+            push!(get!(occ, vid, Tuple{Int, Int}[]), (fi, ap - 1))
         end
-        push!(hps, buf[(Int(src.offset)+1):Int(fa[2].offset)])
+        push!(hps, buf[(Int(src.offset) + 1):Int(fa[2].offset)])
     end
     shared = Int[]
     for (vid, os) in occ
@@ -255,9 +275,9 @@ end
 # tail-product, driving the SAME value-gate / unify / effect contract as the ProductZipper
 # tail (combined + bindings byte-identical). Returns the candidate count.
 function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
-        kp1::Int, kp2::Int, hp1::Vector{UInt8}, hp2::Vector{UInt8}, effect::Function,
-        bindings_scratch::Bindings,
-        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    kp1::Int, kp2::Int, hp1::Vector{UInt8}, hp2::Vector{UInt8}, effect::Function,
+    bindings_scratch::Bindings,
+    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     m1 = _bin_keymap(btm, hp1, kp1)
     m2 = _bin_keymap(btm, hp2, kp2)
     candidate = 0
@@ -267,10 +287,17 @@ function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             l2 = m2[key]
             for f1 in l1, f2 in l2
                 # value-gate (atoms come from zipper_to_next_val! so are real — defensive parity)
-                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) && continue
+                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) &&
+                    continue
                 empty!(pairs_scratch)
-                push!(pairs_scratch, (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1))))
-                push!(pairs_scratch, (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2))))
+                push!(
+                    pairs_scratch,
+                    (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1)))
+                )
+                push!(
+                    pairs_scratch,
+                    (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2)))
+                )
                 empty!(bindings_scratch)
                 if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
                     candidate += 1
@@ -309,16 +336,17 @@ end
 # child-index PATH from the factor root to its FIRST occurrence. Also returns the
 # leading ground prefix (bytes before the first variable byte at any depth) — a
 # valid trie prefix to anchor the read. Returns (occ, leading_prefix).
-function _scan_factor_vars(src::ExprEnv)::Tuple{Dict{Int,Vector{Int}}, Vector{UInt8}}
+function _scan_factor_vars(src::ExprEnv)::Tuple{Dict{Int, Vector{Int}}, Vector{UInt8}}
     buf = src.base.buf
-    occ = Dict{Int,Vector{Int}}()
+    occ = Dict{Int, Vector{Int}}()
     base_v = Int(src.v)
     localnv = Ref(0)
     firstvar = Ref(0)   # 1-based buf index of first var byte; 0 = none yet
     function walk(off::Int, path::Vector{Int})::Int       # off = 1-based buf index
         tag = byte_item(buf[off])
         if tag isa ExprNewVar
-            vid = base_v + localnv[]; localnv[] += 1
+            vid = base_v + localnv[]
+            localnv[] += 1
             haskey(occ, vid) || (occ[vid] = path)
             firstvar[] == 0 && (firstvar[] = off)
             return off + 1
@@ -340,7 +368,7 @@ function _scan_factor_vars(src::ExprEnv)::Tuple{Dict{Int,Vector{Int}}, Vector{UI
         end
     end
     walk(Int(src.offset) + 1, Int[])
-    lp = firstvar[] == 0 ? UInt8[] : buf[(Int(src.offset)+1):(firstvar[]-1)]
+    lp = firstvar[] == 0 ? UInt8[] : buf[(Int(src.offset) + 1):(firstvar[] - 1)]
     (occ, lp)
 end
 
@@ -385,8 +413,11 @@ Callers (`_atom_varvals`, `_nested_keymap`) already handle the SEPARATE case whe
 FINAL extracted value itself contains a variable (via `_expr_has_var`); this function
 only needs to flag variables hit while descending TOWARD that final position.
 """
-function _navigate_path(atom::Vector{UInt8}, path::Vector{Int})::Union{Nothing, Symbol, Vector{UInt8}}
-    e = MORK.Expr(atom); off = 1
+function _navigate_path(
+    atom::Vector{UInt8}, path::Vector{Int}
+)::Union{Nothing, Symbol, Vector{UInt8}}
+    e = MORK.Expr(atom)
+    off = 1
     for ci in path
         off <= length(atom) || return nothing
         tag = byte_item(atom[off])
@@ -441,7 +472,9 @@ DECLINE on var-bearing data, never silently return fewer rows.
 Cost: one subtrie scan per factor, the same order as the keymap/argset build the fast path
 performs anyway, and it runs only when a fast path has already matched the query SHAPE.
 """
-function _relation_has_var_atom(btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8})::Bool
+function _relation_has_var_atom(
+    btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8}
+)::Bool
     rz = read_zipper_at_path(btm, collect(head_prefix))
     while zipper_to_next_val!(rz)
         _expr_has_var(collect(zipper_path(rz))) && return true
@@ -471,7 +504,8 @@ Scanning from the relation head is what makes such atoms visible.
 whose var atom hid behind a ground argument — s2_p2c_hidden_varatom, s2_p5_hidden_varatom.)
 """
 function _factor_head_prefix(src::ExprEnv)::Union{Nothing, Vector{UInt8}}
-    fa = ExprEnv[]; ee_args!(src, fa)
+    fa = ExprEnv[]
+    ee_args!(src, fa)
     length(fa) >= 2 || return nothing
     buf = src.base.buf
     byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol || return nothing   # compound/variable head
@@ -493,7 +527,9 @@ _any_factor_relation_has_var_atom(btm::PathMap{UnitVal}, sources::Vector{ExprEnv
 # higher-order pattern): exact-byte trie keying cannot match a var key against a
 # ground key, so the join must fall back to ProductZipper's full unification. The
 # caller bails BEFORE emitting any effect, so no partial results escape.
-function _nested_keymap(btm::PathMap{UnitVal}, leading_prefix::Vector{UInt8}, varpath::Vector{Int})
+function _nested_keymap(
+    btm::PathMap{UnitVal}, leading_prefix::Vector{UInt8}, varpath::Vector{Int}
+)
     m = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
     rz = read_zipper_at_path(btm, leading_prefix)
     sound = true
@@ -501,8 +537,8 @@ function _nested_keymap(btm::PathMap{UnitVal}, leading_prefix::Vector{UInt8}, va
         full = vcat(leading_prefix, collect(zipper_path(rz)))
         key = _navigate_path(full, varpath)
         key === nothing && continue
-        key === :hov && (sound = false; break)          # var hit while descending → higher-order, bail
-        _expr_has_var(key) && (sound = false; break)   # higher-order key → bail to ProductZipper
+        key === :hov && (sound=false; break)          # var hit while descending → higher-order, bail
+        _expr_has_var(key) && (sound=false; break)   # higher-order key → bail to ProductZipper
         push!(get!(m, key, Vector{Vector{UInt8}}()), full)
     end
     (m, sound)
@@ -514,9 +550,9 @@ end
 # (handled, count): handled=false means a stored higher-order key was found and the
 # caller must fall through to ProductZipper (NO effect has fired yet in that case).
 function _nested_binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
-        lp1::Vector{UInt8}, vp1::Vector{Int}, lp2::Vector{UInt8}, vp2::Vector{Int},
-        effect::Function, bindings_scratch::Bindings,
-        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
+    lp1::Vector{UInt8}, vp1::Vector{Int}, lp2::Vector{UInt8}, vp2::Vector{Int},
+    effect::Function, bindings_scratch::Bindings,
+    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
     (m1, s1) = _nested_keymap(btm, lp1, vp1)
     s1 || return (false, 0)
     (m2, s2) = _nested_keymap(btm, lp2, vp2)
@@ -527,10 +563,17 @@ function _nested_binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEn
             haskey(m2, key) || continue
             l2 = m2[key]
             for f1 in l1, f2 in l2
-                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) && continue
+                (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) &&
+                    continue
                 empty!(pairs_scratch)
-                push!(pairs_scratch, (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1))))
-                push!(pairs_scratch, (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2))))
+                push!(
+                    pairs_scratch,
+                    (sources[1], ExprEnv(UInt8(1), UInt8(0), UInt32(0), MORK.Expr(f1)))
+                )
+                push!(
+                    pairs_scratch,
+                    (sources[2], ExprEnv(UInt8(2), UInt8(0), UInt32(0), MORK.Expr(f2)))
+                )
                 empty!(bindings_scratch)
                 if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
                     candidate += 1
@@ -561,13 +604,18 @@ const _NO_ATOMS = Vector{Vector{UInt8}}()
 # Returns (matches, head_prefixes). Non-chain k>=3 shapes (star, unlinked) are rejected.
 function _classify_chain(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UInt8}}}
     length(sources) >= 3 || return (false, Vector{UInt8}[])
-    hps = Vector{UInt8}[]; nv = 0; prev = -1
+    hps = Vector{UInt8}[]
+    nv = 0
+    prev = -1
     for (fi, src) in enumerate(sources)
-        fa = ExprEnv[]; ee_args!(src, fa)
+        fa = ExprEnv[]
+        ee_args!(src, fa)
         length(fa) >= 3 || return (false, Vector{UInt8}[])               # head + ≥2 args
         buf = src.base.buf
-        (byte_item(buf[Int(fa[1].offset)+1]) isa ExprSymbol) || return (false, Vector{UInt8}[])
-        t1 = byte_item(buf[Int(fa[2].offset)+1]); t2 = byte_item(buf[Int(fa[3].offset)+1])
+        (byte_item(buf[Int(fa[1].offset) + 1]) isa ExprSymbol) ||
+            return (false, Vector{UInt8}[])
+        t1 = byte_item(buf[Int(fa[2].offset) + 1])
+        t2 = byte_item(buf[Int(fa[3].offset) + 1])
         (t2 isa ExprNewVar) || return (false, Vector{UInt8}[])           # arg2 (out-link) introduces a var
         if fi == 1
             (t1 isa ExprNewVar) || return (false, Vector{UInt8}[])       # 1st factor: arg1 also new
@@ -575,12 +623,14 @@ function _classify_chain(sources::Vector{ExprEnv})::Tuple{Bool, Vector{Vector{UI
         else
             (t1 isa ExprVarRef && Int(t1.idx) == prev) || return (false, Vector{UInt8}[])  # chain link arg1↔prev arg2
         end
-        prev = nv; nv += 1                                               # arg2 introduces the next link var
+        prev = nv
+        nv += 1                                               # arg2 introduces the next link var
         for ap in 4:length(fa)                                          # arity-N tails (pos ≥3): fresh NewVars
-            (byte_item(buf[Int(fa[ap].offset)+1]) isa ExprNewVar) || return (false, Vector{UInt8}[])
+            (byte_item(buf[Int(fa[ap].offset) + 1]) isa ExprNewVar) ||
+                return (false, Vector{UInt8}[])
             nv += 1
         end
-        push!(hps, buf[(Int(src.offset)+1):Int(fa[2].offset)])
+        push!(hps, buf[(Int(src.offset) + 1):Int(fa[2].offset)])
     end
     (true, hps)
 end
@@ -589,17 +639,23 @@ end
 # depth bind the factor's atoms whose 1st arg == the prior factor's 2nd arg, recurse, and at
 # the leaf reconstruct the combined path + drive the unify/effect contract. Returns the count.
 function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
-        hps::Vector{Vector{UInt8}}, effect::Function,
-        bindings_scratch::Bindings,
-        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
+    hps::Vector{Vector{UInt8}}, effect::Function,
+    bindings_scratch::Bindings,
+    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Int
     k = length(sources)
     kms = [Dict{Vector{UInt8}, Vector{Vector{UInt8}}}() for _ in 1:k]   # factor i>=2 keyed by 1st arg
     f1 = Vector{Vector{UInt8}}()
     for fi in 1:k
         rz = read_zipper_at_path(btm, hps[fi])
         while zipper_to_next_val!(rz)
-            args = collect(zipper_path(rz)); a1 = _arg_at(args, 1); full = vcat(hps[fi], args)
-            fi == 1 ? push!(f1, full) : push!(get!(kms[fi], a1, Vector{Vector{UInt8}}()), full)
+            args = collect(zipper_path(rz))
+            a1 = _arg_at(args, 1)
+            full = vcat(hps[fi], args)
+            if fi == 1
+                push!(f1, full)
+            else
+                push!(get!(kms[fi], a1, Vector{Vector{UInt8}}()), full)
+            end
         end
     end
     stack = Vector{Vector{UInt8}}(undef, k)
@@ -609,19 +665,26 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         if depth > k
             empty!(pairs_scratch)
             for i in 1:k
-                push!(pairs_scratch, (sources[i], ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(stack[i]))))
+                push!(
+                    pairs_scratch,
+                    (
+                        sources[i],
+                        ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(stack[i]))
+                    )
+                )
             end
             empty!(bindings_scratch)
             if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
                 candidate[] += 1
-                bindings_out = copy(bindings_scratch); empty!(bindings_scratch)
+                bindings_out = copy(bindings_scratch)
+                empty!(bindings_scratch)
                 return effect(bindings_out, MORK.Expr(reduce(vcat, stack)))
             end
             return true
         end
         atoms = depth == 1 ? f1 : get(kms[depth], joinkey, _NO_ATOMS)
         for atom in atoms
-            a2 = _arg_at(atom[(length(hps[depth])+1):end], 2)   # out-link key = arg2 (any arity)
+            a2 = _arg_at(atom[(length(hps[depth]) + 1):end], 2)   # out-link key = arg2 (any arity)
             stack[depth] = atom
             rec(depth + 1, a2) || return false
         end
@@ -653,26 +716,33 @@ end
 # bound-var set. Returns (matches, order, occ_per_source, lp_per_source). Disconnected
 # conjunctions (an independent factor) are rejected → ProductZipper.
 function _classify_connected(sources::Vector{ExprEnv})
-    fail = (false, Int[], Dict{Int,Vector{Int}}[], Vector{UInt8}[])
+    fail = (false, Int[], Dict{Int, Vector{Int}}[], Vector{UInt8}[])
     k = length(sources)
     k >= 3 || return fail
-    occ = Dict{Int,Vector{Int}}[]; lps = Vector{UInt8}[]
+    occ = Dict{Int, Vector{Int}}[]
+    lps = Vector{UInt8}[]
     for src in sources
         (o, lp) = _scan_factor_vars(src)
         isempty(o) && return fail                 # a ground factor can't join — bail
-        push!(occ, o); push!(lps, lp)
+        push!(occ, o)
+        push!(lps, lp)
     end
-    order = [1]; bound = Set{Int}(keys(occ[1]))
-    used = falses(k); used[1] = true
+    order = [1]
+    bound = Set{Int}(keys(occ[1]))
+    used = falses(k)
+    used[1] = true
     for _ in 2:k
         nxt = 0
         for j in 1:k
             used[j] && continue
             isempty(intersect(keys(occ[j]), bound)) && continue
-            nxt = j; break
+            nxt = j
+            break
         end
         nxt == 0 && return fail                   # disconnected component
-        used[nxt] = true; push!(order, nxt); union!(bound, keys(occ[nxt]))
+        used[nxt] = true
+        push!(order, nxt)
+        union!(bound, keys(occ[nxt]))
     end
     (true, order, occ, lps)
 end
@@ -741,7 +811,7 @@ const BindSlab = Vector{Vector{UInt8}}
 @inline _new_slab(nv::Int)::BindSlab = fill(_EMPTY_BIND, nv)
 @inline _slab_bound(sl::BindSlab, v::Int)::Bool = !isempty(sl[_slot(v)])
 
-function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int,Vector{Int}}, nv::Int)
+function _atom_varvals(atom::Vector{UInt8}, occ::Dict{Int, Vector{Int}}, nv::Int)
     d = _new_slab(nv)
     for (vid, path) in occ
         v = _navigate_path(atom, path)
@@ -756,23 +826,31 @@ end
 # Multi-key: concatenate the (sorted) shared vars' bound values into one key. Direct indexing —
 # no hash, no comparison.
 _join_key(vals::BindSlab, shared::Vector{Int}) = begin
-    out = UInt8[]; for v in shared; append!(out, vals[_slot(v)]); end; out
+    out = UInt8[]
+    for v in shared
+        append!(out, vals[_slot(v)])
+    end
+    out
 end
 
 # Pipelined hash join. Returns (handled, count); handled=false ⇒ a higher-order key was
 # found and NO effect fired ⇒ caller falls through to ProductZipper.
 function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
-        order::Vector{Int}, occ::Vector{Dict{Int,Vector{Int}}}, lps::Vector{Vector{UInt8}},
-        effect::Function, bindings_scratch::Bindings,
-        pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
+    order::Vector{Int}, occ::Vector{Dict{Int, Vector{Int}}}, lps::Vector{Vector{UInt8}},
+    effect::Function, bindings_scratch::Bindings,
+    pairs_scratch::Vector{Tuple{ExprEnv, ExprEnv}})::Tuple{Bool, Int}
     k = length(sources)
     # The slab's width: the highest variable id any factor mentions. Bounded by the parser's
     # 64-variable cap, so this is small by construction.
     nv = 0
-    for o in occ, vid in keys(o); nv = max(nv, vid + 1); end   # ids are 0-based ⇒ width = max + 1
+    for o in occ, vid in keys(o)
+        nv = max(nv, vid + 1)
+    end   # ids are 0-based ⇒ width = max + 1
     # Per factor, the var ids it binds — iterated instead of a Dict's keys when merging a candidate.
     vids = Vector{Vector{Int}}(undef, k)
-    for fi in 1:k; vids[fi] = sort!(collect(keys(occ[fi]))); end
+    for fi in 1:k
+        vids[fi] = sort!(collect(keys(occ[fi])))
+    end
 
     # Load + index each factor's atoms once; bail on any higher-order (var-bearing) atom.
     atoms = Vector{Vector{Tuple{Vector{UInt8}, BindSlab}}}(undef, k)
@@ -820,20 +898,27 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     # defensive only (a Cartesian step stays CORRECT, just slower).
     if _CARD_REORDER_ENABLED[]
         card = Int[length(atoms[fi]) for fi in 1:k]
-        neworder = Int[]; usedp = falses(k)
-        seed = argmin(card); push!(neworder, seed); usedp[seed] = true
+        neworder = Int[]
+        usedp = falses(k)
+        seed = argmin(card)
+        push!(neworder, seed)
+        usedp[seed] = true
         boundc = Set{Int}(keys(occ[seed]))
         for _ in 2:k
-            best = 0; bestc = typemax(Int)
+            best = 0
+            bestc = typemax(Int)
             for j in 1:k
                 usedp[j] && continue
                 isempty(intersect(keys(occ[j]), boundc)) && continue
                 if card[j] < bestc
-                    bestc = card[j]; best = j
+                    bestc = card[j]
+                    best = j
                 end
             end
             best == 0 && (best = something(findfirst(!, usedp)))   # defensive: connected ⇒ unused-connected exists
-            push!(neworder, best); usedp[best] = true; union!(boundc, keys(occ[best]))
+            push!(neworder, best)
+            usedp[best] = true
+            union!(boundc, keys(occ[best]))
         end
         order = neworder     # rebinds the function arg (plain if-scope, no let shadow)
     end
@@ -845,7 +930,8 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     # unbound marker and the element type becomes concrete.
     tuples = Tuple{Vector{Vector{UInt8}}, BindSlab}[]
     for (a, vv) in atoms[f0]
-        slot = fill(_EMPTY_BIND, k); slot[f0] = a
+        slot = fill(_EMPTY_BIND, k)
+        slot[f0] = a
         push!(tuples, (slot, copy(vv)))
     end
     boundvars = Set{Int}(keys(occ[f0]))
@@ -861,17 +947,21 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             cands = get(idx, _join_key(bnd, shared), nothing)
             cands === nothing && continue
             for (a, vv) in cands
-                ns = copy(slot); ns[fi] = a
-                nb = copy(bnd); for vid in vids[fi]; nb[_slot(vid)] = vv[_slot(vid)]; end
+                ns = copy(slot)
+                ns[fi] = a
+                nb = copy(bnd)
+                for vid in vids[fi]
+                    nb[_slot(vid)] = vv[_slot(vid)]
+                end
                 push!(nxt, (ns, nb))
             end
         end
         if _JOIN_TRACE[]
             println("  [join] step ", lpad(step, 2), "/", k,
-                    "  factor=", lpad(fi, 2),
-                    "  |atoms[fi]|=", lpad(length(atoms[fi]), 7),
-                    "  |tuples|: ", lpad(length(tuples), 8), " -> ", lpad(length(nxt), 8),
-                    "  shared=", shared)
+                "  factor=", lpad(fi, 2),
+                "  |atoms[fi]|=", lpad(length(atoms[fi]), 7),
+                "  |tuples|: ", lpad(length(tuples), 8), " -> ", lpad(length(nxt), 8),
+                "  shared=", shared)
         end
         tuples = nxt
         union!(boundvars, keys(occ[fi]))
@@ -882,17 +972,28 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     try
         for (slot, _) in tuples
             any(s -> s === nothing, slot) && continue
-            empty!(pairs_scratch); ok = true
+            empty!(pairs_scratch)
+            ok = true
             for i in 1:k
-                get_val_at(btm, slot[i]) === nothing && (ok = false; break)   # value gate
-                push!(pairs_scratch, (sources[i], ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(slot[i]))))
+                get_val_at(btm, slot[i]) === nothing && (ok=false; break)   # value gate
+                push!(
+                    pairs_scratch,
+                    (
+                        sources[i],
+                        ExprEnv(UInt8(i), UInt8(0), UInt32(0), MORK.Expr(slot[i]))
+                    )
+                )
             end
             ok || continue
             empty!(bindings_scratch)
             if _expr_unify_inplace!(pairs_scratch, bindings_scratch) === true
                 candidate += 1
-                bindings_out = copy(bindings_scratch); empty!(bindings_scratch)
-                combined = UInt8[]; for i in 1:k; append!(combined, slot[i]); end   # SOURCE order
+                bindings_out = copy(bindings_scratch)
+                empty!(bindings_scratch)
+                combined = UInt8[]
+                for i in 1:k
+                    append!(combined, slot[i])
+                end   # SOURCE order
                 effect(bindings_out, MORK.Expr(combined)) || throw(BreakQuery())
             else
                 empty!(bindings_scratch)
@@ -921,7 +1022,13 @@ function _chain_projection_ok(template_ees::Vector{ExprEnv}, oi::Int, xk_idx::In
     for ee in template_ees
         _ee_traverseh(UInt8(0), ee,
             (h, o) -> (h, nothing),
-            (h, o, r) -> (begin ri = Int(r); (ri < oi && ri != 0 && ri != xk_idx) && (okref[] = false) end; (h, nothing)),
+            (h, o, r) -> (
+                begin
+                    ri = Int(r)
+                    (ri < oi && ri != 0 && ri != xk_idx) && (okref[] = false)
+                end;
+                (h, nothing)
+            ),
             (h, o, sl) -> (h, nothing), (h, o, a) -> (h, nothing),
             (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
         okref[] || return false
@@ -958,15 +1065,18 @@ end
 # Apply the template(s) once per distinct (x0, xk) endpoint pair → set_val_at!. Returns
 # (count, any_new). Constructs the minimal bindings {endpoint vars → values} the template needs.
 function _chain_proj_emit!(s, hps::Vector{Vector{UInt8}}, template_ees::Vector{ExprEnv},
-        oi::Int, xk_idx::Int)::Tuple{Int, Bool}
+    oi::Int, xk_idx::Int)::Tuple{Int, Bool}
     reach = _chain_compose(s.btm, hps)
-    cnt = 0; any_new = false
+    cnt = 0
+    any_new = false
     obuf = Vector{UInt8}(undef, 1 << 16)
     tspans = [Vector{UInt8}(expr_span(ee.base, Int(ee.offset) + 1)) for ee in template_ees]
     for (x0, xks) in reach, xk in xks
         bind = Bindings()
-        bind[(UInt8(0), UInt8(0))]      = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(x0))
-        bind[(UInt8(0), UInt8(xk_idx))] = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(xk))
+        bind[(UInt8(0), UInt8(0))] = ExprEnv(UInt8(0), UInt8(0), UInt32(0), MORK.Expr(x0))
+        bind[(UInt8(0), UInt8(xk_idx))] = ExprEnv(
+            UInt8(0), UInt8(0), UInt32(0), MORK.Expr(xk)
+        )
         for tsp in tspans
             ez = ExprZipper(MORK.Expr(tsp), 1)
             oz = ExprZipper(MORK.Expr(obuf), 1)
@@ -985,8 +1095,9 @@ end
 # Orchestrator: fire P4-B iff pat is a strict chain (k>=3) and all templates project to the
 # endpoints. Returns (count, any_new) when it fires, else `nothing` (caller falls through).
 function _try_chain_projection!(s, pat_expr::MORK.Expr, pat_v::UInt8,
-        template_ees::Vector{ExprEnv})::Union{Nothing, Tuple{Int, Bool}}
-    pa = ExprEnv[]; ee_args!(ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr), pa)
+    template_ees::Vector{ExprEnv})::Union{Nothing, Tuple{Int, Bool}}
+    pa = ExprEnv[]
+    ee_args!(ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr), pa)
     length(pa) < 4 && return nothing                              # need (, f1 f2 f3...) k>=3
     sources = pa[2:end]
     (ch_ok, hps) = _classify_chain(sources)
@@ -1013,13 +1124,16 @@ function _try_chain_projection!(s, pat_expr::MORK.Expr, pat_v::UInt8,
     # the optimization for arity-N — that is a PERF task, and it needs its own oracle before
     # it can be trusted, which is exactly what this path lacked.
     for src in sources
-        fa = ExprEnv[]; ee_args!(src, fa)
+        fa = ExprEnv[]
+        ee_args!(src, fa)
         length(fa) == 3 || return nothing        # head + exactly 2 args
     end
     (pat_nv, _, _) = _ee_traverseh(UInt8(0), ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr),
-        (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing), (h, o, sl) -> (h, nothing),
+        (h, o) -> (h + UInt8(1), nothing), (h, o, r) -> (h, nothing),
+        (h, o, sl) -> (h, nothing),
         (h, o, a) -> (h, nothing), (h, o, x, y) -> (h, nothing), (h, o, acc) -> (h, acc))
-    oi = Int(pat_v) + Int(pat_nv); xk_idx = oi - 1
+    oi = Int(pat_v) + Int(pat_nv)
+    xk_idx = oi - 1
     _chain_projection_ok(template_ees, oi, xk_idx) || return nothing
     _chain_proj_emit!(s, hps, template_ees, oi, xk_idx)
 end

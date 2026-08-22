@@ -66,7 +66,7 @@ const _POS_NAN_32 = UInt8[0x7f, 0xc0, 0x00, 0x00]
     # encoded the rule.
     @testset "signed zero" begin
         for (op, T, be) in (("min_f64", Float64, _f64), ("max_f64", Float64, _f64),
-                            ("min_f32", Float32, _f32), ("max_f32", Float32, _f32))
+            ("min_f32", Float32, _f32), ("max_f32", Float32, _f32))
             got = _ev(op, be(-0.0), be(0.0))
             @test got == be(0.0)            # +0.0 …
             @test got[1] & 0x80 == 0x00     # … and specifically NOT the -0.0 bit pattern
@@ -89,10 +89,11 @@ const _POS_NAN_32 = UInt8[0x7f, 0xc0, 0x00, 0x00]
         for bad in ("0x10", "0X1p3", "1_0", "abc", "", "+", "e5", "1e", "--1", "0b101")
             @test_throws Exception _ev("f64_from_string", Vector{UInt8}(bad))
         end
-        for (lit, want) in (("0", 0.0), ("-0", -0.0), ("1", 1.0), ("-1", -1.0), ("2.5", 2.5),
-                            ("1e3", 1000.0), ("1E3", 1000.0), (".5", 0.5), ("5.", 5.0),
-                            ("+5", 5.0), ("inf", Inf), ("-inf", -Inf), ("infinity", Inf),
-                            ("Infinity", Inf))
+        for (lit, want) in
+            (("0", 0.0), ("-0", -0.0), ("1", 1.0), ("-1", -1.0), ("2.5", 2.5),
+            ("1e3", 1000.0), ("1E3", 1000.0), (".5", 0.5), ("5.", 5.0),
+            ("+5", 5.0), ("inf", Inf), ("-inf", -Inf), ("infinity", Inf),
+            ("Infinity", Inf))
             @test _ev("f64_from_string", Vector{UInt8}(lit)) == _f64(want)
         end
         @test _ev("f64_from_string", Vector{UInt8}("NaN")) == _f64(NaN)

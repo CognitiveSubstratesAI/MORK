@@ -29,9 +29,9 @@ function _ctl_states(atoms, formula::AbstractString)
     states = Int[]
     for a in atoms
         startswith(a, pref) || continue
-        rest = a[length(pref)+1:end]      # "<state>)"
+        rest = a[(length(pref) + 1):end]      # "<state>)"
         endswith(rest, ")") || continue
-        push!(states, parse(Int, rest[1:end-1]))
+        push!(states, parse(Int, rest[1:(end - 1)]))
     end
     sort!(unique!(states))
 end
@@ -62,8 +62,8 @@ end
     @test _ctl_states(atoms, "(AG ((~ (fuelOK)) -> (EF (fuelOK))))") == collect(1:12)
 
     # -- Intermediate labelling spot-checks (wiki full-program dump) ------------------------
-    @test _ctl_states(atoms, "(caR)")                == [5, 6, 7, 8]
-    @test _ctl_states(atoms, "(fuelOK)")             == [2, 4, 6, 8, 10, 12]
-    @test _ctl_states(atoms, "(EX (caP))")           == [7, 8, 9, 10, 11, 12]
+    @test _ctl_states(atoms, "(caR)") == [5, 6, 7, 8]
+    @test _ctl_states(atoms, "(fuelOK)") == [2, 4, 6, 8, 10, 12]
+    @test _ctl_states(atoms, "(EX (caP))") == [7, 8, 9, 10, 11, 12]
     @test _ctl_states(atoms, "((caR) & (EX (caP)))") == [7, 8]   # EU target set W0
 end

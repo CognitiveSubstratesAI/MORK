@@ -22,13 +22,15 @@
 
 using MORK, Test, Random
 
-_loc_space(src) = (s = MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
+_loc_space(src) = (s=MORK.new_space(); MORK.space_add_all_sexpr!(s, src); s)
 _loc_raw(loc) = Vector{UInt8}(loc isa MORK.Expr ? loc.buf : loc)
 
 "Every `loc` the stock engine hands back, in order."
 function _loc_stock(s, body)
     out = Vector{Vector{UInt8}}()
-    MORK.space_query_multi(s.btm, MORK.sexpr_to_expr(body), (_b, l) -> (push!(out, _loc_raw(l)); true))
+    MORK.space_query_multi(
+        s.btm, MORK.sexpr_to_expr(body), (_b, l) -> (push!(out, _loc_raw(l)); true)
+    )
     out
 end
 
@@ -36,7 +38,7 @@ end
 function _loc_leap(s, body)
     out = Vector{Vector{UInt8}}()
     r = MORK.space_query_multi_leapfrog(s.btm, MORK.sexpr_to_expr(body),
-                                        (_b, l) -> (push!(out, _loc_raw(l)); true))
+        (_b, l) -> (push!(out, _loc_raw(l)); true))
     r === nothing ? nothing : out
 end
 
@@ -55,16 +57,16 @@ end
         @test Set(stock) == Set(leap)
         # …and pin the absolute fact: a loc must BE a stored atom, prefix included.
         @test Set(leap) == Set([MORK.sexpr_to_expr("(edge n1 n2)").buf,
-                                MORK.sexpr_to_expr("(edge n2 n3)").buf])
+            MORK.sexpr_to_expr("(edge n2 n3)").buf])
     end
 
     @testset "multi-factor, ground columns, and a stored wildcard" begin
         for (src, body) in [
-            ("(edge a b)\n(edge b c)\n(edge c d)\n",   "(, (edge \$x \$y) (edge \$y \$z))"),
+            ("(edge a b)\n(edge b c)\n(edge c d)\n", "(, (edge \$x \$y) (edge \$y \$z))"),
             ("(edge a b)\n(edge \$w b)\n(edge b c)\n", "(, (edge \$x \$y) (edge \$y \$z))"),
-            ("(edge a b)\n(link b c)\n",               "(, (edge \$x \$y) (link \$y \$z))"),
-            ("(edge (f a) b)\n(edge (f c) d)\n",       "(, (edge (f \$x) \$y))"),
-            ("(edge a a)\n(edge a b)\n",               "(, (edge \$x \$x))"),
+            ("(edge a b)\n(link b c)\n", "(, (edge \$x \$y) (link \$y \$z))"),
+            ("(edge (f a) b)\n(edge (f c) d)\n", "(, (edge (f \$x) \$y))"),
+            ("(edge a a)\n(edge a b)\n", "(, (edge \$x \$x))")
         ]
             s = _loc_space(src)
             stock = _loc_stock(s, body)
@@ -83,14 +85,24 @@ end
             lines = String[]
             for _ in 1:rand(rng, 2:5)
                 r = rand(rng, rels)
-                arg() = (t = rand(rng); t < 0.2 ? "\$w" : t < 0.35 ? "(f $(rand(rng, syms)))" :
-                                        rand(rng, syms))
+                arg() = (
+                    t=rand(rng);
+                    if t < 0.2
+                        "\$w"
+                    elseif t < 0.35
+                        "(f $(rand(rng, syms)))"
+                    else
+                        rand(rng, syms)
+                    end
+                )
                 push!(lines, "($r $(arg()) $(arg()))")
             end
             s = _loc_space(join(unique(lines), "\n") * "\n")
             nv = rand(rng, 1:2)
-            conj = ["($(rand(rng, rels)) \$v$(rand(rng, 0:(nv-1))) \$v$(rand(rng, 0:(nv-1))))"
-                    for _ in 1:rand(rng, 1:2)]
+            conj = [
+                "($(rand(rng, rels)) \$v$(rand(rng, 0:(nv-1))) \$v$(rand(rng, 0:(nv-1))))"
+                for _ in 1:rand(rng, 1:2)
+            ]
             body = "(, " * join(conj, " ") * ")"
             stock = _loc_stock(s, body)
             leap = _loc_leap(s, body)

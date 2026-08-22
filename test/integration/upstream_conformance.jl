@@ -45,15 +45,20 @@ end
 
 const _UP_MORK = let
     cands = [expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"),
-             expanduser("~/JuliaAGI/dev-zone/MORK/kernel/target/release/mork")]
-    i = findfirst(isfile, cands); i === nothing ? nothing : cands[i]
+        expanduser("~/JuliaAGI/dev-zone/MORK/kernel/target/release/mork")]
+    i = findfirst(isfile, cands)
+    i === nothing ? nothing : cands[i]
 end
-const _UP_RES  = expanduser("~/JuliaAGI/dev-zone/MORK/kernel/resources")
+const _UP_RES = expanduser("~/JuliaAGI/dev-zone/MORK/kernel/resources")
 const _FIXTURE = joinpath(@__DIR__, "..", "fixtures", "mm2")
 
 # ground atoms only (drop var-bearing rule lines), stripped + sorted → order-independent set
-_ground(dump::AbstractString) = sort!(String[s for l in split(dump, '\n')
-                                             for s in (strip(l),) if !isempty(s) && !occursin('$', s)])
+_ground(dump::AbstractString) = sort!(
+    String[
+        s for l in split(dump, '\n')
+        for s in (strip(l),) if !isempty(s) && !occursin('$', s)
+    ]
+)
 
 function _upstream(file::AbstractString, steps::Int)
     out = tempname() * ".mm2out"
@@ -65,10 +70,14 @@ function _upstream(file::AbstractString, steps::Int)
         # workflow this repo MANDATES for MORK testing, so this — our ONLY differential check
         # against the built Rust binary — was silently erroring out on every mandated run.
         # Found 2026-07-23 while auditing why a 36-function port gap had gone unnoticed.
-        Base.run(pipeline(`$_UP_MORK run $file --steps $steps $out`; stdout = devnull, stderr = devnull))
+        Base.run(
+            pipeline(
+                `$_UP_MORK run $file --steps $steps $out`; stdout=devnull, stderr=devnull
+            )
+        )
         _ground(read(out, String))
     finally
-        isfile(out) && rm(out; force = true)
+        isfile(out) && rm(out; force=true)
     end
 end
 
@@ -77,11 +86,11 @@ function _ours(file::AbstractString, steps::Int; coref::Bool)
     prev = MORK._USE_COREF_JOIN[]
     MORK._USE_COREF_JOIN[] = coref
     try
-        MORK.mork_run(file; steps = steps, output_path = out)
+        MORK.mork_run(file; steps=steps, output_path=out)
         _ground(read(out, String))
     finally
         MORK._USE_COREF_JOIN[] = prev
-        isfile(out) && rm(out; force = true)
+        isfile(out) && rm(out; force=true)
     end
 end
 
@@ -90,24 +99,25 @@ end
 function _ours_default(file::AbstractString, steps::Int)
     out = tempname() * ".mm2out"
     try
-        MORK.mork_run(file; steps = steps, output_path = out)
+        MORK.mork_run(file; steps=steps, output_path=out)
         _ground(read(out, String))
     finally
-        isfile(out) && rm(out; force = true)
+        isfile(out) && rm(out; force=true)
     end
 end
 
 @testset "upstream conformance (differential vs built Rust `mork`)" begin
     if _UP_MORK === nothing
-        _oracle_missing("upstream Rust `mork` binary (the ONLY differential oracle for this port)",
-                        "cd ~/JuliaAGI/dev-zone/MORK && cargo build --release")
+        _oracle_missing(
+            "upstream Rust `mork` binary (the ONLY differential oracle for this port)",
+            "cd ~/JuliaAGI/dev-zone/MORK && cargo build --release")
     else
         # (1) tractable relational join — the DEFAULT engine AND the naive opt-out both match upstream.
         jf = joinpath(_FIXTURE, "conformance_join.mm2")
         up_j = _upstream(jf, 10)
         @test !isempty(up_j)
         @test _ours_default(jf, 10) == up_j              # default (coref) conforms
-        @test _ours(jf, 10; coref = false) == up_j       # naive opt-out also correct on tractable
+        @test _ours(jf, 10; coref=false) == up_j       # naive opt-out also correct on tractable
         let g = _ours_default(jf, 10)
             # 2-hops from {0→1,1→2,2→3,1→4}: 0→1→2, 1→2→3, 0→1→4 (NOT 0→3, a 3-hop)
             @test "(path2 0 2)" in g && "(path2 1 3)" in g && "(path2 0 4)" in g
@@ -118,14 +128,16 @@ end
         #     naive default EXPLODED here (>2M transitions vs upstream ~1k) — this is the fix, locked.
         cm = joinpath(_UP_RES, "counter_machine_5.mm2")
         if isfile(cm)
-            up_cm  = _upstream(cm, 1_000)
+            up_cm = _upstream(cm, 1_000)
             our_cm = _ours_default(cm, 1_000)
             @test !isempty(up_cm)
             @test any(l -> startswith(l, "(HALTED "), our_cm)      # it actually halted
             @test our_cm == up_cm                                   # DEFAULT ≡ upstream
         else
-            _oracle_missing("counter_machine_5.mm2 (the higher-order 5-factor reflective join — the \
-                             ONE case that caught the naive-default explosion)", "expected at $cm")
+            _oracle_missing(
+                "counter_machine_5.mm2 (the higher-order 5-factor reflective join — the \
+                             ONE case that caught the naive-default explosion)",
+                "expected at $cm")
         end
 
         # (3) lte self-spawning recursion — upstream halts (~60 steps); the DEFAULT halts & conforms.
@@ -136,27 +148,30 @@ end
             @test _ours_default(lte, 200) == _upstream(lte, 200)
         else
             _oracle_missing("lte_selfspawn_b6.mm2 (self-spawning recursion halting check)",
-                            "expected at $lte")
+                "expected at $lte")
         end
 
         # (4) Set_Ops_06 symmetric-difference — 4-factor conjunction + O-sink; DEFAULT ≡ upstream.
         so = joinpath(@__DIR__, "..", "..", "experiments", "mm2_programs", "programs",
-                      "Set_Ops_06_Symmetric_Difference.mm2")
+            "Set_Ops_06_Symmetric_Difference.mm2")
         if isfile(so)
             @test _ours_default(so, 1_000) == _upstream(so, 1_000)
         else
-            _oracle_missing("Set_Ops_06_Symmetric_Difference.mm2 (4-factor conjunction + O-sink)",
-                            "expected at $so")
+            _oracle_missing(
+                "Set_Ops_06_Symmetric_Difference.mm2 (4-factor conjunction + O-sink)",
+                "expected at $so")
         end
 
         # (5) Going-wide DEF/main-loop idiom (fork/join multi-source selection). Under the naive
         #     default these grew unbounded and never halted with (OUTPUT 1); the DEFAULT (coref)
         #     converges bounded (<100 steps) ≡ upstream byte-for-byte. _02/_11 emit (OUTPUT 1); _31
         #     is a two-program composition that legitimately emits none (upstream agrees).
-        let progs = joinpath(@__DIR__, "..", "..", "experiments", "mm2_programs", "programs")
+        let progs = joinpath(
+                @__DIR__, "..", "..", "experiments", "mm2_programs", "programs"
+            )
             for (name, want_out) in (("Going_Wide_02.mm2", true),
-                                     ("Going_Wide_11_Macros.mm2", true),
-                                     ("Going_Wide_31_Two_Programs.mm2", false))
+                ("Going_Wide_11_Macros.mm2", true),
+                ("Going_Wide_31_Two_Programs.mm2", false))
                 gw = joinpath(progs, name)
                 if isfile(gw)
                     our_gw = _ours_default(gw, 2_000)
@@ -174,8 +189,10 @@ end
         # "0 failed" can distinguish it from real coverage. If a fixture is legitimately retired,
         # LOWER this number in the same commit — deliberately, in review.
         let n = Test.get_testset().n_passed
-            @test n >= 15 || error("upstream conformance contributed only $n assertions (floor 15) \
-                                    — the oracle has gone (partly) INERT; find out why before trusting green")
+            @test n >= 15 || error(
+                "upstream conformance contributed only $n assertions (floor 15) \
+                                    — the oracle has gone (partly) INERT; find out why before trusting green"
+            )
         end
     end
 end

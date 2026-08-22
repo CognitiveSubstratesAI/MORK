@@ -25,11 +25,11 @@ using MORK
         # Warm up JIT (first call may include compilation overhead)
         for _ in 1:3
             for h in [MORK._var_children, MORK._size_children, MORK._arity_children]
-                count = 0;
+                count = 0
                 for b in h(rz)
-                    ;
-                    count += Int(b);
-                end;
+
+                    count += Int(b)
+                end
                 count
             end
         end
@@ -42,8 +42,8 @@ using MORK
             n = @allocated (
                 count=0;
                 for b in h(rz)
-                    ;
-                    count += Int(b);
+
+                    count += Int(b)
                 end;
                 count
             )
@@ -92,7 +92,7 @@ using MORK
             raw"(, $x)",                        # bare-variable conjunct — matches the exec itself (THE BUG CASE)
             raw"(, (exec $l $p $t))",           # explicit meta-rule matching execs
             raw"(, ($h $a $b $c))",             # variable head, arity 4 == exec's arity
-            raw"(, (isa $x bird) $y)",          # a LATER bare-variable conjunct still counts
+            raw"(, (isa $x bird) $y)"          # a LATER bare-variable conjunct still counts
         ]
         for p in needs_exec
             @test MORK._pat_overlaps_exec_prefix(MORK.sexpr_to_expr(p)) == true
@@ -103,7 +103,7 @@ using MORK
             raw"(, (isa $x thing))",            # concrete head ≠ exec → cannot match (exec …)
             raw"(, (edge $a $b))",
             raw"(, ($x $y))",                   # var head but arity 2 ≠ 4 → cannot match the arity-4 exec
-            raw"(, (isa $x bird) (edge $a $b))", # multi-factor data rule
+            raw"(, (isa $x bird) (edge $a $b))" # multi-factor data rule
         ]
         for p in fast_path
             @test MORK._pat_overlaps_exec_prefix(MORK.sexpr_to_expr(p)) == false

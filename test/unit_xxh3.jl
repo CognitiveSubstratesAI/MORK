@@ -28,11 +28,11 @@ using MORK
         length(parts) >= 4 || continue
 
         label = String(parts[1])
-        ihex  = strip(parts[2])
-        data  = isempty(ihex) ? UInt8[] : hex2bytes(String(ihex))
+        ihex = strip(parts[2])
+        data = isempty(ihex) ? UInt8[] : hex2bytes(String(ihex))
 
         got = MORK.xxh3_128(data)
-        @test (label, got) == (label, parse(UInt128, strip(parts[3]), base = 16))
+        @test (label, got) == (label, parse(UInt128, strip(parts[3]), base=16))
 
         # le_bytes_hex is what `hash_expr` actually writes (`h.to_le_bytes()`).
         gotle = bytes2hex(reinterpret(UInt8, [htol(got)]))
@@ -56,7 +56,7 @@ using MORK
         parts = split(line, '\t')
         label = String(parts[1])
         got = MORK.xxh3_128(hex2bytes(String(strip(parts[2]))))
-        @test (label, got) == (label, parse(UInt128, strip(parts[3]), base = 16))
+        @test (label, got) == (label, parse(UInt128, strip(parts[3]), base=16))
         nlong += 1
     end
     @test nlong == 10
@@ -73,14 +73,17 @@ using MORK
         ihex = strip(parts[3])
         data = isempty(ihex) ? UInt8[] : hex2bytes(String(ihex))
         got = MORK.xxh3_128_with_seed(data, seed)
-        @test (label, got) == (label, parse(UInt128, strip(parts[4]), base = 16))
+        @test (label, got) == (label, parse(UInt128, strip(parts[4]), base=16))
         nseed += 1
     end
     @test nseed == 36
 
     # Len-class boundary sanity: every dispatch arm must be reachable and distinct.
-    dat(n) = UInt8[UInt8((i * 37 + 11) & 0xFF) for i in 0:(n-1)]
-    hs = [MORK.xxh3_128(dat(n)) for n in (0, 1, 3, 4, 8, 9, 16, 17, 128, 129, 240, 241, 1024, 2048)]
+    dat(n) = UInt8[UInt8((i * 37 + 11) & 0xFF) for i in 0:(n - 1)]
+    hs = [
+        MORK.xxh3_128(dat(n)) for
+        n in (0, 1, 3, 4, 8, 9, 16, 17, 128, 129, 240, 241, 1024, 2048)
+    ]
     @test length(unique(hs)) == length(hs)
 
     # A view / non-1-based-offset input must hash identically to the owned copy

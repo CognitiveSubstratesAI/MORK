@@ -157,37 +157,37 @@
 module Leapfrog
 
 using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
-              ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
-              item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item, UNIT_VAL,
-              expr_unify_into!, expr_unify_unwind!
+    ExprEnv, Bindings, expr_unify, UnificationFailure, _expr_newvars,
+    item_byte, ee_args!, ee_var_opt, ExprVar, maybe_byte_item, UNIT_VAL,
+    expr_unify_into!, expr_unify_unwind!
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
 # `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
 # plainly and take everything else by name.
 using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
-               read_zipper_at_path, set_val_at!, zipper_to_next_val!,
-               zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
-               zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
-               zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
-               zipper_to_next_sibling_byte!, zipper_is_val,
-               iter        # ⇐ ByteMask's set-bit iterator; `import PathMap` collides with the TYPE
+    read_zipper_at_path, set_val_at!, zipper_to_next_val!,
+    zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
+    zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
+    zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
+    zipper_to_next_sibling_byte!, zipper_is_val,
+    iter        # ⇐ ByteMask's set-bit iterator; `import PathMap` collides with the TYPE
 
 export subterm_parse_step, least_ge, is_complete, PARSE_START,
-       SubtermCursor, cursor_first!, cursor_next!, cursor_key, cursor_seek!,
-       cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts,
-       GroundFactor, ground_leapfrog,
-       is_wildcard_term, is_symbol_head, column_matches_by_equality,
-       cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes,
-       factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
-       with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
-       Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
-       UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
-       scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
-       rank_parts!, partition_restrictors!, fill_lead_candidates!,
-       descend_restrictors!,
-       RIItem, ri_span_len, ri_split_columns, ri_columns_to_items, ri_emit_reordered,
-       is_inverted, ri_col_min_var_pos,
-       reindex_regions, fold_region_into_reindex!, build_reindex, ri_invert_order
+    SubtermCursor, cursor_first!, cursor_next!, cursor_key, cursor_seek!,
+    cursor_descend_floor!, cursor_ascend_floor!, cursor_has_value, cursor_var_counts,
+    GroundFactor, ground_leapfrog,
+    is_wildcard_term, is_symbol_head, column_matches_by_equality,
+    cursor_floor_child_mask, ground_probe!, stored_wildcard_bytes,
+    factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
+    with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
+    Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
+    UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
+    scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
+    rank_parts!, partition_restrictors!, fill_lead_candidates!,
+    descend_restrictors!,
+    RIItem, ri_span_len, ri_split_columns, ri_columns_to_items, ri_emit_reordered,
+    is_inverted, ri_col_min_var_pos,
+    reindex_regions, fold_region_into_reindex!, build_reindex, ri_invert_order
 
 """
     PARSE_START
@@ -427,13 +427,15 @@ symbol's payload can never be miscounted as a variable.
     if c.col.owed_payload == 0
         t = byte_item(b)
         if t isa ExprNewVar
-            c.col.key_newvars += 0x01; c.col.key_vars += 0x01
+            c.col.key_newvars += 0x01
+            c.col.key_vars += 0x01
         elseif t isa ExprVarRef
             c.col.key_vars += 0x01
         end
     end
-    (c.col.owed_subterms, c.col.owed_payload) =
-        subterm_parse_step(b, c.col.owed_subterms, c.col.owed_payload)
+    (c.col.owed_subterms, c.col.owed_payload) = subterm_parse_step(
+        b, c.col.owed_subterms, c.col.owed_payload
+    )
     nothing
 end
 
@@ -447,7 +449,8 @@ end
     if pre_payload == 0                      # the RESTORED state classifies `b`
         t = byte_item(b)
         if t isa ExprNewVar
-            c.col.key_newvars -= 0x01; c.col.key_vars -= 0x01
+            c.col.key_newvars -= 0x01
+            c.col.key_vars -= 0x01
         elseif t isa ExprVarRef
             c.col.key_vars -= 0x01
         end
@@ -509,7 +512,8 @@ satisfied it, so nothing is paid on upstream's own path.
 [[feedback_guarantee_not_convention]]
 """
 function cursor_ascend_floor!(c::SubtermCursor)
-    isempty(c.floor_stack) && error("cursor_ascend_floor! without a matching cursor_descend_floor!")
+    isempty(c.floor_stack) &&
+        error("cursor_ascend_floor! without a matching cursor_descend_floor!")
     cursor_reset_to_floor!(c)          # bring the zipper back to THIS column's floor
     c.col = pop!(c.floor_stack)
     c.at_end = false
@@ -562,7 +566,10 @@ function complete_leftmost!(c::SubtermCursor)::Bool
                 return false
             end
             for i in 0:(owed - 1)
-                push!(c.col.parse_stack, (c.col.owed_subterms, UInt8(owed - i) | BRANCH_CANDIDATE))
+                push!(
+                    c.col.parse_stack,
+                    (c.col.owed_subterms, UInt8(owed - i) | BRANCH_CANDIDATE)
+                )
             end
             c.col.owed_payload = UInt32(0)
             continue
@@ -746,7 +753,7 @@ CURRENT column is that variable, and their cursors leapfrog to a common value.
 what you need. This mirrors upstream's contract, where the callback takes a borrow.
 """
 function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
-                         nvars::Int, emit::Function)::Int
+    nvars::Int, emit::Function)::Int
     nf = length(factors)
     nf == 0 && return 0
 
@@ -760,22 +767,26 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
     end
 
     next_col = ones(Int, nf)                     # 1-based: which column each factor is at
-    binding  = [UInt8[] for _ in 1:nvars]
-    max_buf  = UInt8[]
-    parts    = Int[]
-    emitted  = Ref(0)
+    binding = [UInt8[] for _ in 1:nvars]
+    max_buf = UInt8[]
+    parts = Int[]
+    emitted = Ref(0)
 
-    reset_parts!(ps) = (for f in ps; cursor_reset_to_floor!(cursors[f]); end)
+    reset_parts!(ps) = (
+        for f in ps
+            cursor_reset_to_floor!(cursors[f])
+        end
+    )
 
     function recurse(i::Int)
         if i > nvars
             # Every column consumed and every cursor sits on a stored fact ⇒ an answer.
             for f in 1:nf
-                cursor_has_value(cursors[f]) || return
+                cursor_has_value(cursors[f]) || return nothing
             end
             emitted[] += 1
             emit(binding)
-            return
+            return nothing
         end
 
         # The factors whose CURRENT column is variable i. Rebuilt per level rather than cached:
@@ -785,13 +796,13 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
             c = next_col[f]
             c <= length(factors[f].cols) && factors[f].cols[c] == i && push!(parts, f)
         end
-        isempty(parts) && return
+        isempty(parts) && return nothing
 
         for f in parts
             cursor_first!(cursors[f])
             if cursors[f].at_end
                 reset_parts!(parts)
-                return
+                return nothing
             end
         end
 
@@ -805,7 +816,8 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
                 end
             end
             # Copied ONCE, because `cursor_seek!` mutates the cursor the view reads from.
-            empty!(max_buf); append!(max_buf, cursor_key(cursors[max_f]))
+            empty!(max_buf)
+            append!(max_buf, cursor_key(cursors[max_f]))
 
             all_match = true
             for f in myparts
@@ -813,7 +825,7 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
                     cursor_seek!(cursors[f], max_buf)
                     if cursors[f].at_end
                         reset_parts!(myparts)
-                        return
+                        return nothing
                     end
                     cursor_key(cursors[f]) != max_buf && (all_match = false)
                 end
@@ -857,7 +869,8 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
                             # non-empty` in `retreat_parse!` — a desync reported three frames away
                             # from its cause.
                             cursor_reset_to_floor!(cursors[f])
-                            ok = false; break
+                            ok = false
+                            break
                         end
                         cursor_descend_floor!(cursors[f])
                         next_col[f] += 1
@@ -906,7 +919,7 @@ function ground_leapfrog(btm::PathMap{UnitVal}, factors::Vector{GroundFactor},
             cursor_next!(cursors[myparts[1]])
             if cursors[myparts[1]].at_end
                 reset_parts!(myparts)
-                return
+                return nothing
             end
         end
     end
@@ -1035,7 +1048,9 @@ function ground_probe!(c::SubtermCursor, ground::AbstractVector{UInt8})
     mask = cursor_floor_child_mask(c)          # BEFORE the seek — see above
     cursor_seek!(c, ground)
     k = cursor_key(c)
-    exact = k !== nothing && length(k) == length(ground) && all(k[i] == ground[i] for i in eachindex(ground))
+    exact =
+        k !== nothing && length(k) == length(ground) &&
+        all(k[i] == ground[i] for i in eachindex(ground))
     cursor_reset_to_floor!(c)
     (exact, mask)
 end
@@ -1115,7 +1130,8 @@ index. Used to re-state an existing binding as a unification equation.
     ExprEnv(key[1], key[2], UInt32(0), MORKExpr(NEWVAR_BYTES))
 
 "The query-variable env for global variable `v` — namespace `QUERY_NS` (0)."
-@inline query_var_env(v::Int)::ExprEnv = ExprEnv(QUERY_NS, UInt8(v), UInt32(0), MORKExpr(NEWVAR_BYTES))
+@inline query_var_env(v::Int)::ExprEnv =
+    ExprEnv(QUERY_NS, UInt8(v), UInt32(0), MORKExpr(NEWVAR_BYTES))
 
 """
     data_env_for(f, intro, bytes) -> ExprEnv
@@ -1146,7 +1162,9 @@ is kept for two reasons, and the second is the load-bearing one:
      failure mode being that an incremental binder can look right on answers while diverging on
      bindings that no test observes. [[feedback_green_suite_hides_unwired_correct_code]]
 """
-function unified_bindings(bindings::Bindings, lhs::ExprEnv, rhs::ExprEnv)::Union{Bindings, Nothing}
+function unified_bindings(
+    bindings::Bindings, lhs::ExprEnv, rhs::ExprEnv
+)::Union{Bindings, Nothing}
     pairs = Vector{Tuple{ExprEnv, ExprEnv}}()
     sizehint!(pairs, length(bindings) + 1)
     for (var, env) in bindings
@@ -1194,9 +1212,9 @@ ground term none — and it advances the factor's namespace so a later candidate
 cannot collide with variables this one introduced.
 """
 function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::UInt8,
-                          pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function;
-                          trail::Vector{ExprVar} = ExprVar[],
-                          stack::Vector{Tuple{ExprEnv, ExprEnv}} = Tuple{ExprEnv, ExprEnv}[])
+    pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function;
+    trail::Vector{ExprVar}=ExprVar[],
+    stack::Vector{Tuple{ExprEnv, ExprEnv}}=Tuple{ExprEnv, ExprEnv}[])
     data = data_env_for(f, intro, bytes)
     # 🔑 THE UNDO TRAIL (upstream `cfa8abf`). Solve the ONE new equation against the LIVE map and
     # unwind by removal, instead of cloning the map and re-solving every prior equation per
@@ -1244,7 +1262,8 @@ function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::U
             # news: a workload shape that no test but the hand-written one covers has arrived, and
             # the unwind below is now load-bearing rather than merely correct. Warn once — waiting
             # for someone to run `engine_work.jl` makes a live signal into a static claim.
-            UNIFY_FAILURES_DIRTY[] == 1 && @warn "leapfrog: a candidate INSERTED then contradicted — \
+            UNIFY_FAILURES_DIRTY[] == 1 &&
+                @warn "leapfrog: a candidate INSERTED then contradicted — \
                 the failure-path unwind is now doing real work. Absent from the whole corpus as of \
                 2026-08-21; see tools/mutation_trail.sh (mutant M2)."
         end
@@ -1374,8 +1393,8 @@ const UNIFY_FAILURES_DIRTY = Ref{Int}(0)
 const _LF_TRACE = Ref(false)
 const _LF_CANDIDATES = Ref(0)
 
-const STEP_VAR      = 0x00
-const STEP_SYM      = 0x01
+const STEP_VAR = 0x00
+const STEP_SYM = 0x01
 const STEP_COMPOUND = 0x02
 
 """
@@ -1457,7 +1476,7 @@ end
 unify_var_col(v::Int) = UnifyColumn(true, v, MORKExpr(UInt8[]), 0x00)
 
 "A column holding a term, with the count of variables introduced before it."
-unify_term_col(t::MORKExpr, intro::Integer = 0) = UnifyColumn(false, 0, t, UInt8(intro))
+unify_term_col(t::MORKExpr, intro::Integer=0) = UnifyColumn(false, 0, t, UInt8(intro))
 
 """
     UnifyFactor
@@ -1565,14 +1584,15 @@ end
 
 "Run `cont` with factor `f`'s data namespace advanced by a candidate's own NewVars, then restore.
 Without the advance, two candidates in one factor introduce COLLIDING variable ids."
-function uj_match_candidate(st::UnifyJoinState, bindings::Bindings, f::Int, pattern::ExprEnv,
-                            bytes::AbstractVector{UInt8}, newvars::UInt8, cont)
-    st.stopped && return
+function uj_match_candidate(st::UnifyJoinState, bindings::Bindings, f::Int,
+    pattern::ExprEnv,
+    bytes::AbstractVector{UInt8}, newvars::UInt8, cont)
+    st.stopped && return nothing
     intro = st.data_intro[f]
     st.data_intro[f] = intro + newvars
     try
         match_candidate!(st.cursors[f], bindings, f, intro, pattern, bytes, cont;
-                         trail = st.trail, stack = st.unify_stack)
+            trail=st.trail, stack=st.unify_stack)
     finally
         st.data_intro[f] = intro
     end
@@ -1599,8 +1619,8 @@ Match `pattern` against factor `f`'s current cursor position, calling `cont(newb
 way the stored data can match — WITHOUT advancing `next_step`, which is the caller's business.
 """
 function uj_match_expr_at_current(st::UnifyJoinState, bindings::Bindings, f::Int,
-                                  pattern::ExprEnv, cont)
-    st.stopped && return
+    pattern::ExprEnv, cont)
+    st.stopped && return nothing
     c = st.cursors[f]
     resolved = uj_deref(bindings, pattern)
 
@@ -1627,7 +1647,7 @@ function uj_match_expr_at_current(st::UnifyJoinState, bindings::Bindings, f::Int
             # behaviour we are missing.
             uj_match_candidate(st, bindings, f, pattern, bytes, nv, cont)
         end
-        return
+        return nothing
     end
 
     t = byte_item(resolved.base.buf[Int(resolved.offset) + 1])
@@ -1642,7 +1662,9 @@ function uj_match_expr_at_current(st::UnifyJoinState, bindings::Bindings, f::Int
         exact && with_bound_bytes!(c, bytes, () -> cont(bindings))
         for w in stored_wildcard_bytes(mask)
             st.stopped && break
-            uj_match_candidate(st, bindings, f, pattern, UInt8[w], uj_wildcard_newvars(w), cont)
+            uj_match_candidate(
+                st, bindings, f, pattern, UInt8[w], uj_wildcard_newvars(w), cont
+            )
         end
     end
     nothing
@@ -1658,7 +1680,7 @@ every wildcard byte becomes its own branch. Only then is the arity byte descende
 children to their own steps so a variable inside them stays schedulable.
 """
 function uj_match_compound_at_current(st::UnifyJoinState, bindings::Bindings, f::Int,
-                                      pattern::ExprEnv, resolved::ExprEnv, cont)
+    pattern::ExprEnv, resolved::ExprEnv, cont)
     c = st.cursors[f]
     # ONE mask read serves both branches: each `match_candidate!` restores the cursor, so the
     # position — and therefore the mask — is the same before and after the wildcard loop.
@@ -1668,23 +1690,23 @@ function uj_match_compound_at_current(st::UnifyJoinState, bindings::Bindings, f:
         uj_match_candidate(st, bindings, f, pattern, UInt8[w], uj_wildcard_newvars(w), cont)
     end
     t = byte_item(resolved.base.buf[Int(resolved.offset) + 1])
-    t isa ExprArity || return
+    t isa ExprArity || return nothing
     ab = item_byte(ExprArity((t::ExprArity).arity))
     if test_bit(mask, ab)
         children = ExprEnv[]
         ee_args!(resolved, children)
         with_bound_bytes!(c, UInt8[ab],
-                          () -> uj_match_compound_children(st, bindings, f, children, 1, cont))
+            () -> uj_match_compound_children(st, bindings, f, children, 1, cont))
     end
     nothing
 end
 
 "Match each child of a compound in turn against successive cursor positions."
 function uj_match_compound_children(st::UnifyJoinState, bindings::Bindings, f::Int,
-                                    children::Vector{ExprEnv}, idx::Int, cont)
+    children::Vector{ExprEnv}, idx::Int, cont)
     if idx > length(children)
         cont(bindings)
-        return
+        return nothing
     end
     uj_match_expr_at_current(st, bindings, f, children[idx],
         nb -> uj_match_compound_children(st, nb, f, children, idx + 1, cont))
@@ -1694,7 +1716,9 @@ end
 "Consume factor `f`'s current position against `env`, advancing `next_step[f]` past exactly it."
 function uj_consume_env(st::UnifyJoinState, bindings::Bindings, f::Int, env::ExprEnv, cont)
     s = st.next_step[f]
-    uj_match_expr_at_current(st, bindings, f, env, nb -> uj_at_step(st, f, s + 1, () -> cont(nb)))
+    uj_match_expr_at_current(
+        st, bindings, f, env, nb -> uj_at_step(st, f, s + 1, () -> cont(nb))
+    )
 end
 
 "Consume factor `f`'s current position as query variable `v`."
@@ -1708,7 +1732,7 @@ A ground symbol position: the exact stored bytes match, and so does any stored w
 column. Both are branches, not alternatives — a space can hold both `(rel a)` and `(rel \$w)`.
 """
 function uj_consume_sym(st::UnifyJoinState, bindings::Bindings, f::Int, s::Int,
-                        env::ExprEnv, cont)
+    env::ExprEnv, cont)
     c = st.cursors[f]
     buf = env.base.buf
     off = Int(env.offset)
@@ -1721,7 +1745,7 @@ function uj_consume_sym(st::UnifyJoinState, bindings::Bindings, f::Int, s::Int,
     for w in stored_wildcard_bytes(mask)
         st.stopped && break
         uj_match_candidate(st, bindings, f, env, UInt8[w], uj_wildcard_newvars(w),
-                           nb -> uj_at_step(st, f, s + 1, () -> cont(nb)))
+            nb -> uj_at_step(st, f, s + 1, () -> cont(nb)))
     end
     nothing
 end
@@ -1733,18 +1757,20 @@ A compound position. A stored wildcard captures the WHOLE subterm and therefore 
 to `stop`; the arity byte descends one level and leaves the children to the following steps.
 """
 function uj_consume_compound(st::UnifyJoinState, bindings::Bindings, f::Int, s::Int,
-                             env::ExprEnv, stop::Int, cont)
+    env::ExprEnv, stop::Int, cont)
     c = st.cursors[f]
     t = byte_item(env.base.buf[Int(env.offset) + 1])
     mask = cursor_floor_child_mask(c)
     for w in stored_wildcard_bytes(mask)
         st.stopped && break
         uj_match_candidate(st, bindings, f, env, UInt8[w], uj_wildcard_newvars(w),
-                           nb -> uj_at_step(st, f, stop, () -> cont(nb)))
+            nb -> uj_at_step(st, f, stop, () -> cont(nb)))
     end
     ab = item_byte(ExprArity((t::ExprArity).arity))
     if test_bit(mask, ab)
-        with_bound_bytes!(c, UInt8[ab], () -> uj_at_step(st, f, s + 1, () -> cont(bindings)))
+        with_bound_bytes!(
+            c, UInt8[ab], () -> uj_at_step(st, f, s + 1, () -> cont(bindings))
+        )
     end
     nothing
 end
@@ -1778,20 +1804,20 @@ wrong: a stored variable there is a wildcard capturing whatever the query has, s
 take those branches rather than seeking to one value.
 """
 function uj_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int, f::Int)
-    st.stopped && return
+    st.stopped && return nothing
     if f > st.nf
         uj_recurse_after_catch_up(st, bindings, i)
-        return
+        return nothing
     end
     s = st.next_step[f]
     if s > length(st.steps[f])
         uj_catch_up(st, bindings, i, f + 1)
-        return
+        return nothing
     end
     step = st.steps[f][s]
     if step.kind == STEP_VAR && st.var_pos[_vslot(step.v)] >= i
         uj_catch_up(st, bindings, i, f + 1)      # scheduled here or later: leave it to the intersection
-        return
+        return nothing
     end
     uj_consume_step(st, bindings, f, nb -> uj_catch_up(st, nb, i, f))
 end
@@ -1807,14 +1833,16 @@ and seeks rather than enumerating. What is missing is only WHICH factor leads (`
 mutual-seek leap (`fill_lead_candidates`); see this section's header. The answers are the same.
 """
 function uj_consume_var_parts(st::UnifyJoinState, bindings::Bindings, parts::Vector{Int},
-                              pi::Int, v::Int, i::Int)
-    st.stopped && return
+    pi::Int, v::Int, i::Int)
+    st.stopped && return nothing
     if pi > length(parts)
         uj_catch_up(st, bindings, i + 1, 1)
-        return
+        return nothing
     end
     f = parts[pi]
-    uj_consume_col(st, bindings, f, v, nb -> uj_consume_var_parts(st, nb, parts, pi + 1, v, i))
+    uj_consume_col(
+        st, bindings, f, v, nb -> uj_consume_var_parts(st, nb, parts, pi + 1, v, i)
+    )
 end
 
 """
@@ -1883,7 +1911,7 @@ function rank_parts!(st::UnifyJoinState, parts::Vector{Int})
     # carries the round count — strictly larger — so exact counts always sort first. Equal counts
     # must keep syntactic factor order, or the join's visit order would depend on a sort's
     # internals and a passing differential could reorder tomorrow for no visible reason.
-    permute!(parts, sortperm(counts; alg = MergeSort))
+    permute!(parts, sortperm(counts; alg=MergeSort))
     nothing
 end
 
@@ -1903,7 +1931,8 @@ function partition_restrictors!(st::UnifyJoinState, parts::Vector{Int})
     length(parts) < 2 && return 0
     # `item_byte(ExprSymbol(1))` is the first symbol byte; nothing at or above it means the lead
     # offers no ground symbol at all.
-    least_ge(cursor_floor_child_mask(st.cursors[parts[1]]), item_byte(ExprSymbol(0x01))) === nothing &&
+    least_ge(cursor_floor_child_mask(st.cursors[parts[1]]), item_byte(ExprSymbol(0x01))) ===
+    nothing &&
         return 0
 
     nr = 0
@@ -1987,7 +2016,8 @@ function fill_lead_candidates!(st::UnifyJoinState, f::Int, restrictors::Abstract
     while !c.at_end
         k = cursor_key(c)
         k === nothing && break
-        empty!(lead_max); append!(lead_max, k)
+        empty!(lead_max)
+        append!(lead_max, k)
 
         leapt = false
         bail = false
@@ -2006,7 +2036,8 @@ function fill_lead_candidates!(st::UnifyJoinState, f::Int, restrictors::Abstract
                 # value in between is a ground symbol absent from this factor. Leap there. The
                 # target is a symbol, so the lead lands on a symbol too and skips nothing outside
                 # the prunable suffix.
-                empty!(lead_max); rk !== nothing && append!(lead_max, rk)
+                empty!(lead_max)
+                rk !== nothing && append!(lead_max, rk)
                 cursor_seek!(c, lead_max)
                 leapt = true
                 break
@@ -2050,10 +2081,10 @@ WITHOUT the mask read and the ascend-then-re-descend the general path pays.
 same precondition whose violation cost two speculative fixes on `cursor_ascend_floor!`.
 """
 function descend_restrictors!(st::UnifyJoinState, restrictors::AbstractVector{Int}, j::Int,
-                              value::AbstractVector{UInt8}, cont)
+    value::AbstractVector{UInt8}, cont)
     if j > length(restrictors)
         cont()
-        return
+        return nothing
     end
     r = restrictors[j]
     cr = st.cursors[r]
@@ -2063,7 +2094,7 @@ function descend_restrictors!(st::UnifyJoinState, restrictors::AbstractVector{In
         # Unreachable given the mutual seek's agreement; treated as "no match", which is what the
         # general path would conclude from the same probe.
         cursor_reset_to_floor!(cr)
-        return
+        return nothing
     end
     cursor_descend_floor!(cr)
     st.next_step[r] += 1
@@ -2090,8 +2121,8 @@ only the rest. Every other candidate goes through the full cascade over all of `
 stored wildcards and schematic compounds keep the unchanged path.
 """
 function uj_consume_lead(st::UnifyJoinState, bindings::Bindings, parts::Vector{Int},
-                         nr::Int, v::Int, i::Int)
-    st.stopped && return
+    nr::Int, v::Int, i::Int)
+    st.stopped && return nothing
     f = parts[1]
     pattern = query_var_env(v)
     restr_all = view(parts, 2:(1 + nr))
@@ -2102,32 +2133,47 @@ function uj_consume_lead(st::UnifyJoinState, bindings::Bindings, parts::Vector{I
         # A candidate BEFORE `confirmed_from` was pushed unfiltered, so it has NOT been intersected
         # and must take the full cascade. Getting this backwards would skip restrictor checks for
         # exactly the wildcard/compound candidates that need them.
-        (restrictors, rest) = ci >= confirmed_from ?
-            (restr_all, view(parts, (2 + nr):length(parts))) :
+        (restrictors, rest) = if ci >= confirmed_from
+            (restr_all, view(parts, (2 + nr):length(parts)))
+        else
             (view(parts, 1:0), view(parts, 2:length(parts)))
+        end
         rest_v = collect(rest)
         s0 = st.next_step[f]
-        uj_match_candidate(st, bindings, f, pattern, bytes, nv, function (nb)
-            uj_at_step(st, f, s0 + 1, () ->
-                descend_restrictors!(st, restrictors, 1, bytes,
-                                     () -> uj_consume_var_parts(st, nb, rest_v, 1, v, i)))
-        end)
+        uj_match_candidate(
+            st,
+            bindings,
+            f,
+            pattern,
+            bytes,
+            nv,
+            function (nb)
+                uj_at_step(
+                    st,
+                    f,
+                    s0 + 1,
+                    () ->
+                        descend_restrictors!(st, restrictors, 1, bytes,
+                            () -> uj_consume_var_parts(st, nb, rest_v, 1, v, i))
+                )
+            end
+        )
     end
     nothing
 end
 
 "Schedule the next variable: intersect the factors sitting on it, or emit if none are left."
 function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::Int)
-    st.stopped && return
+    st.stopped && return nothing
     if i > st.nvars
         # Every position consumed. A factor not sitting on a stored value means this assignment
         # spells a fact the space does not hold.
         for f in 1:st.nf
-            cursor_has_value(st.cursors[f]) || return
+            cursor_has_value(st.cursors[f]) || return nothing
         end
         st.emitted += 1
         st.emit(bindings, st) === false && (st.stopped = true)
-        return
+        return nothing
     end
     v = st.var_order[i]
     parts = Int[]
@@ -2139,7 +2185,7 @@ function uj_recurse_after_catch_up(st::UnifyJoinState, bindings::Bindings, i::In
     end
     if isempty(parts)
         uj_catch_up(st, bindings, i + 1, 1)      # nothing mentions it at this level
-        return
+        return nothing
     end
     # Rank ONLY when the variable is still free. If an earlier level already bound it, every
     # participant seeks to that one value and there is no lead to choose — upstream branches the
@@ -2211,7 +2257,7 @@ a fresh value per candidate (see [`UnifyJoinState`]), but the `ExprEnv`s inside 
 byte buffers owned by the enumerating frame — read what you need before returning.
 """
 function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
-                        nvars::Int, emit::Function)::Int
+    nvars::Int, emit::Function)::Int
     nf = length(factors)
     nf == 0 && return 0
 
@@ -2252,8 +2298,8 @@ function unify_leapfrog(btm::PathMap{UnitVal}, factors::Vector{UnifyFactor},
 
     steps = Vector{Step}[factor_steps(UnifyFactor(UInt8[], c)) for c in eff_cols]
     st = UnifyJoinState(cursors, steps, ones(Int, nf), zeros(UInt8, nf),
-                        var_order, var_pos, nvars, nf, emit, false, 0,
-                        reindex_order, prefixes, ExprVar[], Tuple{ExprEnv, ExprEnv}[])
+        var_order, var_pos, nvars, nf, emit, false, 0,
+        reindex_order, prefixes, ExprVar[], Tuple{ExprEnv, ExprEnv}[])
     uj_catch_up(st, Bindings(), 1, 1)
     st.emitted
 end
@@ -2405,8 +2451,11 @@ function parse_body_factors(body::MORKExpr)
                 # numbers a `NewVar` by the count it is handed, so passing the post-scan value would
                 # give every variable in this column an id one too high — a join on the wrong
                 # variables, silently.
-                push!(cols, unify_term_col(MORKExpr(buf[(col_start + 1):(col_start + len)]),
-                                           col_intro))
+                push!(
+                    cols,
+                    unify_term_col(MORKExpr(buf[(col_start + 1):(col_start + len)]),
+                        col_intro)
+                )
             end
             pos += len
         end
@@ -2517,11 +2566,15 @@ function ri_columns_to_items(bytes::AbstractVector{UInt8}, cols::Vector{UnitRang
             b = bytes[i]
             t = maybe_byte_item(b)
             if t isa ExprArity
-                push!(items, RIItem(false, b, 0)); i += 1
+                push!(items, RIItem(false, b, 0))
+                i += 1
             elseif t isa ExprVarRef
-                push!(items, RIItem(true, 0x00, Int(t.idx))); i += 1
+                push!(items, RIItem(true, 0x00, Int(t.idx)))
+                i += 1
             elseif t isa ExprNewVar
-                push!(items, RIItem(true, 0x00, next_orig)); next_orig += 1; i += 1
+                push!(items, RIItem(true, 0x00, next_orig))
+                next_orig += 1
+                i += 1
             elseif t isa ExprSymbol
                 push!(items, RIItem(false, b, 0))            # the size tag…
                 for k in 1:Int(t.size)                        # …then its payload, verbatim
@@ -2598,9 +2651,12 @@ function ri_col_min_var_pos(col::UnifyColumn, var_pos::Vector{Int})::Int
     while i <= length(buf)
         t = maybe_byte_item(buf[i])
         if t isa ExprNewVar
-            best = min(best, var_pos[_vslot(Int(intro))]); intro += 0x01; i += 1
+            best = min(best, var_pos[_vslot(Int(intro))])
+            intro += 0x01
+            i += 1
         elseif t isa ExprVarRef
-            best = min(best, var_pos[_vslot(Int(t.idx))]); i += 1
+            best = min(best, var_pos[_vslot(Int(t.idx))])
+            i += 1
         elseif t isa ExprSymbol
             i += 1 + Int(t.size)
         elseif t isa ExprArity
@@ -2662,8 +2718,8 @@ strictly BELOW the root. Only a single-column factor can reach that, and a singl
 never inverted, but the walk stays total either way rather than relying on that argument.
 """
 function fold_region_into_reindex!(btm::PathMap{UnitVal}, region::Vector{UInt8}, plen::Int,
-                                   ncols::Int, new_order::Vector{Int},
-                                   reindex::PathMap{UnitVal})
+    ncols::Int, new_order::Vector{Int},
+    reindex::PathMap{UnitVal})
     _ins(colbytes) = begin
         cols = ri_split_columns(colbytes, ncols)
         items = ri_columns_to_items(colbytes, cols)
@@ -2700,9 +2756,15 @@ so the permutation is deterministic.
 """
 function build_reindex(btm::PathMap{UnitVal}, factor::UnifyFactor, var_pos::Vector{Int})
     ncols = length(factor.cols)
-    keyed = [(ri_col_min_var_pos(factor.cols[c], var_pos) == typemax(Int) ? (0, 0, c) :
-              (ri_col_min_var_pos(factor.cols[c], var_pos), 1, c), c) for c in 1:ncols]
-    sort!(keyed; by = first)
+    keyed = [
+        (
+            if ri_col_min_var_pos(factor.cols[c], var_pos) == typemax(Int)
+                (0, 0, c)
+            else
+                (ri_col_min_var_pos(factor.cols[c], var_pos), 1, c)
+            end, c) for c in 1:ncols
+    ]
+    sort!(keyed; by=first)
     new_order = Int[c for (_, c) in keyed]
     new_cols = UnifyColumn[factor.cols[c] for c in new_order]
 

@@ -44,8 +44,14 @@ function _d_col(x)
     end
 end
 
-_d_coltext(x) = x isa Int    ? "\$v$(x)" :
-                x isa Tuple  ? "(f $(_d_coltext(x[2])))" : String(x)
+_d_coltext(x) =
+    if x isa Int
+        "\$v$(x)"
+    elseif x isa Tuple
+        "(f $(_d_coltext(x[2])))"
+    else
+        String(x)
+    end
 
 "A factor over `rel`'s 2-argument facts."
 _d_factor(rel::AbstractString, c1, c2) = _DIFF.UnifyFactor(UInt8[_D_ARITY3],
@@ -72,8 +78,8 @@ end
     rels = ["edge", "link"]
 
     nonempty = 0
-    agreed   = 0
-    cases    = 0
+    agreed = 0
+    cases = 0
 
     for trial in 1:600
         # ── a space mixing ground facts with facts that carry STORED VARIABLES ──────────────────
@@ -82,8 +88,14 @@ end
             r = rand(rng, rels)
             # A stored arg is a wildcard, a symbol, or a COMPOUND — so a stored wildcard sometimes
             # faces a compound query column and sometimes the reverse.
-            arg() = (t = rand(rng);
-                     t < 0.22 ? "\$w" : t < 0.40 ? "(f $(rand(rng, syms)))" : rand(rng, syms))
+            arg() = (t=rand(rng);
+                if t < 0.22
+                    "\$w"
+                elseif t < 0.40
+                    "(f $(rand(rng, syms)))"
+                else
+                    rand(rng, syms)
+                end)
             push!(lines, "($r $(arg()) $(arg()))")
         end
         s = MORK.new_space()
@@ -91,15 +103,21 @@ end
 
         # ── a conjunctive query over a small variable pool, so variables REPEAT across factors ──
         nvars = rand(rng, 1:3)
-        nfac  = rand(rng, 1:3)
-        facs  = _DIFF.UnifyFactor[]
+        nfac = rand(rng, 1:3)
+        facs = _DIFF.UnifyFactor[]
         texts = String[]
         for _ in 1:nfac
-            r  = rand(rng, rels)
-            gencol() = (t = rand(rng);
-                        t < 0.60 ? rand(rng, 0:(nvars - 1)) :
-                        t < 0.80 ? (:c, rand(rng, 0:(nvars - 1))) :
-                        t < 0.90 ? (:c, rand(rng, syms)) : rand(rng, syms))
+            r = rand(rng, rels)
+            gencol() = (t=rand(rng);
+                if t < 0.60
+                    rand(rng, 0:(nvars - 1))
+                elseif t < 0.80
+                    (:c, rand(rng, 0:(nvars - 1)))
+                elseif t < 0.90
+                    (:c, rand(rng, syms))
+                else
+                    rand(rng, syms)
+                end)
             c1 = gencol()
             c2 = gencol()
             push!(facs, _d_factor(r, c1, c2))
@@ -111,7 +129,7 @@ end
         # 64 divergences that were this line. [[feedback_verify_the_oracle_runs]]
         body = "(, " * join(texts, " ") * ")"
 
-        eng  = _d_engine(s, body)
+        eng = _d_engine(s, body)
         ours = _d_ours(s, facs, nvars)
 
         cases += 1

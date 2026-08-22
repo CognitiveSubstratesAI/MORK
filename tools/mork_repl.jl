@@ -9,10 +9,10 @@
 
 # Revise: optional hot-reload — src/ changes reload without restarting
 try
-    ;
-    using Revise;
+
+    using Revise
 catch
-    ;
+
 end
 
 using MORK

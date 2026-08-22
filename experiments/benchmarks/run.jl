@@ -9,25 +9,43 @@ using MORK
 using Dates
 
 # min-of-n wall time after a warmup call
-function _bench(f; n::Int = 5)
+function _bench(f; n::Int=5)
     f()
     minimum(@elapsed(f()) for _ in 1:n)
 end
 
 function run_and_save()
     sample = join(["(rel s$(i) s$(i + 1))" for i in 1:1000], "\n") * "\n"
-    prog   = sample * "(exec 0 (, (rel \$a \$b)) (, (out \$a \$b)))\n"
+    prog = sample * "(exec 0 (, (rel \$a \$b)) (, (out \$a \$b)))\n"
 
-    rows = Tuple{String,Float64}[]
-    push!(rows, ("parse 1k atoms (sexpr_to_expr)",
-        _bench(() -> for ln in split(strip(sample), '\n'); MORK.sexpr_to_expr(ln); end)))
-    push!(rows, ("add 1k atoms (space_add_all_sexpr!)",
-        _bench(() -> (s = new_space(); space_add_all_sexpr!(s, sample)))))
-    push!(rows, ("metta_calculus: 1k-rel exec rewrite",
-        _bench(() -> (s = new_space(); space_add_all_sexpr!(s, prog); space_metta_calculus!(s, 100_000)))))
+    rows = Tuple{String, Float64}[]
+    push!(
+        rows,
+        ("parse 1k atoms (sexpr_to_expr)",
+            _bench(() -> for ln in split(strip(sample), '\n')
+                MORK.sexpr_to_expr(ln)
+            end))
+    )
+    push!(
+        rows,
+        ("add 1k atoms (space_add_all_sexpr!)",
+            _bench(() -> (s=new_space(); space_add_all_sexpr!(s, sample))))
+    )
+    push!(
+        rows,
+        ("metta_calculus: 1k-rel exec rewrite",
+            _bench(
+                () -> (
+                    s=new_space();
+                    space_add_all_sexpr!(s, prog);
+                    space_metta_calculus!(s, 100_000)
+                )
+            ))
+    )
 
     date = string(Dates.today())
-    outdir = joinpath(@__DIR__, "results"); mkpath(outdir)
+    outdir = joinpath(@__DIR__, "results")
+    mkpath(outdir)
     outfile = joinpath(outdir, "$(date)_bench.md")
     open(outfile, "w") do f
         println(f, "# MORK benchmarks — $date")
