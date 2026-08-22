@@ -53,7 +53,14 @@ end
 active_suite = if SUITE_NAME == "canonical"
     SUITE_CANONICAL
 elseif SUITE_NAME == "both"
-    merge(SUITE, SUITE_CANONICAL)
+    # ⚠️ `merge(::BenchmarkGroup, ::BenchmarkGroup)` NO LONGER EXISTS (MethodError, 2026-08-21).
+    # A BenchmarkGroup is Dict-like, so copying entries is the version-agnostic equivalent —
+    # later key wins, exactly as `merge` did.
+    let g = BenchmarkGroup()
+        for (k, v) in SUITE;           g[k] = v; end
+        for (k, v) in SUITE_CANONICAL; g[k] = v; end
+        g
+    end
 else
     SUITE
 end

@@ -1,0 +1,87 @@
+# JETLS configuration for MORK.
+#
+# ⚠️ TUNED AGAINST A MEASURED BASELINE, not preference. Default config on this package produced
+# 463 diagnostics of which ~7 were actionable — a 1.5% signal ratio, which is the ratio at which a
+# tool gets ignored and then misses the one finding that mattered. Breakdown as shipped:
+#
+#     170  error:toplevel/error                 ← FALSE POSITIVES, see [full_analysis] below
+#     183  info:lowering/unused-argument        ← noise for a port (see below)
+#      89  hint:lowering/unsorted-import-names  ← pure style, conflicts with our own convention
+#       9  info:lowering/unused-local
+#       7  info:lowering/captured-boxed-variable ← THE SIGNAL. Closure boxing = type instability.
+#       3  info:lowering/unused-import
+#       2  info:lowering/unused-assignment
+#
+# The goal of this file is to make `captured-boxed-variable` and real type errors VISIBLE, by
+# removing categories that are either wrong here or deliberately-not-our-style.
+
+# ⚠️ NOT `Runic` (the JETLS default). This repo is Blue via `.JuliaFormatter.toml`, and CI enforces
+# it (`.github/workflows/CI.yml`, format job). Two formatters would fight on every save.
+formatter = "JuliaFormatter"
+
+[diagnostic]
+enabled = true
+all_files = true
+allow_unused_underscore = true
+
+# ── 170 false-positive top-level errors ─────────────────────────────────────────────────────────
+# ⚠️ THESE ARE NOT REAL. Sample: "UndefVarError: `SharedMappingHandle` not defined in `MORK`" —
+# that symbol appears 15 times in `src/interning/Interning.jl` INCLUDING its definition, and MORK
+# precompiles and loads cleanly (verified: `agent_check.jl fast` reports LOAD PASS). JET cannot
+# resolve them because the defining top-level expressions were not concretized during analysis.
+# ⇒ The correct fix is [full_analysis.concretization_patterns] below, NOT suppression. This entry
+#   demotes them to `information` so they stay VISIBLE while the concretization list is built —
+#   suppressing outright would hide any REAL top-level error that appears later.
+[[diagnostic.patterns]]
+match_by   = "code"
+match_type = "literal"
+pattern    = "toplevel/error"
+severity   = "information"
+
+# ── style categories we deliberately do not follow ──────────────────────────────────────────────
+# Import ordering: this repo groups exports SEMANTICALLY (ops, then types, then interpreter — see
+# `src/morkl/MorkL.jl:650-652`, which generated 3 of these on consecutive lines). Alphabetical
+# ordering would destroy that grouping, so this is a convention conflict, not a defect.
+[[diagnostic.patterns]]
+match_by   = "code"
+match_type = "literal"
+pattern    = "lowering/unsorted-import-names"
+severity   = "hint"
+
+# Unused arguments: a 1:1 Rust port keeps upstream's parameter lists even where a Julia method does
+# not read every one — dropping them would break the correspondence that the differential and the
+# provenance markers depend on. Kept as a hint rather than removed, so a genuinely dead parameter in
+# NEW code is still discoverable.
+[[diagnostic.patterns]]
+match_by   = "code"
+match_type = "literal"
+pattern    = "lowering/unused-argument"
+severity   = "hint"
+
+# ── 🔑 THE ONE WE ACTUALLY WANT LOUD ────────────────────────────────────────────────────────────
+# A boxed captured variable in a closure is a real type-instability source, and this package has hot
+# closures — `_occurs_check` in `src/expr/ExprAlg.jl` is a closure over `bindings` and was the top
+# allocator in the 2026-08-21 leapfrog profile. Promote to warning so it cannot hide among hints.
+[[diagnostic.patterns]]
+match_by   = "code"
+match_type = "literal"
+pattern    = "lowering/captured-boxed-variable"
+severity   = "warning"
+
+[full_analysis]
+auto_instantiate = true
+debounce = 1
+# ⚠️ TODO — the real fix for the 170 top-level errors. JET only "concretizes" (actually executes)
+# top-level expressions it recognises; everything else is abstract-interpreted, so a struct defined
+# behind a macro or a loop is invisible and every reference to it reports UndefVarError.
+# Populate with the patterns that define MORK's types, e.g. `@kwdef struct x_`, then re-measure and
+# REMOVE the `toplevel/error` demotion above once the count drops to real findings.
+# Syntax is JET/MacroTools patterns: { pattern = "USE_PULSE = x_", path = "src/**/*.jl" }
+concretization_patterns = []
+
+[inlay_hint]
+[inlay_hint.types]
+enabled = true          # argument/return type hints — the feature JET uniquely enables
+[inlay_hint.block_end]
+enabled = true
+min_lines = 25
