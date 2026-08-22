@@ -70,7 +70,13 @@ jobs:
           version: '1.12'
       - name: Check formatting
         run: |
-          julia -e 'using Pkg; Pkg.add(PackageSpec(name="JuliaFormatter", version="2.5.2"))'
+          # Pin bumped 2.5.2 -> 2.12.6 on 2026-08-21. The old pin was SEVEN minor versions stale, so
+          # every local formatter run disagreed with CI: running 2.12.x locally rewrote 105 files
+          # (3 607 insertions) that CI considered correctly formatted. A gate that disagrees with the
+          # local tool does not catch drift, it manufactures diffs — and nobody can run the check.
+          # KEEP THIS IN LOCKSTEP with whatever the global @v1.12 env resolves;
+          # `workflows/agent_check.jl` reads this line and REFUSES to format on a mismatch.
+          julia -e 'using Pkg; Pkg.add(PackageSpec(name="JuliaFormatter", version="2.12.6"))'
           julia -e 'using JuliaFormatter; println("JuliaFormatter ", pkgversion(JuliaFormatter))'
           julia -e 'using JuliaFormatter; format(".")'
           if ! git diff --quiet; then
