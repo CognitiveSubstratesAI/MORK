@@ -88,7 +88,7 @@ Reuses the existing prefix_buf and ancestors vectors (just resizes them)
 so the only allocation is the node reference update — no heap alloc.
 """
 @inline function _reinit_zipper_from_btm!(z, btm::PathMap{UnitVal})
-    _ensure_root!(btm)   # exported from PathMap, in scope via `using PathMap`
+    _ensure_root!(btm)   # exported from PathMap, in scope via `using PathMaps`
     root_rc = btm.root::TrieNodeODRc{UnitVal, GlobalAlloc}
     z.root_node = root_rc
     z.root_val = btm.root_val
@@ -355,7 +355,7 @@ upstream `ASpaceTranscriber` (kernel/src/space.rs:318-326) — `SpaceTranscriber
 zipper replaced by a plain PATH BUFFER: it appends the same bytes, hands the completed path to
 `emit`, then truncates back. Nothing is inserted into a trie, which is the whole point of the
 `*_to_paths` entry points: serialize a JSON document straight to a `.paths` stream without ever
-materialising it as a PathMap.
+materialising it as a PathMaps.
 
 Upstream's `write` is a Rust generator --- `push; yield &wz[..]; truncate` (space.rs:321-326). Julia's
 equivalent of yielding to a consumer is either a callback or a `Channel`; the struct takes a
@@ -1815,7 +1815,7 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
     # driver already removed this exec fact from s.btm, so a self-referential rule needs it
     # re-inserted into the isolated read_btm to see its own just-popped fact.
     read_btm = if !_pat_overlaps_exec_prefix(pat_expr)
-        _ensure_root!(s.btm)   # exported from PathMap, in scope via `using PathMap`
+        _ensure_root!(s.btm)   # exported from PathMap, in scope via `using PathMaps`
         PathMap{UnitVal, GlobalAlloc}(
             copy(s.btm.root::TrieNodeODRc{UnitVal, GlobalAlloc}),
             s.btm.root_val,

@@ -19,7 +19,7 @@
 #
 # ⚠️ ABSTRACT-TYPE DISPATCH IS NOT THE SAME DEFECT AS `Any`. `node_is_empty(%::AbstractTrieNode{…})`
 # is polymorphism over PathMap's node types — deliberate, and the cost of a trait-style design.
-# `PathMap.Int(%4::Any)` is a genuine hole. Both count here, because both are dispatch, but only the
+# `PathMaps.Int(%4::Any)` is a genuine hole. Both count here, because both are dispatch, but only the
 # second is a bug; the pin is a REGRESSION guard, not a target to drive to zero.
 # [[feedback_no_any_typed_containers]] · [[feedback_perf_diagnosis_typeinstability_first]]
 

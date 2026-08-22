@@ -73,11 +73,11 @@ _b(s) = MORK.sexpr_to_expr(s).buf
     end
 
     @testset "column_matches_by_equality — a stored variable disables pruning" begin
-        mk(bs) = (bits=PathMap.EMPTY_BITS4;
+        mk(bs) = (bits=PathMaps.EMPTY_BITS4;
             for b in bs
-                bits = PathMap.with_bit_set(bits, UInt8(b))
+                bits = PathMaps.with_bit_set(bits, UInt8(b))
             end;
-            PathMap.ByteMask(bits))
+            PathMaps.ByteMask(bits))
 
         # Only symbols present ⇒ equality is the only way to match ⇒ prunable.
         @test _LF.column_matches_by_equality(mk([0xC1, 0xD0, 0xFF]))

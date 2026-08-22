@@ -5,7 +5,7 @@
 # calculus `(, (p $x) (q $x)) → (both $x)`), across overlap / disjoint / subset /
 # identical / singleton shapes. The subset & identical cases exercise the `pmeet`
 # AlgResIdentity branch (`_trie_meet` resolves it to the smaller-by-val_count input).
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
 # head-prefix of a unary relation = common prefix of two atoms with different-length args
 # (so the common prefix stops at the relation head, before the argument).

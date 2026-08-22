@@ -1,10 +1,10 @@
 # Test Policy API (A.0003) — policy-based value merge on PathMap join
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
 @testset "policy_ops" begin
 
     function make_map(kvs)
-        m = PathMap.PathMap{Float64}()
+        m = PathMaps.PathMap{Float64}()
         for (k, v) in kvs
             set_val_at!(m, Vector{UInt8}(k), Float64(v))
         end

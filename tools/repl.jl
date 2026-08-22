@@ -29,7 +29,7 @@ catch
 end
 
 using MORK
-using PathMap
+using PathMaps
 
 # ── Shortcuts ─────────────────────────────────────────────────────────────────
 

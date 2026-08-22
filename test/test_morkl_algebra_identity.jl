@@ -17,30 +17,30 @@
 # but those ops are `&self -> Self` (pathmap trie_map.rs:523-559), so the result is DISCARDED and
 # every op returns `arg_0` untouched. Upstream is right exactly where we were wrong (Identity) and
 # wrong where we were right (Element). Do not "restore parity" toward it.
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
 _b(s) = Vector{UInt8}(codeunits(s))
 
 function _mk(keys::Vector{String})
-    m = PathMap.PathMap{PathMap.UnitVal}()
+    m = PathMaps.PathMap{PathMaps.UnitVal}()
     for k in keys
-        PathMap.set_val_at!(m, _b(k), PathMap.UnitVal())
+        PathMaps.set_val_at!(m, _b(k), PathMaps.UnitVal())
     end
     m
 end
 
-function _paths(m::PathMap.PathMap{PathMap.UnitVal})
-    z = PathMap.read_zipper(m)
+function _paths(m::PathMaps.PathMap{PathMaps.UnitVal})
+    z = PathMaps.read_zipper(m)
     out = String[]
-    while PathMap.zipper_to_next_val!(z)
-        push!(out, String(copy(PathMap.zipper_path(z))))
+    while PathMaps.zipper_to_next_val!(z)
+        push!(out, String(copy(PathMaps.zipper_path(z))))
     end
     sort(out)
 end
 
 "Run one binary space op through the real interpreter helper and return the result register."
 function _op(a::Vector{String}, b::Vector{String}, op::Symbol)
-    reg = PathMap.PathMap{PathMap.UnitVal}[_mk(a), _mk(b), _mk(String[])]
+    reg = PathMaps.PathMap{PathMaps.UnitVal}[_mk(a), _mk(b), _mk(String[])]
     MORK._binary_space_op!(reg, 2, 0, 1, op)
     _paths(reg[3])
 end

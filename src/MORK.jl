@@ -1,12 +1,12 @@
 # MORK — Julia port of trueagi-io/MORK
-# PathMap substrate lives in the PathMap package (sivaji1012/PathMap.git).
+# PathMap substrate lives in the PathMap package (sivaji1012/PathMaps.git).
 # Upstream references:
 #   - pathmap: ~/JuliaAGI/dev-zone/PathMap
 #   - MORK:    ~/JuliaAGI/dev-zone/MORK (branches: main, origin/server)
 module MORK
 
 using Base64
-using PathMap
+using PathMaps
 
 # ── Phase 2: Expression layer (mork/expr/) ────────────────────────────────────
 
@@ -123,7 +123,7 @@ include("expr/DyckZipper.jl")
 # the trace and re-pushes the root frame — without that, a reset zipper keeps the stack from wherever
 # it had walked to, and the trace-based traversal would resume mid-expression. Thirteen kernel call
 # sites reset zippers, so the two halves have to move together.
-import PathMap: ez_reset!
+import PathMaps: ez_reset!
 function ez_reset!(z::ExprZipper)
     z.loc = 1
     z.trace = nothing     # dropped, not rebuilt — it re-materialises at the root on next use

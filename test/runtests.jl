@@ -1,6 +1,6 @@
 using Test
 using MORK
-using PathMap
+using PathMaps
 # Aqua is test-only [extras]: present under Pkg.test/CI but NOT in a plain
 # `julia --project=. test/runtests.jl` run (no sandbox). Load optionally.
 const _HAS_AQUA = try
@@ -12,7 +12,7 @@ catch
     false
 end
 # PathMap module and PathMap type share the same name — alias the type
-const PM = PathMap.PathMap
+const PM = PathMaps.PathMap
 
 # Fails the build on any testset that runs but asserts nothing — see the file header for the two
 # inert oracles that motivated it. Captured into `_MORK_TS` and checked AFTER the suite.
@@ -2514,7 +2514,7 @@ const _MORK_TS = @testset "MORK" begin
         end
 
         # ------------------------------------------------------------------
-        # PathMap.isempty changes after write/remove
+        # PathMaps.isempty changes after write/remove
         # ------------------------------------------------------------------
         @testset "PathMap isempty semantics with writes" begin
             m = PM{V}()
@@ -4258,62 +4258,62 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "act_open_mmap — mmap-backed ACT file" begin
             m = PM{UInt64}()
-            PathMap.set_val_at!(m, b"alpha", UInt64(42))
-            PathMap.set_val_at!(m, b"beta", UInt64(99))
-            PathMap.set_val_at!(m, b"gamma", UInt64(7))
+            PathMaps.set_val_at!(m, b"alpha", UInt64(42))
+            PathMaps.set_val_at!(m, b"beta", UInt64(99))
+            PathMaps.set_val_at!(m, b"gamma", UInt64(7))
 
-            tree_vec = PathMap.act_from_zipper(m, v -> v)
+            tree_vec = PathMaps.act_from_zipper(m, v -> v)
             tmpfile = tempname() * ".act"
-            PathMap.act_save(tree_vec, tmpfile)
+            PathMaps.act_save(tree_vec, tmpfile)
 
-            tree_mmap = PathMap.act_open_mmap(tmpfile)
-            @test tree_mmap isa PathMap.ArenaCompactTree
+            tree_mmap = PathMaps.act_open_mmap(tmpfile)
+            @test tree_mmap isa PathMaps.ArenaCompactTree
             @test length(tree_mmap.data) == filesize(tmpfile)
-            @test tree_mmap.data[1:8] == PathMap.ACT_MAGIC
+            @test tree_mmap.data[1:8] == PathMaps.ACT_MAGIC
 
-            @test PathMap.act_get_val_at(tree_mmap, b"alpha") === UInt64(42)
-            @test PathMap.act_get_val_at(tree_mmap, b"beta") === UInt64(99)
-            @test PathMap.act_get_val_at(tree_mmap, b"gamma") === UInt64(7)
-            @test PathMap.act_get_val_at(tree_mmap, b"missing") === nothing
+            @test PathMaps.act_get_val_at(tree_mmap, b"alpha") === UInt64(42)
+            @test PathMaps.act_get_val_at(tree_mmap, b"beta") === UInt64(99)
+            @test PathMaps.act_get_val_at(tree_mmap, b"gamma") === UInt64(7)
+            @test PathMaps.act_get_val_at(tree_mmap, b"missing") === nothing
 
             # mmap and copy agree on all keys
-            tree_copy = PathMap.act_open(tmpfile)
+            tree_copy = PathMaps.act_open(tmpfile)
             for key in (b"alpha", b"beta", b"gamma", b"missing")
-                @test PathMap.act_get_val_at(tree_mmap, key) ===
-                    PathMap.act_get_val_at(tree_copy, key)
+                @test PathMaps.act_get_val_at(tree_mmap, key) ===
+                    PathMaps.act_get_val_at(tree_copy, key)
             end
 
             # ACTZipper traversal over mmap tree
-            @test PathMap.act_val_count(PathMap.act_read_zipper(tree_mmap)) == 3
+            @test PathMaps.act_val_count(PathMaps.act_read_zipper(tree_mmap)) == 3
 
             rm(tmpfile; force=true)
         end
 
         @testset "remove_val_at! with prune=true" begin
             m = PM{Int}()
-            PathMap.set_val_at!(m, b"abc", 1)
-            PathMap.set_val_at!(m, b"abd", 2)
-            PathMap.set_val_at!(m, b"xyz", 3)
+            PathMaps.set_val_at!(m, b"abc", 1)
+            PathMaps.set_val_at!(m, b"abd", 2)
+            PathMaps.set_val_at!(m, b"xyz", 3)
 
-            old = PathMap.remove_val_at!(m, b"abc", true)
+            old = PathMaps.remove_val_at!(m, b"abc", true)
             @test old === 1
-            @test PathMap.get_val_at(m, b"abc") === nothing
-            @test PathMap.get_val_at(m, b"abd") === 2
-            @test PathMap.get_val_at(m, b"xyz") === 3
+            @test PathMaps.get_val_at(m, b"abc") === nothing
+            @test PathMaps.get_val_at(m, b"abd") === 2
+            @test PathMaps.get_val_at(m, b"xyz") === 3
         end
 
         @testset "wz_remove_branches! with prune=true" begin
             m = PM{Int}()
-            PathMap.set_val_at!(m, b"foo:a", 10)
-            PathMap.set_val_at!(m, b"foo:b", 20)
-            PathMap.set_val_at!(m, b"bar", 30)
+            PathMaps.set_val_at!(m, b"foo:a", 10)
+            PathMaps.set_val_at!(m, b"foo:b", 20)
+            PathMaps.set_val_at!(m, b"bar", 30)
 
-            wz = PathMap.write_zipper_at_path(m, b"foo:")
-            PathMap.wz_remove_branches!(wz, true)
+            wz = PathMaps.write_zipper_at_path(m, b"foo:")
+            PathMaps.wz_remove_branches!(wz, true)
 
-            @test PathMap.get_val_at(m, b"foo:a") === nothing
-            @test PathMap.get_val_at(m, b"foo:b") === nothing
-            @test PathMap.get_val_at(m, b"bar") === 30
+            @test PathMaps.get_val_at(m, b"foo:a") === nothing
+            @test PathMaps.get_val_at(m, b"foo:b") === nothing
+            @test PathMaps.get_val_at(m, b"bar") === 30
         end
 
     end   # PathMap deferred items
@@ -4709,7 +4709,7 @@ const _MORK_TS = @testset "MORK" begin
     #                      4f57120, the commit that first made the sink fire — never green.
     #   pathmap_prefix_ops wanted b"ns:foo:bar"; the insert goes through write_zipper_at_path(m,
     #                      b"foo:") so the prefix lands INSIDE that subtree -> b"foo:ns:bar".
-    #                      Byte-identical to upstream PathMap.
+    #                      Byte-identical to upstream PathMaps.
     #   logic_query        wanted 63; the upstream BINARY dumps 24 on this program, as do we. 63 was
     #                      measured off our own engine during a soundness bug and then rationalised.
     # sink_pure_advanced wired 2026-07-27: the ONE case that was a genuine ENGINE bug rather than a

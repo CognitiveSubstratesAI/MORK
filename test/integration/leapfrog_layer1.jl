@@ -93,12 +93,12 @@ _lf_buf(s::AbstractString) = MORK.sexpr_to_expr(s).buf
         # folding `with_bit_set` over the Bits4, not by mutating. My first draft called
         # `set_bit(m, b)` and the testset ERRORED rather than failing, which is the more useful
         # outcome: an assertion that cannot run proves nothing at all.
-        bits = PathMap.EMPTY_BITS4
+        bits = PathMaps.EMPTY_BITS4
         for b in (0x10, 0x40, 0x41, 0xFE)
-            bits = PathMap.with_bit_set(bits, UInt8(b))
+            bits = PathMaps.with_bit_set(bits, UInt8(b))
         end
-        m = PathMap.ByteMask(bits)
-        @test PathMap.test_bit(m, 0x40) && !PathMap.test_bit(m, 0x11)   # the mask is what I think
+        m = PathMaps.ByteMask(bits)
+        @test PathMaps.test_bit(m, 0x40) && !PathMaps.test_bit(m, 0x11)   # the mask is what I think
 
         # 🔴 THE LOAD-BEARING ONE. `next_bit` is STRICTLY above its argument, so a seek to a byte
         # that IS present must be answered with that byte. Delegating straight to `next_bit` would
@@ -114,7 +114,7 @@ _lf_buf(s::AbstractString) = MORK.sexpr_to_expr(s).buf
         @test _LF.least_ge(m, 0xFF) === nothing    # above everything -> exhausted
 
         # an empty mask never yields, at any k — the cursor's exhaustion path depends on it
-        e = PathMap.ByteMask()
+        e = PathMaps.ByteMask()
         @test _LF.least_ge(e, 0x00) === nothing
         @test _LF.least_ge(e, 0xFF) === nothing
     end

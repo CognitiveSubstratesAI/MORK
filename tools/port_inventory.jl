@@ -98,7 +98,7 @@ const CRATES = ["kernel", "expr", "frontend", "interning", "linalg", "experiment
 # THE RUNTIME AUTHORITY DIFFERS PER PACKAGE, and that is the whole design, not an inconvenience:
 # MORK's op names live in Dicts (`PURE_OPS`, `GROUNDED_REGISTRY`) that no source line spells out, so
 # the registry is the authority. PathMap has no such table — its names ARE its module bindings, so
-# `names(PathMap; all = true)` is the authority. Both ask the RUNTIME. Neither reads source text for
+# `names(PathMaps; all = true)` is the authority. Both ask the RUNTIME. Neither reads source text for
 # presence, which is the defect this file's header exists to describe.
 struct PortProfile
     name::String
@@ -148,7 +148,7 @@ const PATHMAP_HERE = normpath(joinpath(HERE, "..", "PathMap"))
 const PATHMAP_PROFILE = PortProfile(
     "PathMap", PATHMAP_UPSTREAM, ["src"], joinpath(PATHMAP_HERE, "src"),
     joinpath(PATHMAP_HERE, "test", "conformance", "PORT_INVENTORY.txt"),
-    () -> runtime_module_names(:PathMap),
+    () -> runtime_module_names(:PathMaps),
     # ⚠️ RECORDED BECAUSE ROW 173 SAYS A CONFORMANCE CLAIM MUST NAME ITS FEATURE SET AND OURS NEVER HAS.
     # `graft_root_vals` is SEMANTIC, not cosmetic — upstream describes it as changing what `graft`,
     # `graft_map`, `make_map`, `take_map` and `join_map` do with the value at the focus.

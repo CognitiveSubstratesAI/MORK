@@ -74,7 +74,7 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     # somewhere we never had. The user spotted the omission, not the tool.
     # ⚠️ STILL UNSCANNED: `experiments/eval-ffi` (a KERNEL dependency), `experiments/eval-examples`,
     # `experiments/unification_test_laws` (883 lines of unification LAWS — a ready-made oracle we have
-    # never run), and ALL of PathMap. Do not read this percentage as whole-port coverage.
+    # never run), and ALL of PathMaps. Do not read this percentage as whole-port coverage.
     # 111 -> 106 and TYS 35 -> 32 on 2026-07-30, and this FALL is attributable and verified:
     # `rust_symbols` matched against RAW SOURCE, so COMMENTED-OUT CODE counted as upstream API. Seven
     # phantom symbols were in the vendored baseline — `kernel/pure.rs FN nth_expr` (a `//`-commented

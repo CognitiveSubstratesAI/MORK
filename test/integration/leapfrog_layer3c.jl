@@ -27,7 +27,7 @@ end
         present = MORK.sexpr_to_expr("(rel a)").buf
         (exact, mask) = _L3.ground_probe!(c, present)
         @test exact                                      # it IS stored
-        @test !PathMap.is_empty_mask(mask.bits)          # …and the column really has children
+        @test !PathMaps.is_empty_mask(mask.bits)          # …and the column really has children
 
         # the negative twin: a subterm that is NOT stored
         (_, c2) = _l3_cursor(atoms)
@@ -42,17 +42,17 @@ end
         atoms = ["(rel a)", "(rel b)"]
         (_, c) = _l3_cursor(atoms)
         floor_before = c.col.floor
-        path_before = length(PathMap.zipper_path(c.z))
+        path_before = length(PathMaps.zipper_path(c.z))
 
         _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel a)").buf)
         @test c.col.floor == floor_before
-        @test length(PathMap.zipper_path(c.z)) == path_before
+        @test length(PathMaps.zipper_path(c.z)) == path_before
         @test _L3.cursor_check_invariants(c)
 
         # …and a probe that MISSES must restore just as cleanly
         _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel zzz)").buf)
         @test c.col.floor == floor_before
-        @test length(PathMap.zipper_path(c.z)) == path_before
+        @test length(PathMaps.zipper_path(c.z)) == path_before
         @test _L3.cursor_check_invariants(c)
 
         # after probing, a fresh enumeration must still work — the real consequence of a bad restore
@@ -78,11 +78,11 @@ end
     @testset "stored_wildcard_bytes agrees with column_matches_by_equality" begin
         # The two read the SAME range (0x80..0xC0). If they ever disagreed, the join would prune a
         # column one of them called wildcard-free — silently dropping every answer that needed it.
-        mk(bs) = (bits=PathMap.EMPTY_BITS4;
+        mk(bs) = (bits=PathMaps.EMPTY_BITS4;
             for b in bs
-                bits = PathMap.with_bit_set(bits, UInt8(b))
+                bits = PathMaps.with_bit_set(bits, UInt8(b))
             end;
-            PathMap.ByteMask(bits))
+            PathMaps.ByteMask(bits))
         for bs in (
             [0xC1, 0xD0], [0x00, 0x3F], UInt8[], [0x80], [0xC0], [0xBF, 0xC1], [0x00, 0x80]
         )
@@ -101,6 +101,6 @@ end
         direct = _L3.cursor_floor_child_mask(c)
         (_, probed) = _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel a)").buf)
         @test probed.bits == direct.bits
-        @test !PathMap.is_empty_mask(direct.bits)        # anti-vacuity for the comparison
+        @test !PathMaps.is_empty_mask(direct.bits)        # anti-vacuity for the comparison
     end
 end

@@ -63,13 +63,13 @@ end
     @testset "🔴 with_bound_bytes! restores the cursor — even when cont THROWS" begin
         (_, c) = _l4_cursor(["(rel a)", "(rel b)"])
         floor0 = c.col.floor
-        path0 = length(PathMap.zipper_path(c.z))
+        path0 = length(PathMaps.zipper_path(c.z))
 
         ran = Ref(false)
         _L4.with_bound_bytes!(c, UInt8[0xC1], () -> (ran[] = true))
         @test ran[]                                            # anti-vacuity: cont actually ran
         @test c.col.floor == floor0
-        @test length(PathMap.zipper_path(c.z)) == path0
+        @test length(PathMaps.zipper_path(c.z)) == path0
 
         # THE LOAD-BEARING CASE. Upstream is straight-line Rust and cannot throw here; ours can.
         # Without the `finally`, the cursor stays descended and every enclosing column is corrupt.
@@ -77,7 +77,7 @@ end
             c, UInt8[0xC1], () -> error("boom")
         )
         @test c.col.floor == floor0
-        @test length(PathMap.zipper_path(c.z)) == path0
+        @test length(PathMaps.zipper_path(c.z)) == path0
         @test _L4.cursor_check_invariants(c)
     end
 

@@ -1,7 +1,7 @@
 using BenchmarkTools
 using MORK
-using PathMap
-const PM = PathMap.PathMap
+using PathMaps
+const PM = PathMaps.PathMap
 
 # ── Setup helpers — build fresh state per sample ──────────────────────────────
 

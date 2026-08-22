@@ -4,24 +4,24 @@
 # zlib `.paths` stream WITHOUT ever building a trie. The equivalence that matters is therefore not a
 # count but a SET: whatever `space_load_json!` would have inserted must be exactly what comes back
 # out of the serialized stream. Counts alone would pass while the paths themselves were wrong.
-using MORK, Test, PathMap
+using MORK, Test, PathMaps
 
 const M = MORK
 
 "Every path in a PathMap, as a sorted set of byte vectors."
 function _paths(m)
-    z = PathMap.read_zipper(m)
+    z = PathMaps.read_zipper(m)
     out = Vector{UInt8}[]
-    while PathMap.zipper_to_next_val!(z)
-        push!(out, collect(PathMap.zipper_path(z)))
+    while PathMaps.zipper_to_next_val!(z)
+        push!(out, collect(PathMaps.zipper_path(z)))
     end
     sort!(out)
 end
 
-"Deserialize a `.paths` stream into a fresh PathMap."
+"Deserialize a `.paths` stream into a fresh PathMaps."
 function _from_paths(bytes)
-    m = PathMap.PathMap{PathMap.UnitVal}()
-    PathMap.deserialize_paths(m, IOBuffer(bytes), M.UNIT_VAL)
+    m = PathMaps.PathMap{PathMaps.UnitVal}()
+    PathMaps.deserialize_paths(m, IOBuffer(bytes), M.UNIT_VAL)
     m
 end
 

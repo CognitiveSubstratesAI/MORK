@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.6"
+julia_version = "1.12.7"
 manifest_format = "2.0"
-project_hash = "4f642e26b4baebdfb32c1a9bd5be768b4acf42b2"
+project_hash = "66be92b68ae8338627352a6ec82c9fa1e8861063"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -18,7 +18,7 @@ uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 version = "1.11.0"
 
 [[deps.MORK]]
-deps = ["Base64", "PathMap", "PrecompileTools"]
+deps = ["Base64", "PathMaps", "PrecompileTools"]
 path = "."
 uuid = "162375cb-4023-4ef9-895b-22c0041d5c13"
 version = "0.1.0"
@@ -27,7 +27,7 @@ version = "0.1.0"
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 version = "1.11.0"
 
-[[deps.PathMap]]
+[[deps.PathMaps]]
 deps = ["Mmap", "PrecompileTools", "Zlib_jll"]
 path = "../PathMap"
 uuid = "a8b3d4e5-f012-4567-89ab-cdef01234567"

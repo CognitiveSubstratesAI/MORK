@@ -1,10 +1,10 @@
 # test/integration/pathmap_write.jl — PathMap write zipper tests
 # Ports write_zipper_graft_test1 and write_zipper_remove_branches_test
 # from PathMap/src/write_zipper.rs
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
 function make_imap(kvs)
-    m = PathMap.PathMap{Int32}()
+    m = PathMaps.PathMap{Int32}()
     for (k, v) in kvs
         set_val_at!(m, Vector{UInt8}(k), Int32(v))
     end

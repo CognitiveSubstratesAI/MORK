@@ -131,7 +131,7 @@ end
 # says so. Both crates depend on `xxhash-rust`, which invites the conclusion that the hash belongs in
 # the shared/lower package. That conclusion is WRONG, measured by call site:
 #
-#     gxhash128 (-> xxh3)        MORK expr ONLY   (lib.rs:312, `Expr::hash`).  ZERO calls in PathMap.
+#     gxhash128 (-> xxh3)        MORK expr ONLY   (lib.rs:312, `Expr::hash`).  ZERO calls in PathMaps.
 #     GxHasher::with_seed        PathMap ONLY     (merkleization.rs:56,79 · morphisms.rs:242,255 ·
 #                                                  experimental/serialization.rs:139,146)
 #
@@ -142,7 +142,7 @@ end
 # state_lo = rotl(state_lo,3)`), ~20 self-contained lines, nothing like xxh3.
 #
 # ⇒ If merkleization / `dag_serialization` / an upstream-compatible `Catamorphism::hash` is ever
-# wanted, port `GxHasher` INTO PathMap. Do not relocate XXH3, and do not substitute xxh3 for it.
+# wanted, port `GxHasher` INTO PathMaps. Do not relocate XXH3, and do not substitute xxh3 for it.
 # (Reading a dependency list instead of a call graph is the same error as counting a commented-out
 # `nth_expr` as upstream API.)
 

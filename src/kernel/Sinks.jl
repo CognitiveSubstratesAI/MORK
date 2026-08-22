@@ -82,13 +82,13 @@ const SinkBtm = Union{PathMap{UnitVal}, PrefixBtm}
 @inline _pp(p::PrefixBtm, path::AbstractVector{UInt8}) = vcat(p.prefix, path)
 
 # Extend (not shadow) the PathMap ops with a PrefixBtm method.  These arrive in
-# MORK via `using PathMap` (for calls); to ADD a method we must `import` them so
+# MORK via `using PathMaps` (for calls); to ADD a method we must `import` them so
 # the unqualified definition extends PathMap's function instead of defining a
 # new MORK-local one that would hide `set_val_at!(::PathMap, …)` from every
-# other caller.  (Module-qualifying as `PathMap.set_val_at!` fails — in MORK's
+# other caller.  (Module-qualifying as `PathMaps.set_val_at!` fails — in MORK's
 # scope `PathMap` is the exported TYPE, not the module.)  Mirrors the existing
-# `import PathMap: ez_reset!` pattern in MORK.jl.
-import PathMap: set_val_at!, get_val_at, remove_val_at!, read_zipper, write_zipper
+# `import PathMaps: ez_reset!` pattern in MORK.jl.
+import PathMaps: set_val_at!, get_val_at, remove_val_at!, read_zipper, write_zipper
 
 set_val_at!(p::PrefixBtm, path::AbstractVector{UInt8}, v) =
     set_val_at!(p.inner, _pp(p, path), v)
@@ -141,7 +141,7 @@ end
 """
     CompatSink
 
-Insert each matched path verbatim into the destination PathMap.
+Insert each matched path verbatim into the destination PathMaps.
 Mirrors `CompatSink` in sinks.rs.
 """
 # =====================================================================

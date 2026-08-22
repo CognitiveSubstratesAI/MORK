@@ -162,15 +162,15 @@ using ..MORK: byte_item, ExprArity, ExprSymbol, ExprVarRef, ExprNewVar,
     expr_unify_into!, expr_unify_unwind!
 using ..MORK: Expr as MORKExpr
 # ⚠️ `PathMap` NAMES BOTH A MODULE AND A TYPE. Importing the bare name binds the TYPE, so
-# `PathMap.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
+# `PathMaps.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
 # plainly and take everything else by name.
-using PathMap: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
+using PathMaps: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
     read_zipper_at_path, set_val_at!, zipper_to_next_val!,
     zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
     zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
     zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
     zipper_to_next_sibling_byte!, zipper_is_val,
-    iter        # ⇐ ByteMask's set-bit iterator; `import PathMap` collides with the TYPE
+    iter        # ⇐ ByteMask's set-bit iterator; `import PathMaps` collides with the TYPE
 
 export subterm_parse_step, least_ge, is_complete, PARSE_START,
     SubtermCursor, cursor_first!, cursor_next!, cursor_key, cursor_seek!,

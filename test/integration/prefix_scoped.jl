@@ -11,7 +11,7 @@
 # into expression decoding (the bug the anchored PathMap ProductZipper fixed).
 
 using MORK, Test
-using PathMap: UNIT_VAL, set_val_at!, read_zipper_at_path, zipper_to_next_val!, zipper_path
+using PathMaps: UNIT_VAL, set_val_at!, read_zipper_at_path, zipper_to_next_val!, zipper_path
 using MORK: new_space, sexpr_to_expr, expr_serialize,
     space_query_multi_at, space_metta_calculus_in_prefix!
 

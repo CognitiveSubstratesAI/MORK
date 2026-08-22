@@ -54,7 +54,7 @@ const _CARD_REORDER_ENABLED = Ref(true)
 # which is precisely the pathology a worst-case-optimal join removes by never materialising.
 const _JOIN_TRACE = Ref(false)
 
-# Resolve a PathMap `pmeet` result to a concrete PathMap.
+# Resolve a PathMap `pmeet` result to a concrete PathMaps.
 #   • AlgResElement  → its `.value` (a genuinely-new meet: overlap, or disjoint→empty)
 #   • AlgResIdentity → the meet equals one input; for a meet (intersection) that input
 #                      is always the SUBSET, i.e. the smaller-by-`val_count`

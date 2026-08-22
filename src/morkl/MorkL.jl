@@ -344,7 +344,7 @@ end
 """
     interp_set_memo!(interp, path, result)
 
-Store a result in the memo PathMap.
+Store a result in the memo PathMaps.
 """
 function interp_set_memo!(interp::Interpreter, path::AbstractVector{UInt8},
     result::PathMap{UnitVal})

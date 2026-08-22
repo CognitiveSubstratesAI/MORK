@@ -12,7 +12,7 @@
 
 using MORK: ExprArity, ExprSymbol, item_byte, Space, new_space, space_val_count,
     space_add_all_sexpr!
-using PathMap: read_zipper_at_path, zipper_val_count, zipper_to_next_val!
+using PathMaps: read_zipper_at_path, zipper_val_count, zipper_to_next_val!
 
 # ── minimal top-level sexpr tokenizer: "(in 12345 $pre $cnt)" → ["in","12345","\$pre","\$cnt"] ──
 function _leg_items(str::AbstractString)::Vector{String}

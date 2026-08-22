@@ -1,10 +1,10 @@
 # Test cata_hybrid_cached — A.0005 hybrid cached catamorphism
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
 @testset "cata_hybrid_cached" begin
 
     function make_map(kvs)
-        m = PathMap.PathMap{Int}()
+        m = PathMaps.PathMap{Int}()
         for (k, v) in kvs
             set_val_at!(m, Vector{UInt8}(k), v)
         end
@@ -56,7 +56,7 @@ using MORK, PathMap, Test
     # ── Cache reuse: identical subtries at different paths ────────────
     @testset "cache reuse for path-independent nodes" begin
         # Build a map with structural sharing: same subtrie grafted twice
-        m = PathMap.PathMap{Int}()
+        m = PathMaps.PathMap{Int}()
         sub = make_map(["x" => 42])
         wz1 = write_zipper(m)
         wz_descend_to!(wz1, b"left:")

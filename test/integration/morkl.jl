@@ -1,8 +1,8 @@
 # morkl.jl — port of experiments/morkl_interpreter/ (server branch)
 # Tests the MorkL register-based VM for relational trie algebra.
-using MORK, PathMap, Test
+using MORK, PathMaps, Test
 
-is_pm(x) = x isa PathMap.PathMap
+is_pm(x) = x isa PathMaps.PathMap
 
 @testset "MorkL CfIter — 256-bit bitmask iterator" begin
     # bits 0,1,3 set in first word
