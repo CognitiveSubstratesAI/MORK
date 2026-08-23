@@ -374,7 +374,28 @@ function ee_args!(ee::ExprEnv, dest::Vector{ExprEnv})
     tag isa ExprArity || return nothing
     k = Int(tag.arity)
     env = ExprEnv(ee.n, ee.v, ee.offset + UInt32(1), ee.base)
-    for _ in 1:k
+    for sk in 1:k
+        # ── 🔴 THE LAST CHILD IS NOT WALKED. THIS IS ASYMPTOTIC, NOT A MICRO-OPTIMISATION ────────
+        # The traversal below exists ONLY to advance `env` past this child to reach the NEXT one.
+        # After the last child there is no next one, so walking it is pure waste — and it costs
+        # O(child span). Upstream (`expr/src/lib.rs:2060`): "On a right-nested pattern, where each
+        # level's last child is the whole remaining term, paying it at every level made a descent
+        # that calls `args` per node (`Space::coreferential_transition`) QUADRATIC in the pattern's
+        # size. Skipping it makes such a descent LINEAR."
+        # MEASURED on ours BEFORE this skip — descend a right-nested term calling ee_args! per
+        # level, minimum of 200 runs:  depth 50→100→200→400 cost 34.2→139.7→456.3→1572.5 µs,
+        # i.e. 4.09x / 3.27x / 3.45x per DOUBLING. Quadratic (linear would be ~2x).
+        if sk == k
+            # The one child the advancement walk never measures. A STAMPED PARENT MEASURES IT
+            # ANYWAY: the parent's end IS the last child's end, and a ground parent has ground
+            # children. Inheriting costs nothing and is the only stamp this child can get.
+            # The cast is safe by invariant, as upstream's unguarded one is: the parent is stamped
+            # only when its whole span fits UInt16, and this child's span is strictly smaller.
+            stamp = ee.ground_skip != UInt16(0) ?
+                UInt16((Int(ee.offset) + Int(ee.ground_skip)) - Int(env.offset)) : UInt16(0)
+            push!(dest, ExprEnv(ee.n, env.v, stamp, env.offset, ee.base))
+            break
+        end
         start_j = Int(env.offset)
         # Measure byte span + new-var count + WHETHER ANY VARIABLE OCCURS, in the one walk.
         # ⚠️ THE ACCUMULATOR CARRIES TWO THINGS AND THEY ARE NOT THE SAME QUESTION.
