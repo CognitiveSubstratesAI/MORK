@@ -376,17 +376,28 @@ function ee_args!(ee::ExprEnv, dest::Vector{ExprEnv})
     env = ExprEnv(ee.n, ee.v, ee.offset + UInt32(1), ee.base)
     for _ in 1:k
         start_j = Int(env.offset)
-        # Measure byte span + new-var count using traverseh
-        (new_var_count, _, j_end) = _ee_traverseh(
-            UInt8(0), env,
-            (h, o) -> (h + UInt8(1), nothing),  # new_var: count it
-            (h, o, r) -> (h, nothing),              # var_ref: noop
+        # Measure byte span + new-var count + WHETHER ANY VARIABLE OCCURS, in the one walk.
+        # ⚠️ THE ACCUMULATOR CARRIES TWO THINGS AND THEY ARE NOT THE SAME QUESTION.
+        #   [1] UInt8 — how many NewVars, which is what `env.v` must advance by. Unchanged.
+        #   [2] Bool  — did ANY variable occur, NewVar *or* VarRef. This is the ground test.
+        # `var_ref` used to be a NOOP here, so a subterm containing only VarRefs measured zero new
+        # vars and was indistinguishable from a ground one. Counting NewVars is not a ground test:
+        # a VarRef is a variable too, and stamping such a span ground is the out-of-bounds read the
+        # ExprEnv docstring warns about.
+        (acc, _, j_end) = _ee_traverseh(
+            (UInt8(0), false), env,
+            (h, o) -> ((h[1] + UInt8(1), true), nothing),  # new_var: count it AND mark non-ground
+            (h, o, r) -> ((h[1], true), nothing),          # var_ref: mark non-ground (WAS A NOOP)
             (h, o, sl) -> (h, nothing),              # symbol:  noop
             (h, o, a) -> (h, nothing),              # zero:    noop
             (h, o, x, y) -> (h, nothing),              # add:     noop
             (h, o, acc) -> (h, acc))                  # finalize: identity
-        push!(dest, ExprEnv(ee.n, env.v, env.offset, ee.base))
+        new_var_count, has_var = acc
         span = j_end - start_j    # number of bytes this sub-expression occupies
+        # STAMP ONLY WHAT THIS WALK JUST MEASURED. 0 means "unknown" and is always safe — including
+        # for a ground span wider than typemax(UInt16), which upstream also declines to stamp.
+        stamp = (!has_var && 0 < span <= typemax(UInt16)) ? UInt16(span) : UInt16(0)
+        push!(dest, ExprEnv(ee.n, env.v, stamp, env.offset, ee.base))
         env = ExprEnv(env.n, env.v + new_var_count, env.offset + UInt32(span), env.base)
     end
 end

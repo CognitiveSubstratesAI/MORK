@@ -1006,17 +1006,45 @@ const ExprVar = Tuple{UInt8, UInt8}
     ExprEnv
 
 Expression cursor with source-ID scoping for unification.
-Mirrors `ExprEnv { n, v, offset, base }` in mork_expr.
+Mirrors `ExprEnv { n, v, ground_skip, offset, base }` in mork_expr (`expr/src/lib.rs:1885`).
 """
 struct ExprEnv
     n::UInt8   # source id (0, 1, ...)
     v::UInt8   # next free var index
+    # ── ground_skip: byte length of this subterm WHEN KNOWN GROUND; 0 means UNKNOWN ─────────────
+    # Ports upstream's `ground_skip: u16`. A nonzero value lets a consumer compare or copy the span
+    # without walking it, and skip variable hunts (occurs checks, cycle cuts) across it.
+    #
+    # 🔴 A FALSE STAMP IS AN OUT-OF-BOUNDS READ, not a wrong answer. Upstream states it directly:
+    # "a false stamp -- nonzero for a span shorter than it says, or one containing a variable --
+    # makes consumers read `ground_skip` bytes from `subsexpr()`". That is why upstream keeps the
+    # field PRIVATE and the only external setter is an `unsafe fn stamp_ground`. Julia has no
+    # equivalent fence, so the discipline is: SET IT ONLY WHERE THE SPAN WAS JUST MEASURED, and
+    # ⚠️ ANY OPERATION THAT CHANGES `offset` MUST CLEAR IT (a stamp describes the span at ONE offset).
+    # 0 is always safe and always correct — including for ground spans wider than typemax(UInt16).
+    #
+    # 🔑 PLACEMENT IS LOAD-BEARING, NOT STYLE. Upstream static-asserts
+    # `size_of::<ExprEnv>() == 16` with the reason "it is copied per binding per answer". MEASURED
+    # on our layout: with the field HERE (after `v`) the struct stays 16 bytes because it lands in
+    # the alignment hole at offset 2; APPENDED AFTER `base` it becomes 24 — 50% wider on a struct
+    # copied per binding per answer. Do not "tidy" this field to the end of the struct.
+    ground_skip::UInt16
     offset::UInt32  # byte offset into base
     base::Expr    # backing expression
 end
 
+# Back-compat: every pre-existing 4-positional call means "unstamped", which is the safe default and
+# matches upstream's `ExprEnv::new` (`ground_skip: 0`). Keeping this method is what lets the field be
+# added without touching the ~50 construction sites across expr/, kernel/ and the suites.
+ExprEnv(n::UInt8, v::UInt8, offset::UInt32, base::Expr) = ExprEnv(n, v, UInt16(0), offset, base)
+
 ExprEnv(n::Integer, base::Expr) = ExprEnv(UInt8(n), UInt8(0), UInt32(0), base)
 ExprEnv(n::Integer, base::Vector{UInt8}) = ExprEnv(n, Expr(base))
+
+# Upstream's `const _: () = assert!(size_of::<ExprEnv>() == 16, ...)`, ported. This is a REAL gate:
+# the field above is free only because of where it sits, and a later field reorder would silently
+# cost 50% per copy with nothing else failing.
+@assert sizeof(ExprEnv) == 16 "ExprEnv must not grow: it is copied per binding per answer"
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 # Bindings — a DIRECT-INDEXED SLAB behind the `AbstractDict` interface.
