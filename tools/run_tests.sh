@@ -36,7 +36,16 @@
 #         tools/run_tests.sh path.jl    # one file
 # Exit:   0 = all green · 1 = failure/error
 set -uo pipefail
-cd "$(dirname "$0")/.."
+# 🔴 RESOLVE THE SCRIPT DIR *BEFORE* THE cd, AND ABSOLUTELY. `$0` is relative to the caller's
+# cwd, so after this `cd` every later `$(dirname "$0")` points somewhere that no longer exists when
+# the script is invoked as `MORK/tools/run_tests.sh` from the repo root — the form CLAUDE.md RULE 0
+# documents. MEASURED 2026-08-23: the docstring lint on line ~90 then failed to OPEN its own script
+# and the runner printed "docstring interpolation lint FAILED — fix before running the suite", so a
+# WRONG-DIRECTORY INVOCATION reported itself as a SOURCE DEFECT and the suite never ran at all.
+# The lint passed standalone the whole time. A guard that reports someone else's failure as yours is
+# worse than no guard, so the path is now pinned once, absolute, before anything moves.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
 TARGET="${1:-test/runtests.jl}"
 
 ROOT="$PWD"
@@ -87,7 +96,7 @@ EOF
 # loads, so the suite cannot report it and you get a stacktrace instead of a test failure. FOURTH
 # occurrence on 2026-08-21. Local grep by choice — `Core/bin/health` has the correct shared lint, but
 # coupling two repos for a thirty-line check is the wrong trade at this count.
-if ! python3 "$(dirname "$0")/lint_docstring_interp.py" "$(dirname "$0")/../src"; then
+if ! python3 "$SCRIPT_DIR/lint_docstring_interp.py" "$SCRIPT_DIR/../src"; then
   echo "run_tests.sh: docstring interpolation lint FAILED — fix before running the suite." >&2
   exit 1
 fi
