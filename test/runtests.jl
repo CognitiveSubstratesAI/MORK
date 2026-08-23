@@ -300,13 +300,23 @@ const _MORK_TS = @testset "MORK" begin
             r = pjoin(UInt32(3), UInt32(7))
             @test r isa AlgResIdentity && r.mask == COUNTER_IDENT
 
-            # pmeet(Nothing, Nothing) → Identity(both)
-            r = pmeet(nothing, nothing)
-            @test r isa AlgResIdentity && r.mask == (SELF_IDENT | COUNTER_IDENT)
+            # ⚠️ pjoin/pmeet(nothing, nothing) above do NOT reach the Option blanket. `nothing`
+            # is ALSO how the Set/Dict ports spell Rust's unit value `()` (`Set{K}` is carried as
+            # `Dict{K,Nothing}`), and `(::Nothing, ::Nothing)` is the more specific method — the
+            # `impl Lattice for ()` port, ring.rs:849, which is why Identity(both) is right there.
+            # Upstream's `Option::pjoin(None, None)` would be `None`; our one `nothing` cannot be
+            # both, and the unit reading wins because it is the one with live consumers (the Set
+            # lattice below). Changing those two to AlgResNone() turns set union into symmetric
+            # difference — measured 2026-08-23, `Set([a,b,c]) ∨ Set([b,c,d])` gave `Set([a,d])`.
 
-            # pmeet(Nothing, Some) → Element(nothing) (empty result)
+            # pmeet(Nothing, Some) → None.
+            # 🔴 THIS USED TO ASSERT `AlgResElement && r.value === nothing`, i.e. our own defect:
+            # upstream's `Option::pmeet` (ring.rs:718) short-circuits `None => AlgebraicResult::None`
+            # WITHOUT inspecting `other`, and `AlgebraicResult::map` preserves None as None. The
+            # variant is not cosmetic — `result_into_map` (trie_map.rs:684) turns None into an EMPTY
+            # map and Identity/Element into a copy, so the two answers differ at map level.
             r = pmeet(nothing, UInt32(5))
-            @test r isa AlgResElement && r.value === nothing
+            @test r isa AlgResNone
         end
 
         @testset "Dict lattice (ports ring.rs HashMap SetLattice)" begin
