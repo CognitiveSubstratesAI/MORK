@@ -78,6 +78,34 @@ function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     nfac = length(factors)
     Leapfrog.unify_leapfrog(
         btm, factors, nvars, function (bindings, st)
+            # \U0001f534 PORTS `unsafe { crate::space::unifications += 1 }` (leapfrog.rs:1352) — upstream
+            # bumps it HERE, inside `on_match`, once per match and BEFORE `effect`. We had never
+            # ported it, and the omission is what made this lane look free.
+            #
+            # MEASURED 2026-08-23, counter_machine_5.mm2 — and it explains a result that read as a
+            # mystery all day:
+            #     upstream binary : unifications 403, transitions 0
+            #     ours, stock     : unifications 402, transitions 920,549
+            #     ours, leapfrog  : unifications   0, transitions       0   ← BOTH zero, and wrong
+            # `transitions` is only ever bumped inside `_coreferential_transition!`, which the join
+            # does not enter — so 0 there is CORRECT on both sides. But upstream's 403 unifications
+            # against our 0 was pure instrument gap, not a behavioural difference. Two engines that
+            # agree on every answer looked incomparable because one of them was not counting.
+            # ⇒ upstream's `unifications 403 / transitions 0` is the signature of ITS OWN LEAPFROG
+            #   LANE, not of some unexplained third path.
+            #
+            # ⚠️ The `isempty(factors)` arm above must NOT bump this, and does not. Upstream states
+            # the reason at leapfrog.rs:1336 — `(,)` mirrors `query_multi`'s `n_factors == 1` arm
+            # "byte for byte, including that it does NOT bump the `unifications` counter, so the
+            # printed statistics stay identical". Bumping there would make the join disagree with
+            # the stock path on a body that does no matching at all.
+            #
+            # Julia note: `ENGINE_COUNTERS` is a `const` mutable struct with concrete `Int` fields,
+            # so this is a type-stable field store — the idiomatic stand-in for upstream's
+            # `static mut`, without `unsafe` and without the boxed global a `Ref` would introduce.
+            # Deliberately unsynchronised, exactly as upstream is: a lock in the innermost match
+            # loop would change the thing being measured.
+            ENGINE_COUNTERS.unifications += 1
             loc = Leapfrog.fact_bytes(st, 1)
             for f in 2:nfac
                 append!(loc, Leapfrog.fact_bytes(st, f))

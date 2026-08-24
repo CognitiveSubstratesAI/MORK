@@ -53,6 +53,50 @@ const SPACE_ARITIES = _build_space_mask(t -> t isa ExprArity)
 const SPACE_VARS = _build_space_mask(t -> t isa ExprNewVar || t isa ExprVarRef)
 
 # =====================================================================
+# Engine counters — ports upstream's `static mut transitions/unifications/writes`
+# =====================================================================
+#
+# 🔴 UPSTREAM COUNTS THE WORK IT DOES AND WE DID NOT PORT THAT. space.rs:31-33 declares three
+# `static mut` counters, bumped at space.rs:145 (`transitions`, once per coreferential_transition
+# entry), :1277/:1349 (`unifications`, once per candidate about to be unified) and
+# :1525/:1627/:1737/:1850 (`writes`). `mork run --timing` PRINTS all three:
+#     executing N steps took M ms (unifications U, writes W, transitions T)
+#
+# WHY THIS BEATS A STOPWATCH. Wall time on this box spreads ~40% run to run — MEASURED 2026-08-23,
+# three identical runs of counter_machine_5 gave 2241/2477/3149 ms, so even a 24% change is
+# invisible. These counters are DETERMINISTIC. If ours and upstream's differ on the same program
+# that is an ALGORITHMIC divergence — a pruning step we skip, or work we repeat — and it shows up
+# exactly, with no repetition and no noise.
+#
+# ⚠️ AND THE COMPARISON HAS NEVER BEEN RUN. The note above `_USE_COREF_JOIN` records the coref join
+# as "≡ upstream byte-for-byte on every workload measured" — but that was validated on OUTPUT ATOMS,
+# because these counters did not exist on our side. Same-answer says nothing about same-work: our
+# step counts are byte-exact on 8/8 mm2 programs while we run 8-90x slower, so equal output is
+# precisely the condition under which a work divergence hides.
+#
+# Deliberately UNSYNCHRONISED, matching upstream's `static mut` — this is a diagnostic, and a lock
+# in the innermost DFS would change the thing being measured.
+mutable struct EngineCounters
+    transitions::Int
+    unifications::Int
+    writes::Int
+end
+const ENGINE_COUNTERS = EngineCounters(0, 0, 0)
+
+"Zero the engine counters. Call immediately before the region you want to attribute."
+function reset_engine_counters!()
+    ENGINE_COUNTERS.transitions = 0
+    ENGINE_COUNTERS.unifications = 0
+    ENGINE_COUNTERS.writes = 0
+    nothing
+end
+
+"Snapshot the engine counters, in upstream's `--timing` reporting order."
+engine_counters() = (unifications = ENGINE_COUNTERS.unifications,
+                     writes = ENGINE_COUNTERS.writes,
+                     transitions = ENGINE_COUNTERS.transitions)
+
+# =====================================================================
 # Fix 3: task-local ReadZipperCore pool — eliminates per-query heap alloc
 # =====================================================================
 #
@@ -813,6 +857,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         # swallowed EVERY exception as a benign no-match. `_expr_unify_inplace!` returns
         # its failure as a VALUE (≠ true) on genuine non-unification and only THROWS on a
         # real bug (malformed expr / BoundsError) — so the catch could only hide bugs.
+        ENGINE_COUNTERS.unifications += 1   # space.rs:1277/:1349 — per ATTEMPT, not per success
         result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
         if result !== true
             empty!(bindings_scratch)
@@ -984,8 +1029,15 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     # Rule of 64: warn if pattern exceeds practical source limit.
     # ProductZipper with N>2 factors iterates N^M paths (M=trie depth) and
     # becomes intractable beyond 2 secondary factors in practice.
+    # ⚠️ `maxlog=1` — THIS FIRES INSIDE THE TIMED REGION AND IT IS NOT RATE-LIMITED BY DEFAULT.
+    # MEASURED 2026-08-23: one 8-program benchmark emitted 367 copies of this line (343 at 6 sources),
+    # which is both a real cost on the hot path and enough output to bury the benchmark's own table —
+    # the run it came from had to be re-read with grep to recover its results. The boundary is a
+    # property of the CALL SITE, not of the individual call, so saying it once says everything the
+    # 367th copy said. Upstream has no such warning at all; keeping it is our addition, so keeping it
+    # cheap is our responsibility.
     n_factors > 4 &&
-        @warn "query_multi: $(n_factors) sources (>4) may be slow — Rule of 64 boundary"
+        @warn "query_multi: $(n_factors) sources (>4) may be slow — Rule of 64 boundary" maxlog=1
 
     pat_args = ExprEnv[]
     ee0 = ExprEnv(UInt8(0), pat_v, UInt32(0), pat_expr)
@@ -1119,6 +1171,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
             empty!(bindings_scratch)
             return true
         end
+        ENGINE_COUNTERS.unifications += 1   # space.rs:1277/:1349 — per ATTEMPT, not per success
         result = _expr_unify_inplace!(pairs_scratch, bindings_scratch)
         if result === true
             candidate += 1
@@ -1327,16 +1380,32 @@ end
 
 # Filtered child lists using precomputed bitmasks — avoids calling byte_item on
 # content bytes (0x40-0x7F are reserved and throw; e.g. 'e' = 0x65 from "edge").
-# SPACE_VARS/SIZES/ARITIES are NTuple{4,UInt64}: bucket = (b>>6)+1, bit = b&0x3F.
-@inline _in_mask(mask::NTuple{4, UInt64}, b::UInt8) =
-    ((mask[Int(b >> 6) + 1] >> Int(b & 0x3F)) & UInt64(1)) != UInt64(0)
+# 🔴 UPSTREAM ANDs THE MASK ONCE — WE FILTERED BYTE BY BYTE. Each of the three class walks in
+# `coreferential_transition` (space.rs:116 VARS, :163 SIZES, :177 ARITIES) opens with
+#     let m = loc.child_mask().and(&ByteMask(VARS));
+# a single 4×u64 AND whose RESULT is iterated, so the walk descends into ONLY the matching
+# children. Ours iterated EVERY child byte and tested each one with a predicate over an NTuple
+# indexed at a RUNTIME index — which Julia cannot keep in registers, so each test spilled the
+# tuple to memory, and `Iterators.filter` then nested ByteMask's own `Tuple{Int,UInt64}`
+# iteration state (Utils.jl:628) one layer deeper on top of that.
+#
+# MEASURED (counter_machine_5.mm2, profile 2026-08-23): the two tuple frames — `indexed_iterate`
+# and tuple `getindex` — were the largest REAL leaf costs in the entire run, 880 samples
+# combined, ahead of every zipper and trie frame. That program ran 93× slower than upstream at
+# byte-exact step parity, so the gap was never the algorithm; it was this inner loop.
+#
+# ⚠️ THE SWAP IS SEMANTICS-PRESERVING BY CONSTRUCTION, NOT BY TEST. `Bits4 === NTuple{4,UInt64}`
+# (Utils.jl:109) and PathMaps' `test_bit` (Utils.jl:121) uses the IDENTICAL word/bit convention
+# `((k & 0xC0) >> 6) + 1` / `k & 0x3F` that `_in_mask` used — for a UInt8, `b >> 6` and
+# `(b & 0xC0) >> 6` are the same expression. So `ByteMask(SPACE_VARS)` is the same 256 bits, and
+# iteration yields the same bytes in the same ascending order, merely skipping the non-matches.
+const SPACE_VARS_MASK = ByteMask(SPACE_VARS)
+const SPACE_SIZES_MASK = ByteMask(SPACE_SIZES)
+const SPACE_ARITIES_MASK = ByteMask(SPACE_ARITIES)
 
-@inline _var_children(loc) =
-    Iterators.filter(b -> _in_mask(SPACE_VARS, b), _coref_child_mask(loc))
-@inline _size_children(loc) =
-    Iterators.filter(b -> _in_mask(SPACE_SIZES, b), _coref_child_mask(loc))
-@inline _arity_children(loc) =
-    Iterators.filter(b -> _in_mask(SPACE_ARITIES, b), _coref_child_mask(loc))
+@inline _var_children(loc) = _coref_child_mask(loc) & SPACE_VARS_MASK
+@inline _size_children(loc) = _coref_child_mask(loc) & SPACE_SIZES_MASK
+@inline _arity_children(loc) = _coref_child_mask(loc) & SPACE_ARITIES_MASK
 
 """
     _coreferential_transition!(loc, stack, references, f)
@@ -1349,6 +1418,9 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
     stack::Vector{ExprEnv},
     references::Vector{Int},
     f::Function)
+    # space.rs:145 — bumped BEFORE the stack pop, so the empty-stack leaf call counts too.
+    # Get this placement wrong and our number is not comparable to upstream's.
+    ENGINE_COUNTERS.transitions += 1
     if isempty(stack)
         f(loc)
         return nothing
@@ -1426,7 +1498,30 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
             # space.rs:176). Bake the offset into ExprEnv.offset; alias the whole Array object. Reads
             # `base.buf[offset+1] = prefix_buf[origin+ref_off+1]` — the same first value byte the copy
             # `path[ref_off+1]` exposed; consumers walk by self-describing tag structure (not buffer
-            # length), so the longer live trailing region is inert. Byte-identical to the old copy.
+            # length), so the longer live trailing region is inert.
+            #
+            # \U0001f534 "BYTE-IDENTICAL TO THE OLD COPY" IS TRUE ONLY AT CONSTRUCTION. The old value was a
+            # SELF-CONTAINED copy; this is a LIVE VIEW of a buffer the zipper keeps mutating, so it
+            # carries a lifetime invariant the copy did not, and that invariant is stated nowhere else:
+            #
+            #   THE ALIAS MUST NOT SURVIVE AN ASCEND ABOVE ITS OWN OFFSET.
+            #
+            # It holds STRUCTURALLY here, which is why this is safe rather than lucky: the ExprEnv is
+            # `push!`ed onto `stack`, every `_coref_descend_byte!` below is paired with a matching
+            # `_coref_ascend_byte!` at the same level, and the `pop!(stack)` happens at the SAME DEPTH
+            # as the push. Descend only APPENDS (bytes at/below `porigin + ref_off` never move), so the
+            # view stays valid for exactly as long as the entry is on the stack.
+            #
+            # ⚠️ Note the Julia/Rust difference. Upstream's `space.rs:176` alias is a RAW POINTER made
+            # safe by the borrow checker — a reallocation there would dangle. Ours holds the `Vector`
+            # OBJECT, so a `resize!` reallocation is harmless (reads follow the Vector). The residual
+            # hazard is not use-after-free, it is TRUNCATION: an ascend past this offset leaves the
+            # recorded index beyond the buffer's end. Rust cannot express our failure and we cannot
+            # inherit its guarantee, so this comment is the enforcement.
+            #
+            # ⚠️ AND IT BREAKS IF A CONSUMER RETAINS THE ExprEnv past the callback. `process_combined`
+            # already copies `bindings_scratch` because "effect may retain it" — the same caution has
+            # never been applied to these aliased ExprEnvs. A retaining consumer must COPY.
             pbuf, porigin = _coref_path_buf(loc)
             ExprEnv(UInt8(254), UInt8(0), UInt32(porigin + ref_off), MORK.Expr(pbuf))
         else
@@ -3050,6 +3145,7 @@ export _grounded_call_no_args,
     _grounded_call_with_bindings, _grounded_decode_args, _grounded_encode_results
 export space_sexpr_to_expr, space_metta_calculus_at!, space_acquire_transform_permissions
 export space_metta_calculus_in_prefix!, space_query_multi_at
+export ENGINE_COUNTERS, reset_engine_counters!, engine_counters
 
 # Precompile hot-path method specializations so JIT fires at package load,
 # not on first user call. Mirrors upstream's statically-compiled hot paths.
