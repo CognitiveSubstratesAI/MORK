@@ -1186,7 +1186,39 @@ cost.
 every enclosing column is left descended. Upstream relies on straight-line control flow; Julia has
 exceptions, so this is a `try/finally`.
 """
-function with_bound_bytes!(c::SubtermCursor, bytes::AbstractVector{UInt8}, cont::Function)
+# \U0001f534 `cont::F where {F}`, NOT `cont::Function`. Annotating a parameter `::Function` is one of the
+# documented cases where Julia DELIBERATELY DOES NOT SPECIALIZE — it compiles ONE method for all
+# callers, so every call through `cont` is a dynamic dispatch and the closure can neither be inlined
+# nor elided. A bare or type-parameterised argument specializes per call site.
+#
+# THIS IS NOT A PORT INFIDELITY — upstream `leapfrog.rs` uses the same continuation-passing shape.
+# Rust monomorphises each closure at its call site with zero indirection, and a non-escaping closure
+# is stack data. Julia will do the equivalent, but only if asked; `::Function` is where we did not ask.
+#
+# \U0001f534 BUT THIS CHANGE DID NOT REDUCE THE COST, AND THAT IS THE POINT OF THIS PARAGRAPH.
+# MEASURED by differential profile against the stock lane on the same query (so the shared
+# answer-construction cost cancels and only the per-unit difference survives):
+#
+#     cont::Function   stock 160,075  leapfrog 1,345,670   ratio 8.4x
+#     cont::F          stock 207,597  leapfrog 1,907,224   ratio 9.19x
+#
+# Absolute counts are not comparable across runs (sampling duration differs); the RATIO is, and it
+# did not collapse. ⇒ THE PER-UNIT COST IS NOT DISPATCH. Specialization makes the CALL direct; it
+# does not stop the closure being CONSTRUCTED. `uj_consume_sym` still yields THREE profile entries at
+# one line (`uj_consume_sym` + `##0` + `##2`, ~109k samples each) because
+#     with_bound_bytes!(c, bytes, () -> uj_at_step(st, f, s+1, () -> cont(bindings)))
+# builds TWO NESTED CLOSURES PER STEP, each capturing five variables. That allocation is the cost.
+#
+# The annotation is kept because `::F where {F}` is the correct Julia idiom and costs nothing — NOT
+# because it was measured to help. It was measured NOT to.
+# ⇒ The real fix is structural: turn this CPS into an explicit state machine so no closure is built
+#   per step. That is a large change and is NOT attempted here.
+#
+# ⚠️ Upstream pays none of this: `leapfrog.rs` uses the same CPS shape, but Rust monomorphises each
+# closure at its call site and a non-escaping closure is STACK data. Same algorithm, and the
+# abstraction is free there and is not here. This is a LANGUAGE-COST divergence, not a port defect —
+# which is why matching upstream's structure line for line reproduces its answers and not its speed.
+function with_bound_bytes!(c::SubtermCursor, bytes::AbstractVector{UInt8}, cont::F) where {F}
     cursor_descend_raw!(c, bytes)
     try
         cont()
@@ -1212,9 +1244,9 @@ ground term none — and it advances the factor's namespace so a later candidate
 cannot collide with variables this one introduced.
 """
 function match_candidate!(c::SubtermCursor, bindings::Bindings, f::Int, intro::UInt8,
-    pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::Function;
+    pattern::ExprEnv, bytes::AbstractVector{UInt8}, cont::F;   # `::F`, not `::Function` — see with_bound_bytes!
     trail::Vector{ExprVar}=ExprVar[],
-    stack::Vector{Tuple{ExprEnv, ExprEnv}}=Tuple{ExprEnv, ExprEnv}[])
+    stack::Vector{Tuple{ExprEnv, ExprEnv}}=Tuple{ExprEnv, ExprEnv}[]) where {F}
     data = data_env_for(f, intro, bytes)
     # 🔑 THE UNDO TRAIL (upstream `cfa8abf`). Solve the ONE new equation against the LIVE map and
     # unwind by removal, instead of cloning the map and re-solving every prior equation per
