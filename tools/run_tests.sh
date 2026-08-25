@@ -57,7 +57,41 @@ case "$TARGET" in /*) ABS_TARGET="$TARGET" ;; *) ABS_TARGET="$ROOT/$TARGET" ;; e
 # swallowed by `-i` (the very bug this file exists to close), and BOTH a passing and a failing target
 # exited 0. Under `-i` nothing outside an explicit try/exit can be trusted to fail the build.
 DRIVER="$(mktemp "${TMPDIR:-/tmp}/mork_run_tests_XXXXXX.jl")"
-trap 'rm -f "$DRIVER"' EXIT
+
+# ─── MACHINE-READABLE VERDICT — because a WRAPPER'S EXIT CODE IS NOT AN OBSERVATION ────────────
+#
+# 🔴 MEASURED 2026-08-25: a suite killed by SIGTERM mid-run was reported by its harness wrapper as
+# "completed (exit code 0)" while the log's own last line read `EXIT=143`. Trusting the wrapper
+# would have landed a commit on a run that never finished. This is the same class as a green suite
+# that ran against a stale tree, or a grep over a still-buffered log finding no failures: AN
+# INSTRUMENT REPORTING SUCCESS IT DID NOT OBSERVE.
+#
+# So the suite now records its OWN verdict, and `tools/suite_result.sh` is the only thing that
+# answers "did it pass?". A run that dies on a signal writes KILLED rather than leaving the last
+# PASS standing, and the checker independently reports STALE when any source file is newer than
+# the verdict — the exact error that nearly shipped today, a suite run against the pre-edit file.
+RESULT_FILE="$SCRIPT_DIR/.last_suite_result"
+_write_result() {
+  { echo "VERDICT=$2"
+    echo "RC=$1"
+    echo "LANE=${MORK_LEAPFROG_DISPATCH:-0}"
+    echo "WHEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$RESULT_FILE" 2>/dev/null || true
+}
+_write_result - RUNNING
+_on_exit() {
+  rc=$?
+  rm -f "$DRIVER" "$DRIVER.smoke"
+  if [ "${_SUITE_SIGNALLED:-0}" = "1" ]; then _write_result "$rc" KILLED
+  elif [ "$rc" -eq 0 ]; then                  _write_result 0 PASS
+  else                                        _write_result "$rc" FAIL
+  fi
+}
+# Trap the signals explicitly: the shell would otherwise die WITHOUT running the EXIT trap, leaving
+# the previous run's PASS in place — a stale green, which is worse than no verdict at all.
+trap '_SUITE_SIGNALLED=1; exit 143' TERM
+trap '_SUITE_SIGNALLED=1; exit 130' INT
+trap _on_exit EXIT
 cat > "$DRIVER" <<EOF
 ok = try
     include(raw"$ROOT/tools/repl.jl")
@@ -100,6 +134,45 @@ if ! python3 "$SCRIPT_DIR/lint_docstring_interp.py" "$SCRIPT_DIR/../src"; then
   echo "run_tests.sh: docstring interpolation lint FAILED — fix before running the suite." >&2
   exit 1
 fi
+# ─── COLD-LOAD SMOKE CHECK — fails in ~seconds on a DEFINITION error, before the suite ─────────
+#
+# 🔴 MEASURED 2026-08-25: SIX definition-level errors in one session, every one invisible to the
+# warm :7702 server and every one found only by a cold load — docstring interpolation (x2, one
+# caught by the lint above), a function defined ABOVE the struct its signature names, an unqualified
+# cross-module call, two adjacent docstrings (the first documents the second and Julia refuses), and
+# a predicate bug. `isdefined(...)` returned TRUE for the first of those while a fresh process could
+# not compile the file AT ALL: Revise had evaluated the function into a module where the type
+# already existed. A warm module can only tell you about FUNCTION BODIES — ordering, docstring
+# parsing and cross-module resolution are all settled during `include`, which never re-runs.
+#
+# The rule "cold-load before the full suite" was stated and then not followed at hour fourteen, so
+# it lives here instead of in someone's memory. Costs one short process; saves a 7-minute round trip
+# per definition error. Skip with MORK_SKIP_SMOKE=1 when iterating on test files only.
+if [ "${MORK_SKIP_SMOKE:-0}" != "1" ]; then
+  if ! julia --project=. -e 'using MORK' >/dev/null 2>"$DRIVER.smoke"; then
+    echo "run_tests.sh: COLD LOAD FAILED — a definition error, not a test failure." >&2
+    echo "  (the warm server cannot see this class: ordering, docstrings, cross-module names)" >&2
+    # 🔴 SURFACE THE ROOT CAUSE FIRST. The unify path runs inside SPAWNED QUERY TASKS, including in
+    # the PrecompileTools workload, so a definition error there arrives as a bare
+    # `TaskFailedException` whose actual cause sits below a long stacktrace — off the end of any
+    # fixed head/tail window. MEASURED 2026-08-25: `length(encountered)` referenced in a `finally`
+    # (a `try` introduces a scope in Julia, so it was not visible) produced 27 lines of frames and
+    # no cause. Grep for the cause lines before printing the head.
+    if grep -qE "UndefVarError|MethodError|BoundsError|TypeError|syntax:|cannot document" "$DRIVER.smoke"; then
+        echo "  ── root cause ──" >&2
+        grep -nE "UndefVarError|MethodError|BoundsError|TypeError|syntax:|cannot document" "$DRIVER.smoke" | head -5 >&2
+    elif grep -q "TaskFailedException" "$DRIVER.smoke"; then
+        echo "  ── TaskFailedException: the cause was swallowed by a spawned task ──" >&2
+        echo "  Julia did not print the nested exception. Re-run the failing code OUTSIDE a task," >&2
+        echo "  or set JULIA_NUM_THREADS=1 so the query path runs inline and the error surfaces." >&2
+    fi
+    sed -n '1,25p' "$DRIVER.smoke" >&2
+    rm -f "$DRIVER.smoke"
+    exit 1
+  fi
+  rm -f "$DRIVER.smoke"
+fi
+
 MEM_MAX="${MORK_TEST_MEM_MAX:-8G}"
 HEAP_HINT="${MORK_TEST_HEAP_HINT:-6G}"
 JL=(julia --project=. --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="$HEAP_HINT"

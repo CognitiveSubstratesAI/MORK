@@ -71,3 +71,6 @@ server.pid
 docs/build/
 docs/Manifest.toml
 examples/bfc/.rust_run/
+
+# local suite verdict written by tools/run_tests.sh; see tools/suite_result.sh
+tools/.last_suite_result

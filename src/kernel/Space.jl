@@ -88,13 +88,17 @@ function reset_engine_counters!()
     ENGINE_COUNTERS.transitions = 0
     ENGINE_COUNTERS.unifications = 0
     ENGINE_COUNTERS.writes = 0
+    # Upstream's is process-lifetime; ours resets with the rest so a harness comparing arms in ONE
+    # warm process cannot leak the first arm's high-water mark into every later arm.
+    MAX_UNIFY_ITER_HIGH_WATER[] = 0
     nothing
 end
 
 "Snapshot the engine counters, in upstream's `--timing` reporting order."
 engine_counters() = (unifications = ENGINE_COUNTERS.unifications,
                      writes = ENGINE_COUNTERS.writes,
-                     transitions = ENGINE_COUNTERS.transitions)
+                     transitions = ENGINE_COUNTERS.transitions,
+                     max_unify = MAX_UNIFY_ITER_HIGH_WATER[])
 
 # =====================================================================
 # Fix 3: task-local ReadZipperCore pool — eliminates per-query heap alloc
@@ -2000,7 +2004,7 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
         # [[feedback_perf_diagnosis_typeinstability_first]]
         (btm, pat, v, f) -> begin
             if LEAPFROG_DISPATCH[] && isempty(prefix) && v == UInt8(0)
-                r = space_query_multi_leapfrog(btm, pat, f; route_by_shape=true)
+                r = space_query_multi_leapfrog(btm, pat, f)
                 if r !== nothing
                     LEAPFROG_ROUTED[] += 1
                     return r::Int
@@ -2012,22 +2016,14 @@ function space_transform_multi_multi!(s::Space, pat_expr::MORK.Expr, pat_v::UInt
                 # "load-bearing" until the BODIES were captured and turned out to be four
                 # copies of `(,)` — a case skipped on purpose, now handled. If this warns,
                 # the producer emitted something neither engine expects: read the body.
-                # 🔴 TWO KINDS OF DECLINE, and only one of them is a bug. A `:disconnected`
-                # body parses fine and the join would answer it CORRECTLY — it is routed here
-                # because the stock engine is measurably FASTER on it (0 of 4 cross-product cases
-                # win, 0.46-0.54x; see `factors_connected`). That is an expected routing decision:
-                # counted, never warned. Warning on it would both spam and destroy the
-                # "decline rate is ZERO" signal that made the `(,)` bug findable.
-                if LEAPFROG_LAST_DECLINE[] !== :disconnected
-                    LEAPFROG_DECLINED[] += 1
-                    # ⚠️ this push was DUPLICATED either side of the @warn until 2026-08-25, so
-                    # every declined body was recorded twice and the 16-body cap filled at 8.
-                    length(LEAPFROG_DECLINED_BODIES) < 16 &&
-                        push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
-                    @warn "leapfrog dispatch DECLINED a body — falling back to the ProductZipper. " *
-                        "Measured decline rate over the conformance corpus is ZERO, so this is " *
-                        "a shape neither engine was written for." maxlog=4
-                end
+                LEAPFROG_DECLINED[] += 1
+                # ⚠️ this push was DUPLICATED either side of the @warn until 2026-08-25, so every
+                # declined body was recorded twice and the 16-body cap filled at 8.
+                length(LEAPFROG_DECLINED_BODIES) < 16 &&
+                    push!(LEAPFROG_DECLINED_BODIES, copy(pat.buf))
+                @warn "leapfrog dispatch DECLINED a body — falling back to the ProductZipper. " *
+                    "Measured decline rate over the conformance corpus is ZERO, so this is " *
+                    "a shape neither engine was written for." maxlog=4
             end
             space_query_multi_at(btm, prefix, pat, v, f)
         end

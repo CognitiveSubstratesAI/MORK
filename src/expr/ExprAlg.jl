@@ -462,6 +462,106 @@ UnificationFailure(::Val{:max_iter}, n::Int) =
 const MAX_UNIFY_ITER = 1000
 
 """
+    MAX_UNIFY_ITER_HIGH_WATER
+
+Largest iteration count reached by any single `_expr_unify_core!` call since reset — the port of
+upstream `max_unify_iterations` (`expr/src/lib.rs:2114`), printed as `max unify`.
+
+🔴 A **MAX**, WHICH IS THE POINT. `transitions` and `unifications` are SUMS, so any disagreement
+with upstream can be explained away by increment-site granularity. A high-water mark cannot: it is
+a shape statistic of a single unification. MEASURED 2026-08-25 on ip_sudoku, same program, same
+1,465 unifications: our stock 23,017 vs upstream pz 17,742 (+30%), our join 11,742 vs upstream lf
+17,742 (-34%). Opposite directions, so no uniform multiplier explains it. This is the discriminator.
+
+🔴🔴 UPSTREAM ADDED THIS COUNTER TO **REPLACE** `MAX_UNIFY_ITER`, WHICH IT DELETED AS A CORRECTNESS
+BUG (`lib.rs:2346-2351`): the abort *"silently dropped genuine matches ... a pattern whose total
+structure exceeded it lost real answers size-dependently and without any diagnostic. Termination
+never rested on it -- the occurs check and the `encountered` set bound the search -- so the budget
+only hid how far unification had to go."* **We still enforce that abort below.** Whether it has ever
+fired here is what this counter measures; note a max under the cap proves it is inert ON THIS
+CORPUS, not that it is harmless, since the failure is size-dependent by construction.
+
+⚠️ FOLDED IN A `finally`, NOT AT THE END OF THE FUNCTION. `_expr_unify_core!` has EIGHT exits — the
+cap, four `:difference`, two `:occurs`, success — and the deep ones are the failure paths that drive
+the mark. Upstream uses a `Drop` guard for exactly this reason. Folding on success alone would
+report a low max and manufacture an "algorithms agree" verdict.
+⚠️ PROCESS-LIFETIME, like upstream. Reset between arms or the first arm leaks into every later one.
+"""
+const MAX_UNIFY_ITER_HIGH_WATER = Ref(0)
+
+"""
+    HIGH_WATER_ENCOUNTERED / HIGH_WATER_DEDUP_HITS
+
+Diagnostic captured AT the high-water unification: how many distinct pairs its `encountered` set
+held, and how many push attempts the set actually suppressed.
+
+🔴 WHAT THIS DISCRIMINATES. Our stock arm reports `max_unify` 319 where upstream reports 18 on the
+same program (counter_machine_5), and the increment sites were checked to match — both count pairs
+popped from the unification stack — so the divergence is real traversal, not units. The leading
+suspect is dedup: our key is `objectid(base.buf)` per side, upstream's is `base.ptr`. Those agree
+only if we SHARE buffers exactly where upstream shares pointers; if we copy where it borrows,
+structurally identical pairs get distinct keys, dedup never fires, and the pair is re-pushed.
+⇒ dedup_hits LARGE relative to encountered  ⇒ the set is working, look elsewhere.
+⇒ dedup_hits NEAR ZERO                      ⇒ the key is too discriminating in practice.
+Note upstream's Hash omits `base.ptr` while its PartialEq includes it — a coarse hash over the same
+semantic key, which is NOT the same thing as a coarser key, and is not the defect.
+"""
+const HIGH_WATER_ENCOUNTERED = Ref(0)
+const HIGH_WATER_DEDUP_HITS = Ref(0)
+
+"""
+    UNIFY_DEDUP_DIAGNOSTIC
+
+Gate for the `HIGH_WATER_KEYS_NO_BASE` instrument. **Default `false`, and it must stay that way.**
+
+The instrument costs a SECOND `Set` insert per child pair in the innermost loop of
+`_expr_unify_core!` — the hottest loop in the port. That is acceptable while ANSWERING a question
+and not acceptable as a resident cost, so it is behind this branch rather than deleted: the
+counter_machine_5 question it was built for is closed (see below), but the ip_sudoku divergence
+(ours 23,017 vs upstream 17,742) is open and this is the instrument that discriminates it.
+
+Turn on, run the ONE program, read `engine_counters()`, turn off.
+"""
+const UNIFY_DEDUP_DIAGNOSTIC = Ref(false)
+
+"""
+    HIGH_WATER_KEYS_NO_BASE
+
+Distinct dedup keys at the high-water call with the two `base_id` fields REMOVED.
+
+🔴 THE DISCRIMINATOR ZERO-HITS ALONE CANNOT GIVE. MEASURED 2026-08-25 on counter_machine_5 stock:
+319 iterations, 312 keyed attempts, **0** dedup hits. That is equally consistent with two opposite
+readings — the key being too discriminating (structurally identical pairs split by `base_id`, so
+they never match) and there simply being 312 genuinely distinct pairs (nothing to dedup).
+Counting the same keys WITHOUT `base_id` separates them:
+    ≈ 312  ⇒ the pairs really are distinct; base identity is not the problem.
+    ≪ 312  ⇒ `objectid(base.buf)` is splitting structurally identical pairs, and we re-push work
+             upstream skips — one mechanism for max_unify 319 vs 18 and transitions +30%.
+⚠️ NOT a proposal to drop `base` from the key: upstream's `PartialEq` includes `base.ptr`, so base
+IS part of the semantic key. This measures how much OUR base identity differs from upstream's, which
+is a question about `objectid` vs pointer aliasing, not about the key's definition.
+
+**MEASURED 2026-08-25, counter_machine_5 stock: 312 keys WITHOUT base_id vs 312 WITH — 1.00x, no
+splitting at all.** So the first reading is the true one: the 312 pairs are genuinely distinct and
+`objectid(base.buf)` is NOT over-discriminating. **The dedup hypothesis for max_unify 319-vs-18 is
+DEAD**, and this instrument is now gated off (see `UNIFY_DEDUP_DIAGNOSTIC`) rather than deleted,
+because ip_sudoku is still open.
+
+🔴 WHAT THE SURVIVING HYPOTHESIS IS. With dedup ruled out, the remaining difference at this site is
+that upstream SHORT-CIRCUITS ground-vs-ground pairs on the `ground_skip` byte-length stamp
+(`lib.rs`: both stamped -> equal iff same length and same bytes, `continue 'popping`) while we fall
+through to `# Both ground -- must match structurally` and decompose into child pairs. Our
+`ground_skip` field is declared, documented and propagated, and has **ZERO consumers** — the fast
+path was never ported. That is the same field, and the same failure shape, as the recorded August
+`args()` miss: the field came across, the function that reads it did not.
+
+**FALSIFIABLE PREDICTION (recorded before the work):** restoring that fast path should move the
+stock arm's `max_unify` on counter_machine_5 from **319 to at or near 18**. Landing near 60 means a
+second consumer is also missing; not moving at all means this mechanism is wrong too.
+"""
+const HIGH_WATER_KEYS_NO_BASE = Ref(0)
+
+"""
     OCCURS_CALLS
 
 Number of `_occurs_check` entries since the last reset. A DETERMINISTIC, MACHINE-INDEPENDENT
@@ -581,10 +681,19 @@ end
 function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
     bindings::Bindings, trail::Vector{ExprVar})::Union{Bindings, UnificationFailure}
     iters = 0
+    dedup_hits = 0
     # encountered: deduplicates structural child pairs to break cyclic chains.
     # Mirrors the `encountered` HashSet<(ExprEnv,ExprEnv)> in the Rust `unify`.
     # Key = (base_id1, offset1, n1, v1, base_id2, offset2, n2, v2)
     encountered = Set{NTuple{8, UInt64}}()
+    # same keys with both base_id fields dropped — see HIGH_WATER_KEYS_NO_BASE
+    encountered_nobase = Set{NTuple{6, UInt64}}()
+    # `try`/`finally` is the Julia stand-in for upstream's `Drop` guard — it folds the high-water
+    # mark on EVERY exit, including the seven early returns below.
+    # ⚠️ `try` INTRODUCES A SCOPE in Julia, so anything the `finally` reads must be declared ABOVE
+    # it. Declaring `encountered` inside cost one failed run: `length(encountered)` in the finally
+    # raised inside a spawned query task and surfaced only as a TaskFailedException.
+    try
 
     # deref: follow chain of bindings
     function _deref(t::ExprEnv)::ExprEnv
@@ -710,9 +819,15 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
                             UInt64(c1.n), UInt64(c1.v),
                             UInt64(objectid(c2.base.buf)), UInt64(c2.offset),
                             UInt64(c2.n), UInt64(c2.v))
+                        if UNIFY_DEDUP_DIAGNOSTIC[]
+                            push!(encountered_nobase,
+                                (key[2], key[3], key[4], key[6], key[7], key[8]))
+                        end
                         if key ∉ encountered
                             push!(encountered, key)
                             push!(stack, (c1, c2))
+                        else
+                            dedup_hits += 1
                         end
                     end
                 end
@@ -732,6 +847,14 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
     end
 
     bindings   # success: return the filled Dict
+    finally
+        if iters > MAX_UNIFY_ITER_HIGH_WATER[]
+            MAX_UNIFY_ITER_HIGH_WATER[] = iters
+            HIGH_WATER_ENCOUNTERED[] = length(encountered)
+            HIGH_WATER_DEDUP_HITS[] = dedup_hits
+            HIGH_WATER_KEYS_NO_BASE[] = length(encountered_nobase)
+        end
+    end
 end
 
 # =====================================================================
