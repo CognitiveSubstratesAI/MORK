@@ -77,11 +77,19 @@ RESULT_FILE="$SCRIPT_DIR/.last_suite_result"
 # checker then reported "PASS, tree unchanged" while the suite's log was 0 BYTES. A commit was one
 # step from landing on a green that described two lines of scratch code — the exact wrapper-exit-0
 # failure this file exists to prevent, inside the instrument built to prevent it.
+# 🔴 STARTED_AT IS STAMPED ONCE, AT LAUNCH, AND IS WHAT STALENESS MUST BE MEASURED AGAINST.
+# MEASURED 2026-08-25: the checker compared source mtimes against WHEN — stamped at the END of the
+# run — so a file edited DURING a run is OLDER than its own verdict and reads as "tree unchanged".
+# The check caught edits AFTER a run and never DURING one, which is exactly the case that yields a
+# green describing code that no longer exists. Third defect found in this gate today, same shape as
+# the other two: it could not observe the thing it exists to catch.
+_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 _write_result() {
   { echo "VERDICT=$2"
     echo "RC=$1"
     echo "TARGET=$TARGET"
     echo "LANE=${MORK_LEAPFROG_DISPATCH:-0}"
+    echo "STARTED_AT=$_STARTED_AT"
     echo "WHEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$RESULT_FILE" 2>/dev/null || true
 }

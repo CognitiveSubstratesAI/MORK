@@ -290,6 +290,28 @@ are encoded as MORK byte-paths and yielded into the query engine.
 Function signature: `(args::Vector{String}) → Union{String, Vector{String}, Nothing}`
   - Return a single S-expression string, a list of them, or `nothing` (no result).
 """
+# ── WHICH ARITHMETIC MECHANISM? Two exist in MORK, and they serve different POSITIONS. ────────
+#
+#   GROUNDED_REGISTRY (here)   Consulted ONLY by `asource_new`, i.e. for the CONJUNCTS of an exec's
+#                              SOURCE position: `(exec p (, <src> …) …)`. Julia functions keyed by
+#                              String. EMPTY by default — a consumer registers what it needs.
+#                              This is an ADDITION above upstream: `sources.rs` has no grounded
+#                              variant, no name lookup and no numeric parsing.
+#
+#   PURE_OPS (kernel/Pure.jl)  The MM2 arithmetic vocabulary, reached through a `(pure …)` form in
+#                              the SINK position: `(O (pure <template> $var <expr>))`. Populated at
+#                              load: product_f64 / min_f64 / max_f64 / sum_f64 / sub_f64 / div_f64 /
+#                              signum_f64 / pow_f64 / clamp_f64 / f64_from_string / f64_to_string
+#                              among others, plus `ifnz` as a special form. Values live in the space
+#                              as STRINGS — `f64_from_string` in, `f64_to_string` out.
+#
+# To COMPUTE A VALUE INSIDE A REWRITE RULE, use `PURE_OPS` via a `(pure …)` sink. Registering an
+# arithmetic function here does NOT make it available in that position — grounding is reached only
+# through source-conjunct dispatch. Worked example, in the test corpus:
+# `kernel/resources/decision_tree_learning_without_min_sink.mm2`, which computes Gini impurity and
+# derives `min` from `signum_f64`/`sub_f64`.
+#
+# ⚠️ SYNTAX NOTE: in a sink, `(+ …)` and `(- …)` are ADD and REMOVE, not arithmetic.
 const GROUNDED_REGISTRY = Dict{String, Function}()
 
 """
