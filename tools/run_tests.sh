@@ -71,9 +71,16 @@ DRIVER="$(mktemp "${TMPDIR:-/tmp}/mork_run_tests_XXXXXX.jl")"
 # PASS standing, and the checker independently reports STALE when any source file is newer than
 # the verdict — the exact error that nearly shipped today, a suite run against the pre-edit file.
 RESULT_FILE="$SCRIPT_DIR/.last_suite_result"
+# 🔴 THE VERDICT RECORDS **WHAT WAS RUN**, NOT JUST THE OUTCOME.
+# MEASURED 2026-08-25 in the MorkSupercompiler copy of this runner: two single-file PROBE runs
+# (`run_tests.sh /tmp/probe.jl`) overwrote the full suite's verdict with their own PASS, and the
+# checker then reported "PASS, tree unchanged" while the suite's log was 0 BYTES. A commit was one
+# step from landing on a green that described two lines of scratch code — the exact wrapper-exit-0
+# failure this file exists to prevent, inside the instrument built to prevent it.
 _write_result() {
   { echo "VERDICT=$2"
     echo "RC=$1"
+    echo "TARGET=$TARGET"
     echo "LANE=${MORK_LEAPFROG_DISPATCH:-0}"
     echo "WHEN=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$RESULT_FILE" 2>/dev/null || true
