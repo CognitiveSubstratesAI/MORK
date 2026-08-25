@@ -181,7 +181,7 @@ export subterm_parse_step, least_ge, is_complete, PARSE_START,
     factor_namespace, var_env, query_var_env, data_env_for, unified_bindings,
     with_bound_bytes!, match_candidate!, candidate_intro_delta, QUERY_NS,
     Step, STEP_VAR, STEP_SYM, STEP_COMPOUND, push_steps!, factor_steps,
-    UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog,
+    UnifyColumn, unify_var_col, unify_term_col, UnifyFactor, unify_leapfrog, factors_connected,
     scan_subterm, parse_body_factors, fact_bytes, _LF_TRACE, _LF_CANDIDATES,
     rank_parts!, partition_restrictors!, fill_lead_candidates!,
     descend_restrictors!,
@@ -1524,6 +1524,82 @@ struct UnifyFactor
     prefix::Vector{UInt8}
     cols::Vector{UnifyColumn}
 end
+
+"""
+    factors_connected(factors) -> Bool
+
+True iff EVERY factor shares at least one top-level query variable with some other factor.
+
+🔴 AN ADDITION ABOVE UPSTREAM, DELIBERATELY. Upstream has no shape test and its absence is not an
+oversight: `Space::query_multi_dispatch` (space.rs:1102) states "The join owns every CONJUNCT shape
+-- compounds, bare symbols, bare variables -- and the bare `(,)` with no conjunct, so there is no
+shape test here", and `query_multi_leapfrog` (leapfrog.rs:1330) parses, handles the empty
+conjunction, builds `var_order` and runs -- no branch on shape at all.
+
+We need one because OUR PER-UNIT COST differs from Rust, measured; the algorithm does not.
+MEASURED 2026-08-24 (`workflows/leapfrog_predictor.jl`, 3 reps, GC per rep, every case sized to run
+for SECONDS -- an earlier underpowered run at 30-70 ms INVERTED the answer):
+
+    shape             cases       band
+    shared-variable   5 of 5 win  1.10x - 1.15x
+    cross product     0 of 4 win  0.46x - 0.54x     <- ~2x LOSS
+
+Non-overlapping bands. And on the unselective cities5000 query the join does 21:1 LESS search work
+(0 coref transitions vs 3,656,178) and is still 1.75x slower, isolating the cost to per-unit
+overhead rather than to search. [[reference_rust_closures_are_free_julia_closures_allocate]]
+
+REGRESSION-AVOIDANCE, NOT A SPEEDUP. The matched-shape win is 1.10-1.15x, barely above noise; the
+value is not paying ~2x on a Cartesian product.
+
+TWO BOUNDS, both from what was actually measured -- do not widen either without new data.
+ 1. All four cross cases were `(rel \$i C) (rel \$j C)`: NO shared variable at all. This separates
+    JOIN from NOT-A-JOIN, not "shape" in general. Three conjuncts where two connect and one does
+    not, a shared variable in a non-seekable position, and a late-bound join variable are UNTESTED
+    and get the safe default.
+ 2. TOP-LEVEL VARIABLES ONLY. A variable nested in a COMPOUND column is not an `is_var` column --
+    it lives in the term bytes under its own `intro` numbering, and `parse_body_factors` warns that
+    getting that numbering wrong joins on the wrong variables SILENTLY. So a body connected only
+    through a nested variable reads as disconnected and routes to stock: the SAFE direction, since
+    stock is today default. It may leave a win unclaimed; it is not a correctness risk.
+"""
+function factors_connected(factors::Vector{UnifyFactor})::Bool
+    n = length(factors)
+    n <= 1 && return true
+
+    # 🔴 VARIABLE-FREE CONJUNCTS ARE NOT PART OF THE JOIN GRAPH, and treating them as such was a
+    # real defect: `(edge a b)` binds nothing, so `isdisjoint(EMPTY, anything)` is true and the
+    # first version called EVERY body containing a ground filter "disconnected".
+    # MEASURED 2026-08-25 by the suite: ROUTED fell 300 -> 182. It declined 118 of 300 real bodies,
+    # ~39% of the conformance corpus, where the shapes it was built to decline are a handful of
+    # Cartesian products. A ground conjunct is a FILTER; it constrains without joining.
+    vars = Vector{Set{Int}}(undef, n)
+    bearing = Int[]
+    @inbounds for i in 1:n
+        vs = Set{Int}()
+        for c in factors[i].cols
+            c.is_var && push!(vs, c.v)
+        end
+        vars[i] = vs
+        isempty(vs) || push!(bearing, i)
+    end
+
+    # Nothing to cross-product: zero or one conjunct actually carries variables.
+    length(bearing) <= 1 && return true
+
+    @inbounds for i in bearing
+        linked = false
+        for j in bearing
+            i == j && continue
+            if !isdisjoint(vars[i], vars[j])
+                linked = true
+                break
+            end
+        end
+        linked || return false
+    end
+    true
+end
+
 
 "The factor's columns flattened into one ordered step list."
 function factor_steps(f::UnifyFactor)::Vector{Step}

@@ -32,6 +32,26 @@ ORDER is observable and the join's differs.
 const LEAPFROG_DISPATCH = Ref(false)
 
 """
+    LEAPFROG_LAST_DECLINE / LEAPFROG_DECLINED_SHAPE
+
+Why the join handed a body back, and how often it was for SHAPE rather than for a body it cannot
+parse. Two different things that must not share a counter:
+
+  `:not_conjunction`  the body is not a well-formed conjunction. Upstream PANICS here
+                      (`parse_body_factors(..).expect(..)`, leapfrog.rs:1331); we hand it back so
+                      the stock path rejects it as it always has. MEASURED over the 285-probe
+                      conformance corpus: ZERO. A non-zero count is a PRODUCER BUG, warned loudly.
+  `:disconnected`     the body parses fine and the join would answer it CORRECTLY -- we route to
+                      stock because it is measurably FASTER there. Expected, silent, counted.
+                      See `factors_connected` for the measurement and its two bounds.
+
+Conflating them would make an expected routing decision look like a producer bug, and would destroy
+the "decline rate is zero" signal that made the `(,)` bug findable in the first place.
+"""
+const LEAPFROG_LAST_DECLINE = Ref(:none)
+const LEAPFROG_DECLINED_SHAPE = Ref(0)
+
+"""
     LEAPFROG_ROUTED / LEAPFROG_DECLINED
 
 How many `,`-source transform bodies the join ANSWERED, and how many it handed back as unroutable.

@@ -33,7 +33,7 @@ the join can represent. That is a ROUTING answer, not an empty result: the calle
 `loc` is factor 1's stored fact, matching the stock path's contract.
 """
 function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
-    effect::Function)::Union{Int, Nothing}
+    effect::Function; route_by_shape::Bool=false)::Union{Int, Nothing}
     parsed = Leapfrog.parse_body_factors(pat_expr)
     # ⚠️ `nothing` HERE MEANS THE BODY IS NOT A CONJUNCTION AT ALL — a bare symbol, a bare variable,
     # or an encoding the parse rejects (a `VarRef` naming a variable the body never introduced, more
@@ -46,7 +46,10 @@ function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # quietly would only move a producer bug somewhere it cannot be seen — upstream's argument, and
     # after the measurement, ours: "a violation is a bug in the producer and should surface as one,
     # NOT AS A SILENT DETOUR TO A DIFFERENT ENGINE."
-    parsed === nothing && return nothing
+    if parsed === nothing
+        LEAPFROG_LAST_DECLINE[] = :not_conjunction
+        return nothing
+    end
     (factors, nvars) = parsed
     # ── `(,)` — THE EMPTY CONJUNCTION. Nothing constrains anything, so it matches EXACTLY ONCE
     # with empty bindings. Upstream handles it inline and says why: it "mirrors `Space::query_multi`'s
@@ -62,6 +65,29 @@ function space_query_multi_leapfrog(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     if isempty(factors)
         effect(Bindings(), pat_expr.buf)
         return 1
+    end
+
+    # ── SHAPE ROUTING: a body with a DISCONNECTED conjunct goes to the stock engine ─────────────
+    # NOT a capability limit — the join answers these correctly. It is measurably SLOWER on them.
+    # MEASURED 2026-08-24 (`workflows/leapfrog_predictor.jl`, 3 reps, cases sized to run for
+    # seconds): shared-variable 5 of 5 win at 1.10-1.15x; cross product 0 of 4 win at 0.46-0.54x.
+    # Non-overlapping bands. See `factors_connected` for the two bounds this rule stays inside.
+    #
+    # ⚠️ DISTINCT FROM THE PARSE DECLINE ABOVE, and the distinction is load-bearing: that one is a
+    # PRODUCER BUG the caller warns about, measured at ZERO over the conformance corpus. This one is
+    # an expected routing decision. Sharing a counter would destroy the zero-rate signal that made
+    # the `(,)` bug findable.
+    # ⚠️ OPT-IN, AND THE DEFAULT MATTERS. This function ANSWERS every body it can parse — that is
+    # its contract, and the differentials, the wiring tests and the conformance corpus all call it
+    # directly and depend on it. Making the shape test unconditional CHANGED THAT CONTRACT and broke
+    # 120 assertions: `_w_leapfrog(s, b) == _w_engine(s, b)` became `nothing == 9`, because a
+    # declining engine and a wrong engine look identical to a caller that expects an answer.
+    # ⇒ ROUTING POLICY BELONGS TO THE DISPATCHER, not to the engine. `Space.jl` passes
+    #   `route_by_shape=true`; everything that asks this function a direct question still gets one.
+    if route_by_shape && !Leapfrog.factors_connected(factors)
+        LEAPFROG_LAST_DECLINE[] = :disconnected
+        LEAPFROG_DECLINED_SHAPE[] += 1
+        return nothing
     end
     # 🔴 `loc` IS THE CONCATENATION OF EVERY MATCHED FACT, NOT FACTOR 1's. Upstream's own comment
     # says "loc is factor 0's stored fact, as stock passes" — TRUE OF UPSTREAM'S STOCK PATH, FALSE
