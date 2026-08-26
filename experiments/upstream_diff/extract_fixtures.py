@@ -2,7 +2,7 @@
 # Extract upstream main.rs test fixtures (input + contains-asserts) → a Julia fixtures file.
 import re, subprocess, os, sys
 
-MORK = os.path.expanduser("~/JuliaAGI/dev-zone/MORK")
+MORK = os.path.expanduser("~/dev-zone/MORK")
 src = subprocess.check_output(["git", "-C", MORK, "show", "main:kernel/src/main.rs"]).decode("utf-8", "replace")
 
 # tests upstream comments out in main() (WIP / failing / known-faulty) — mark, don't treat as bugs.

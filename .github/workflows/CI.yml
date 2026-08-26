@@ -23,7 +23,7 @@ jobs:
     # tree with no binary once "ran this file to completion, printed one @info, and reported GREEN
     # — with ZERO differential coverage".
     #
-    # This runner has no Rust toolchain and no `~/JuliaAGI/dev-zone` checkout, so the oracle is
+    # This runner has no Rust toolchain and no `~/dev-zone` checkout, so the oracle is
     # genuinely unavailable here — which is exactly the case the escape hatch was written for
     # ("for environments that genuinely cannot build Rust"). Setting it DELIBERATELY is the whole
     # contract: an UNSET variable must never buy silence ([[feedback_guarantee_not_convention]]).

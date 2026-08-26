@@ -44,5 +44,5 @@ makes regressions greppable across dates.
 ## Differential against the LIVE Rust binary (optional, strongest)
 
 `diff_upstream.jl` can also diff against a compiled upstream kernel:
-`cargo build --release` in `~/JuliaAGI/dev-zone/MORK`, then pass `rust_bin=…`. The committed
+`cargo build --release` in `~/dev-zone/MORK`, then pass `rust_bin=…`. The committed
 fixtures are the golden outputs when the live binary isn't built.

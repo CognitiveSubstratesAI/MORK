@@ -25,7 +25,7 @@
 #
 # USAGE
 #   julia --project=. tools/rust_fn_inventory.jl <upstream.rs> [our_dirs ...]
-#   julia --project=. tools/rust_fn_inventory.jl ~/JuliaAGI/dev-zone/MORK/expr/src/lib.rs src
+#   julia --project=. tools/rust_fn_inventory.jl ~/dev-zone/MORK/expr/src/lib.rs src
 #
 # PREFIXES. Our port names a ported method by its OWNER, not its file: space.rs's `add_all_sexpr`
 # is `space_add_all_sexpr!`, expr/lib.rs's `variables` is `expr_variables`. The default prefix set

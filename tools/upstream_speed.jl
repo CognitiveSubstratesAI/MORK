@@ -73,7 +73,7 @@ using MORK, Printf
 # `upstream_conformance.jl:68` already uses `Base.run` and its header records the same fix (c543841).
 
 const UP = get(ENV, "MORK_UPSTREAM_BIN",
-    expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
+    expanduser("~/dev-zone/MORK/target/release/mork"))
 const DIRS = [
     joinpath(homedir(), "code/CognitiveSubstratesAI/MORK/test/conformance", d)
     for d in ("space", "sinks")

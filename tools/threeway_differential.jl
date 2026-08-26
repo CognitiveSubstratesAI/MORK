@@ -27,7 +27,7 @@
 # The binary must be built from the VENDORED upstream pin; a mismatched build makes B meaningless.
 using MORK
 
-const BIN = get(ENV, "MORK_BIN", expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"))
+const BIN = get(ENV, "MORK_BIN", expanduser("~/dev-zone/MORK/target/release/mork"))
 const CONF = joinpath(@__DIR__, "..", "test", "conformance")
 
 include(joinpath(CONF, "run_conformance.jl"))

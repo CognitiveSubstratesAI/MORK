@@ -2,7 +2,7 @@
 Wiki example tests — port of upstream MORK kernel/resources/*.mm2 programs.
 
 Each test runs the example program to completion and verifies expected output.
-Source files: ~/JuliaAGI/dev-zone/MORK/kernel/resources/
+Source files: ~/dev-zone/MORK/kernel/resources/
 """
 
 using Test, MORK

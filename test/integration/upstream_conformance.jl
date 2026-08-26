@@ -44,12 +44,12 @@ function _oracle_missing(what::AbstractString, fix::AbstractString)
 end
 
 const _UP_MORK = let
-    cands = [expanduser("~/JuliaAGI/dev-zone/MORK/target/release/mork"),
-        expanduser("~/JuliaAGI/dev-zone/MORK/kernel/target/release/mork")]
+    cands = [expanduser("~/dev-zone/MORK/target/release/mork"),
+        expanduser("~/dev-zone/MORK/kernel/target/release/mork")]
     i = findfirst(isfile, cands)
     i === nothing ? nothing : cands[i]
 end
-const _UP_RES = expanduser("~/JuliaAGI/dev-zone/MORK/kernel/resources")
+const _UP_RES = expanduser("~/dev-zone/MORK/kernel/resources")
 const _FIXTURE = joinpath(@__DIR__, "..", "fixtures", "mm2")
 
 # ground atoms only (drop var-bearing rule lines), stripped + sorted → order-independent set
@@ -110,7 +110,7 @@ end
     if _UP_MORK === nothing
         _oracle_missing(
             "upstream Rust `mork` binary (the ONLY differential oracle for this port)",
-            "cd ~/JuliaAGI/dev-zone/MORK && cargo build --release")
+            "cd ~/dev-zone/MORK && cargo build --release")
     else
         # (1) tractable relational join — the DEFAULT engine AND the naive opt-out both match upstream.
         jf = joinpath(_FIXTURE, "conformance_join.mm2")

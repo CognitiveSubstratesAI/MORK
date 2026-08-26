@@ -116,7 +116,7 @@ too), NOT an ACT issue. See MORK `test/runtests.jl` "ACT backup_tree → (ACT �
 
 ## Update 2026-06-24 — upstream core delta `2e0d6f9..9a3c5bd` verified (NO silent gap)
 
-Fresh upstream pulled to `~/JuliaAGI/dev-zone/MORK` (HEAD `9a3c5bd` "add einsum sink", 2026-06-15).
+Fresh upstream pulled to `~/dev-zone/MORK` (HEAD `9a3c5bd` "add einsum sink", 2026-06-15).
 Diffed the core kernel since the ~2026-06-09 baseline (`2e0d6f9`): +874/−61 over
 `kernel/src/{sinks,sources,space,main}.rs`. Classified — **all of it is in-scope-elsewhere or
 deliberate, none a port regression:**

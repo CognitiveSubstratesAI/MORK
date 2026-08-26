@@ -6,7 +6,7 @@ Benchmarks mirror the 11 workloads tracked by parse_mork_bench.py:
   exponential_fringe, finite_domain, odd_even_sort, process_calculus,
   transitive_trans, transitive_detect
 
-Upstream source: ~/JuliaAGI/dev-zone/MORK/kernel/src/main.rs
+Upstream source: ~/dev-zone/MORK/kernel/src/main.rs
   bench_clique_no_unify   (lines 4465–4543)
   bench_transitive_no_unify (lines 4424–4465)
   bench_cm0               (lines 3622–3700)

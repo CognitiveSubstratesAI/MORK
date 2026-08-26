@@ -1,8 +1,8 @@
 # MORK — Julia port of trueagi-io/MORK
 # PathMap substrate lives in the PathMap package (sivaji1012/PathMaps.git).
 # Upstream references:
-#   - pathmap: ~/JuliaAGI/dev-zone/PathMap
-#   - MORK:    ~/JuliaAGI/dev-zone/MORK (branches: main, origin/server)
+#   - pathmap: ~/dev-zone/PathMap
+#   - MORK:    ~/dev-zone/MORK (branches: main, origin/server)
 module MORK
 
 using Base64

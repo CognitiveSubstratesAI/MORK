@@ -58,7 +58,7 @@
 
 using Printf
 
-const UPSTREAM = get(ENV, "MORK_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/MORK"))
+const UPSTREAM = get(ENV, "MORK_UPSTREAM", expanduser("~/dev-zone/MORK"))
 const HERE = normpath(joinpath(@__DIR__, ".."))
 const BASELINE = joinpath(HERE, "test", "conformance", "PORT_INVENTORY.txt")
 # 🔴 `experiments/eval` ADDED 2026-07-30 — it was missing, and it is where the EVALUATOR lives.
@@ -142,7 +142,7 @@ const MORK_PROFILE = PortProfile(
 # PathMap upstream is a SINGLE crate — `src/` plus `experimental/` and `utils/` — not a workspace, so
 # the dir list is just the source root and `walkdir` finds the rest.
 const PATHMAP_UPSTREAM = get(
-    ENV, "PATHMAP_UPSTREAM", expanduser("~/JuliaAGI/dev-zone/PathMap")
+    ENV, "PATHMAP_UPSTREAM", expanduser("~/dev-zone/PathMap")
 )
 const PATHMAP_HERE = normpath(joinpath(HERE, "..", "PathMap"))
 const PATHMAP_PROFILE = PortProfile(

@@ -133,10 +133,10 @@ function diff_upstream(; rust_bin::String="")
         end
     else
         println(
-            "\n(Tip: install Rust and build: cd ~/JuliaAGI/dev-zone/MORK && cargo build --release"
+            "\n(Tip: install Rust and build: cd ~/dev-zone/MORK && cargo build --release"
         )
         println(
-            "      Then: diff_upstream(rust_bin=\"~/JuliaAGI/dev-zone/MORK/target/release/kernel\")"
+            "      Then: diff_upstream(rust_bin=\"~/dev-zone/MORK/target/release/kernel\")"
         )
     end
 

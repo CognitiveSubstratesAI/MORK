@@ -16,7 +16,7 @@
 set -uo pipefail
 
 DIR="${1:?usage: run_probes.sh <probedir> [mork-binary]}"
-MORK_BIN="${2:-$HOME/JuliaAGI/dev-zone/MORK/target/release/mork}"
+MORK_BIN="${2:-$HOME/dev-zone/MORK/target/release/mork}"
 
 [ -x "$MORK_BIN" ] || { echo "no mork binary at $MORK_BIN" >&2; exit 2; }
 [ -d "$DIR" ] || { echo "no probe dir at $DIR" >&2; exit 2; }

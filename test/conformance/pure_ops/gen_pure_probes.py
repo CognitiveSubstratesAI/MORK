@@ -46,7 +46,7 @@ Usage:  python3 gen_pure_probes.py <outdir>
 """
 import re, sys, os, collections
 
-PURE_RS = os.path.expanduser("~/JuliaAGI/dev-zone/MORK/kernel/src/pure.rs")
+PURE_RS = os.path.expanduser("~/dev-zone/MORK/kernel/src/pure.rs")
 OUT = sys.argv[1]
 
 FEEDER = {

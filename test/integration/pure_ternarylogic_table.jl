@@ -25,7 +25,7 @@
 # — 0 mismatches, 256/256 selectors present, none missing. That half cannot live in this suite
 # because it needs the Rust source, which is outside this repo; it is reproducible with:
 #
-#     python3 - <<'PY'   # over ~/JuliaAGI/dev-zone/MORK/kernel/src/pure.rs
+#     python3 - <<'PY'   # over ~/dev-zone/MORK/kernel/src/pure.rs
 #     ... eval each `N => <expr>,` arm with X,Y,Z = 0xF0,0xCC,0xAA, `!`->`~`, mask &0xFF; assert == N
 #     PY
 #
