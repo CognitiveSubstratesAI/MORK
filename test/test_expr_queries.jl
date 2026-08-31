@@ -624,6 +624,46 @@ _e(s) = M.sexpr_to_expr(s)
             M.ExprZipper(M.Expr(zeros(UInt8, 128)), 1)) === nothing
     end
 
+    # ── UPSTREAM'S OWN `test_unify`, PORTED VERBATIM (expr/src/lib.rs:2979) ──────────────────
+    # Ported 2026-08-31. Until now `expr_unify_method` had exactly ONE assertion here — the
+    # trivial `[2] f $` x `[2] f a` above — while upstream pins four substantial cases. Two of
+    # them exercise VAR-VAR COLLAPSE, where unifying two distinct binders must fuse them into
+    # one and renumber every reference above (the `expr_equate_var` path). Nothing in our suite
+    # reached that end-to-end: the primitive is unit-tested, the behaviour it exists for was not.
+    #
+    # These are upstream's `parse!` strings UNCHANGED — `expr_parse_str` mirrors
+    # `mork_expr::parse::<N>`, so the inputs are literally the same bytes upstream feeds its own
+    # assertion. Compared BYTE-EXACT against upstream's expected result, not by rendering.
+    # Verified passing 4/4 on first run, so this is a REGRESSION GUARD, not a bug report.
+    # [[feedback_upstream_tests_are_the_first_thing_to_port]]
+    @testset "expr_unify — upstream test_unify cases, byte-exact" begin
+        _f = M.expr_parse_str
+        _u = function (xs, ys)
+            oz = M.ExprZipper(zeros(UInt8, 512))
+            r = M.expr_unify_method(_f(xs), _f(ys), oz)
+            r isa M.UnificationFailure ? nothing : oz
+        end
+        for (xs, ys, ts, why) in [
+            (raw"[3] $ [3] h _1 $ [2] f _2",
+             raw"[3] [2] f $ [3] h $ [2] f a _2",
+             raw"[3] [2] f [2] f a [3] h [2] f [2] f a [2] f a [2] f [2] f a",
+             "nested + shared vars"),
+            (raw"[4] $ $ _1 _2", raw"[4] $ $ _2 _1", raw"[4] $ _1 _1 _1",
+             "VAR-VAR COLLAPSE 2->1"),
+            (raw"[8] $ $ $ $ _3 _2 _3 _4", raw"[8] $ $ $ $ _4 _1 _2 _3",
+             raw"[8] $ _1 _1 _1 _1 _1 _1 _1", "8-ary TRANSITIVE collapse"),
+            (raw"[2] $ [2] axiom [3] = [3] T $ [4] a _2 $ $ _2",
+             raw"[2] [2] flip [3] = $ $ [2] axiom [3] = _2 _1",
+             raw"[2] [2] flip [3] = $ [3] T _1 [4] a _1 $ $ [2] axiom [3] = [3] T _1 [4] a _1 _2 _3 _1",
+             "flip/axiom rewrite"),
+        ]
+            oz = _u(xs, ys)
+            @test oz !== nothing                      # upstream asserts is_ok()
+            want = _f(ts).buf
+            @test oz.root.buf[1:length(want)] == want   # …and byte-identical to upstream's `t`
+        end
+    end
+
     @testset "ez_traverse — upstream's debug printer" begin
         _f = M.expr_parse_str
         pr(z, i=0) = (io=IOBuffer(); n=M.ez_traverse(z, i; io=io); (String(take!(io)), n))
