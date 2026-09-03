@@ -2,8 +2,18 @@
 # MORK, decompose to per-branch atoms (Tier B per
 # docs/research/fruit fly/FAFB v783/import notes), snapshot to .act.
 #
-# INPUT:  docs/research/fruit fly/FAFB v783/sk_lod1_783_healed/*.swc
-#         (139,273 files, 31.18 GB total, ~745M raw nodes)
+# 🔴 INPUT DELETED 2026-09-03 — THIS SCRIPT CANNOT RUN AS-IS.
+# INPUT:  <FAFB v783>/sk_lod1_783_healed/*.swc  (139,273 files, 31.18 GB, ~745M raw nodes)
+#         REMOVED to reclaim 32 GB. The import was never completed: no `data/fafb_v783_skeletons.act`
+#         was ever produced, and nothing in any test or gate read the skeletons — verified, every
+#         in-tree reference to connectome/fafb is a COMMENT (WorldModel cites this directory as a
+#         PATTERN it mirrors, not a path it opens). Re-fetch from the public FlyWire/Codex FAFB v783
+#         release if this is revived.
+# ⚠️ ALSO LOST: the `import notes` cited below for the Tier-B rationale. The atom shape, target
+#         counts and usage in this header survive; the reasoning behind choosing Tier B does not.
+# ✅ RETAINED: the CONNECTIVITY tables beside it — connections_*, synapse_*, neurons, labels,
+#         coordinates, cell_stats (3.4 GB .csv.gz) + BANC v626 (28 MB). Those are the connectome
+#         GRAPH and the more reusable artifact; only skeleton GEOMETRY was removed.
 #
 # OUTPUT: data/fafb_v783_skeletons.act
 #         atom shape: (skel-br <root_id> <branch_id> <st> <sx> <sy> <sz>
