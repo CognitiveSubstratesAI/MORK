@@ -132,11 +132,13 @@ space_atom_count(s)
 # Dump all atoms (for debugging)
 println(space_dump_all_sexpr(s))
 
-# Pattern query — returns list of binding sets
-bindings = space_query_sexpr(s, "(greeting \$name)")
-for b in bindings
-    println(b)   # Dict{Symbol, Expr} of variable → value
-end
+# Pattern query — parse the pattern, then stream results through a callback.
+# ⚠️ CORRECTED 2026-09-03: this block used to show `space_query_sexpr`, WHICH DOES NOT EXIST.
+# A doc naming a missing function is how the next investigation loses an hour.
+pat  = space_sexpr_to_expr(s, "(, (greeting \$name))")   # note the `,` conjunction wrapper
+hits = Ref(0)
+space_query_multi(s, pat, (args...) -> (hits[] += 1; true))   # return true to keep searching
+println(hits[])
 ```
 
 ### Multi-Pattern Query
