@@ -15,6 +15,35 @@
 
 # Emulating Backward Chaining via Forward Chaining
 
+> ## 📊 READ THE VENDORED BENCHMARK BEFORE CHOOSING A STRATEGY (analysed 2026-09-07)
+>
+> `reference/regular-vs-emulated-petta-benchmark.csv` compares a REAL backward chainer (`obc_time`)
+> against this forward-emulated one (`obfc_time`) on PeTTa. It is 8 rows and it answers the
+> "which strategy" question with measurement rather than argument:
+>
+> | targeted search (few solutions) | ratio | exhaustive (ALL theorems) | ratio |
+> |---|---|---|---|
+> | imim1 · size 15 · **1** sol   | **×1.43** | size 11 · 5 523 sols     | ×1.17 |
+> | loowoz · size 19 · **3** sols | **×1.74** | size 13 · 35 064 sols    | ×1.18 |
+> | loolin · size 26 · **4** sols | **×1.98** | size 15 · 233 681 sols   | ×1.06 |
+> |                               |           | size 17 · 1 591 750 sols | ×1.37 |
+>
+> **THE EMULATION TAX IS NOT UNIFORM — it is worst exactly where backward chaining earns its keep.**
+> For TARGETED search it grows with size (1.43 → 1.74 → 1.98) and is heading past 2× at size 26. For
+> EXHAUSTIVE enumeration — which is what forward chaining does natively — it is nearly free
+> (1.06–1.37×). That is the expected shape: goal-directedness pays when the goal PRUNES, and
+> emulating it on a saturating engine is precisely what loses the pruning.
+>
+> ⇒ Goal-as-data on saturation is a fine way to get backward-chaining BEHAVIOUR, and a poor way to
+> get backward-chaining PERFORMANCE on hard targeted queries. It is an argument for keeping real
+> goal-directed evaluation in Core — and therefore for finishing SLG tabling, which is what makes
+> that sound.
+>
+> ⚠️ These are PeTTa numbers from upstream's own harness, not ours. Nothing here has been reproduced
+> on this port. [[feedback_upstream_number_has_a_pair_and_a_unit]]
+
+
+
 ## Overview
 
 Forward chaining starts from a truth to produce more truth.  Backward
