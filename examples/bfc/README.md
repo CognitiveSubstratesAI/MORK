@@ -28,11 +28,17 @@
 > | loolin · size 26 · **4** sols | **×1.98** | size 15 · 233 681 sols   | ×1.06 |
 > |                               |           | size 17 · 1 591 750 sols | ×1.37 |
 >
-> **THE EMULATION TAX IS NOT UNIFORM — it is worst exactly where backward chaining earns its keep.**
-> For TARGETED search it grows with size (1.43 → 1.74 → 1.98) and is heading past 2× at size 26. For
-> EXHAUSTIVE enumeration — which is what forward chaining does natively — it is nearly free
+> **THE EMULATION TAX IS NOT UNIFORM — it is materially worse on TARGETED search, and appears to
+> grow.** For exhaustive enumeration — what forward chaining does natively — it is near-free
 > (1.06–1.37×). That is the expected shape: goal-directedness pays when the goal PRUNES, and
 > emulating it on a saturating engine is precisely what loses the pruning.
+>
+> ⚠️ **DO NOT EXTRAPOLATE THE TARGETED COLUMN.** 1.43 → 1.74 → 1.98 is THREE POINTS ACROSS THREE
+> DIFFERENT THEOREMS, not a controlled sweep — size, theorem and solution count all vary together,
+> and `loolin` is a single point at the extreme (size 26, ~16 min of `obc`). The EXHAUSTIVE column is
+> the cleaner series, because size is the only thing varying there. "Materially worse and apparently
+> growing" is what the data supports; "heading past 2×" is not, and the conclusion does not need it.
+> [[feedback_scope_closure_claims_to_what_verified]]
 >
 > ⇒ Goal-as-data on saturation is a fine way to get backward-chaining BEHAVIOUR, and a poor way to
 > get backward-chaining PERFORMANCE on hard targeted queries. It is an argument for keeping real
