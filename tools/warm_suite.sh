@@ -67,11 +67,15 @@ _start() {
     # expect the module-level environment they get under a normal `julia test/runtests.jl`.
     # ⚠️ The trade is real and is why Core warns about state pollution: shared Main means one file
     # CAN leak state into the next. `run-cold` is the arbiter, and `restart` clears it.
-    # 🔴 PRELOAD WHAT THE SUITE EXPECTS. `runtests.jl` opens with `using Test, MORK, PathMap`; the
+    # 🔴 PRELOAD WHAT THE SUITE EXPECTS. `runtests.jl` opens with `using Test, MORK, PathMaps` (the
+    # PACKAGE was renamed PathMap -> PathMaps on 2026-08-23; `using PathMap` fails to boot); the
     # daemon must hold the same, or a `file` run resolves names the full suite would have had.
-    setsid julia --project="$MORK" -e "
+    # 🔴 THREADS, like tools/run_tests.sh: MORK's and PathMap's concurrency tests degrade to
+    # `@test_skip` below 2 threads, and PathMap's inert-testset guard then FAILS the run (measured
+    # 2026-09-17: the one-threaded daemon failed PathMap's suite on "node-keyed refcount is atomic").
+    setsid julia --project="$MORK" --threads="${JULIA_TEST_THREADS:-4}" --heap-size-hint="${MORK_WARM_HEAP_HINT:-6G}" -e "
         using Revise
-        using MORK, PathMap, Test
+        using MORK, PathMaps, Test
         using DaemonMode
         write(raw\"$READYFILE\", string(getpid()))
         serve($PORT, true)
