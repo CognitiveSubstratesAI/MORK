@@ -29,7 +29,10 @@ function _mk(keys::Vector{String})
     m
 end
 
-function _paths(m::PathMaps.PathMap{PathMaps.UnitVal})
+# Named `_mla_paths`, not `_paths`: runtests.jl shares one Main, and a more specific `_paths` method here
+# replaced test_json_to_paths.jl's generic one on a second run in the warm daemon (Strings instead of
+# byte vectors — measured 2026-09-17).
+function _mla_paths(m::PathMaps.PathMap{PathMaps.UnitVal})
     z = PathMaps.read_zipper(m)
     out = String[]
     while PathMaps.zipper_to_next_val!(z)
@@ -42,7 +45,7 @@ end
 function _op(a::Vector{String}, b::Vector{String}, op::Symbol)
     reg = PathMaps.PathMap{PathMaps.UnitVal}[_mk(a), _mk(b), _mk(String[])]
     MORK._binary_space_op!(reg, 2, 0, 1, op)
-    _paths(reg[3])
+    _mla_paths(reg[3])
 end
 
 @testset "MorkL binary space ops — Identity is an operand, not emptiness" begin
