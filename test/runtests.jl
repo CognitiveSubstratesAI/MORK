@@ -2008,19 +2008,19 @@ const _MORK_TS = @testset "MORK" begin
         @testset "ReadZipperCore — construct at root of empty map" begin
             rc = TrieNodeODRc(LineListNode{V, A}(alloc), alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
-            @test zipper_at_root(z)
-            @test isempty(zipper_path(z))
-            @test !zipper_is_val(z)
-            @test zipper_path_exists(z)   # root always exists per upstream semantics
+            @test at_root(z)
+            @test isempty(path(z))
+            @test !is_val(z)
+            @test path_exists(z)   # root always exists per upstream semantics
         end
 
         @testset "ReadZipperCore — at_root after construction" begin
             rc = TrieNodeODRc(LineListNode{V, A}(alloc), alloc)
             node_set_val!(rc.node, UInt8[UInt8('x')], 10)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
-            @test zipper_at_root(z)
-            @test !zipper_is_val(z)         # root has no value (values are below)
-            @test zipper_child_count(z) == 1  # 'x' branch
+            @test at_root(z)
+            @test !is_val(z)         # root has no value (values are below)
+            @test child_count(z) == 1  # 'x' branch
         end
 
         # ---- ReadZipperCore_at_path ----
@@ -2032,12 +2032,12 @@ const _MORK_TS = @testset "MORK" begin
             root_rc = TrieNodeODRc(root_n, alloc)
 
             # Zipper pre-positioned at "a" — should report is_val = true
-            path = collect(UInt8, "a")
-            z = ReadZipperCore_at_path(root_rc, path, length(path), 0, nothing, alloc)
-            @test zipper_at_root(z)
-            @test isempty(zipper_path(z))
-            @test zipper_is_val(z)
-            @test zipper_val(z) == 55
+            p = collect(UInt8, "a")
+            z = ReadZipperCore_at_path(root_rc, p, length(p), 0, nothing, alloc)
+            @test at_root(z)
+            @test isempty(path(z))
+            @test is_val(z)
+            @test val(z) == 55
         end
 
         # ---- descend / ascend navigation ----
@@ -2048,11 +2048,11 @@ const _MORK_TS = @testset "MORK" begin
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
 
-            zipper_descend_to!(z, collect(UInt8, "ab"))
-            @test !zipper_at_root(z)
-            @test zipper_path(z) == UInt8[UInt8('a'), UInt8('b')]
-            @test zipper_is_val(z)
-            @test zipper_val(z) == 7
+            descend_to!(z, collect(UInt8, "ab"))
+            @test !at_root(z)
+            @test path(z) == UInt8[UInt8('a'), UInt8('b')]
+            @test is_val(z)
+            @test val(z) == 7
         end
 
         @testset "ReadZipperCore — ascend after descend" begin
@@ -2060,12 +2060,12 @@ const _MORK_TS = @testset "MORK" begin
             node_set_val!(root_n, UInt8[UInt8('x')], 3)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
-            zipper_descend_to!(z, collect(UInt8, "x"))
-            @test zipper_is_val(z)
-            @test zipper_val(z) == 3
-            zipper_ascend!(z, 1)
-            @test zipper_at_root(z)
-            @test !zipper_is_val(z)
+            descend_to!(z, collect(UInt8, "x"))
+            @test is_val(z)
+            @test val(z) == 3
+            ascend!(z, 1)
+            @test at_root(z)
+            @test !is_val(z)
         end
 
         @testset "ReadZipperCore — ascend_byte" begin
@@ -2073,15 +2073,15 @@ const _MORK_TS = @testset "MORK" begin
             node_set_val!(root_n, collect(UInt8, "abc"), 11)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
-            zipper_descend_to!(z, collect(UInt8, "abc"))
-            @test length(zipper_path(z)) == 3
-            @test zipper_ascend_byte!(z)
-            @test length(zipper_path(z)) == 2
-            @test zipper_ascend_byte!(z)
-            @test length(zipper_path(z)) == 1
-            @test zipper_ascend_byte!(z)
-            @test zipper_at_root(z)
-            @test !zipper_ascend_byte!(z)  # can't ascend above root
+            descend_to!(z, collect(UInt8, "abc"))
+            @test length(path(z)) == 3
+            @test ascend_byte!(z)
+            @test length(path(z)) == 2
+            @test ascend_byte!(z)
+            @test length(path(z)) == 1
+            @test ascend_byte!(z)
+            @test at_root(z)
+            @test !ascend_byte!(z)  # can't ascend above root
         end
 
         @testset "ReadZipperCore — reset!" begin
@@ -2089,10 +2089,10 @@ const _MORK_TS = @testset "MORK" begin
             node_set_val!(root_n, collect(UInt8, "hello"), 5)
             root_rc = TrieNodeODRc(root_n, alloc)
             z = ReadZipperCore(root_rc, UInt8[], 0, nothing, alloc)
-            zipper_descend_to!(z, collect(UInt8, "hello"))
-            @test !zipper_at_root(z)
-            zipper_reset!(z)
-            @test zipper_at_root(z)
+            descend_to!(z, collect(UInt8, "hello"))
+            @test !at_root(z)
+            reset!(z)
+            @test at_root(z)
         end
 
         # ---- to_next_val iteration ----
@@ -2107,8 +2107,8 @@ const _MORK_TS = @testset "MORK" begin
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
 
             found = Int[]
-            while zipper_to_next_val!(z)
-                push!(found, zipper_val(z))
+            while to_next_val!(z)
+                push!(found, val(z))
             end
             sort!(found)
             @test found == [1, 2, 3]
@@ -2118,7 +2118,7 @@ const _MORK_TS = @testset "MORK" begin
             n = LineListNode{V, A}(alloc)
             rc = TrieNodeODRc(n, alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
-            @test !zipper_to_next_val!(z)
+            @test !to_next_val!(z)
         end
 
         @testset "ReadZipperCore — to_next_val single value" begin
@@ -2126,9 +2126,9 @@ const _MORK_TS = @testset "MORK" begin
             node_set_val!(n, UInt8[UInt8('z')], 99)
             rc = TrieNodeODRc(n, alloc)
             z = ReadZipperCore(rc, UInt8[], 0, nothing, alloc)
-            @test zipper_to_next_val!(z)
-            @test zipper_val(z) == 99
-            @test !zipper_to_next_val!(z)
+            @test to_next_val!(z)
+            @test val(z) == 99
+            @test !to_next_val!(z)
         end
 
         # ---- PathMap ----
@@ -2142,8 +2142,8 @@ const _MORK_TS = @testset "MORK" begin
         @testset "PathMap — read_zipper on empty map" begin
             m = PM{V}()
             z = read_zipper(m)
-            @test zipper_at_root(z)
-            @test !zipper_is_val(z)
+            @test at_root(z)
+            @test !is_val(z)
         end
 
         @testset "PathMap — get_val_at missing key returns nothing" begin
@@ -2171,9 +2171,9 @@ const _MORK_TS = @testset "MORK" begin
             m = PM{V, A}(root_rc, nothing, alloc)
 
             z = read_zipper_at_path(m, collect(UInt8, "key"))
-            @test zipper_is_val(z)
-            @test zipper_val(z) == 77
-            @test isempty(zipper_path(z))   # pre-positioned at "key", so path() = ""
+            @test is_val(z)
+            @test val(z) == 77
+            @test isempty(path(z))   # pre-positioned at "key", so path() = ""
         end
 
         @testset "PathMap — path_exists_at" begin
@@ -2188,31 +2188,31 @@ const _MORK_TS = @testset "MORK" begin
 
         # ---- ZipperMoving new defaults ----
 
-        @testset "zipper_to_next_sibling_byte!" begin
+        @testset "to_next_sibling_byte!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             set_val_at!(m, collect(UInt8, "c"), 3)
             z = read_zipper(m)
-            zipper_descend_first_byte!(z)
-            @test last(zipper_path(z)) == UInt8('a')
-            @test zipper_to_next_sibling_byte!(z)
-            @test last(zipper_path(z)) == UInt8('b')
-            @test zipper_to_next_sibling_byte!(z)
-            @test last(zipper_path(z)) == UInt8('c')
-            @test !zipper_to_next_sibling_byte!(z)  # last sibling
+            descend_first_byte!(z)
+            @test last(path(z)) == UInt8('a')
+            @test to_next_sibling_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('b')
+            @test to_next_sibling_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('c')
+            @test to_next_sibling_byte!(z) === nothing  # last sibling
         end
 
-        @testset "zipper_descend_last_byte! / zipper_descend_last_path!" begin
+        @testset "descend_last_byte! / descend_last_path!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             z = read_zipper(m)
-            @test zipper_descend_last_byte!(z)
-            @test last(zipper_path(z)) == UInt8('b')
+            @test descend_last_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('b')
         end
 
-        @testset "zipper_to_next_val! iterates all values in DFS order" begin
+        @testset "to_next_val! iterates all values in DFS order" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "ba"), 2)
@@ -2220,66 +2220,66 @@ const _MORK_TS = @testset "MORK" begin
             set_val_at!(m, collect(UInt8, "c"), 4)
             z = read_zipper(m)
             collected = V[]
-            while zipper_to_next_val!(z)
-                push!(collected, zipper_val(z))
+            while to_next_val!(z)
+                push!(collected, val(z))
             end
             @test sort(collected) == [1, 2, 3, 4]
         end
 
-        @testset "zipper_descend_to_val! stops at first val along path" begin
+        @testset "descend_to_val! stops at first val along path" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 10)
             set_val_at!(m, collect(UInt8, "abc"), 20)
             z = read_zipper(m)
-            steps = zipper_descend_to_val!(z, collect(UInt8, "abc"))
+            steps = descend_to_val!(z, collect(UInt8, "abc"))
             @test steps == 2   # stops at "ab" which has a val
-            @test zipper_is_val(z)
+            @test is_val(z)
         end
 
-        @testset "zipper_move_to_path! navigates to absolute path" begin
+        @testset "move_to_path! navigates to absolute path" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "foo"), 1)
             set_val_at!(m, collect(UInt8, "bar"), 2)
             z = read_zipper(m)
-            zipper_descend_to!(z, collect(UInt8, "foo"))
-            @test zipper_is_val(z)
-            zipper_move_to_path!(z, collect(UInt8, "bar"))
-            @test zipper_is_val(z)
-            @test zipper_val(z) == 2
+            descend_to!(z, collect(UInt8, "foo"))
+            @test is_val(z)
+            move_to_path!(z, collect(UInt8, "bar"))
+            @test is_val(z)
+            @test val(z) == 2
         end
 
-        @testset "zipper_fork! creates sub-zipper at focus" begin
+        @testset "fork_read_zipper creates sub-zipper at focus" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 1)
             set_val_at!(m, collect(UInt8, "ac"), 2)
             z = read_zipper(m)
-            zipper_descend_to_byte!(z, UInt8('a'))
-            sub = zipper_fork!(z)
+            descend_to_byte!(z, UInt8('a'))
+            sub = fork_read_zipper(z)
             # sub rooted at 'a': should see both "b" and "c" as children
-            @test zipper_child_count(sub) == 2
+            @test child_count(sub) == 2
         end
 
-        @testset "zipper_to_next_step! does DFS one step at a time" begin
+        @testset "to_next_step! does DFS one step at a time" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             z = read_zipper(m)
-            @test zipper_to_next_step!(z)   # descend to 'a'
-            @test zipper_to_next_step!(z)   # sibling 'b'
-            @test !zipper_to_next_step!(z)  # no more
+            @test to_next_step!(z)   # descend to 'a'
+            @test to_next_step!(z)   # sibling 'b'
+            @test !to_next_step!(z)  # no more
         end
 
         @testset "rz_ aliases work" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "x"), 99)
             z = read_zipper(m)
-            @test !rz_is_val(z)
-            rz_descend_to!(z, collect(UInt8, "x"))
-            @test rz_is_val(z)
-            @test rz_get_val(z) == 99
-            @test rz_path(z) == collect(UInt8, "x")
-            rz_reset!(z)
-            @test isempty(rz_path(z))
+            @test !is_val(z)
+            descend_to!(z, collect(UInt8, "x"))
+            @test is_val(z)
+            @test get_val(z) == 99
+            @test path(z) == collect(UInt8, "x")
+            reset!(z)
+            @test isempty(path(z))
         end
     end
 
@@ -2390,18 +2390,18 @@ const _MORK_TS = @testset "MORK" begin
         end
 
         # ------------------------------------------------------------------
-        # set root val (at_root path of wz_set_val!)
+        # set root val (at_root path of set_val!)
         # ------------------------------------------------------------------
-        @testset "wz_set_val! at root → root_val" begin
+        @testset "set_val! at root → root_val" begin
             m = PM{V}()
             z = write_zipper(m)
-            old = wz_set_val!(z, 42)
+            old = set_val!(z, 42)
             @test old === nothing
             @test m.root_val == 42
 
             # second set returns old value
             z2 = write_zipper(m)
-            old2 = wz_set_val!(z2, 99)
+            old2 = set_val!(z2, 99)
             @test old2 == 42
             @test m.root_val == 99
         end
@@ -2493,23 +2493,23 @@ const _MORK_TS = @testset "MORK" begin
         end
 
         # ------------------------------------------------------------------
-        # wz_path_exists / wz_is_val / wz_get_val
+        # path_exists / is_val / val
         # ------------------------------------------------------------------
-        @testset "wz_path_exists / wz_is_val / wz_get_val" begin
+        @testset "path_exists / is_val / val" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 55)
 
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "abc"))
-            @test wz_path_exists(z)
-            @test wz_is_val(z)
-            @test wz_get_val(z) == 55
+            descend_to!(z, collect(UInt8, "abc"))
+            @test path_exists(z)
+            @test is_val(z)
+            @test val(z) == 55
 
             z2 = write_zipper(m)
-            wz_descend_to!(z2, collect(UInt8, "xyz"))
-            @test !wz_path_exists(z2)
-            @test !wz_is_val(z2)
-            @test wz_get_val(z2) === nothing
+            descend_to!(z2, collect(UInt8, "xyz"))
+            @test !path_exists(z2)
+            @test !is_val(z2)
+            @test val(z2) === nothing
         end
 
         # ------------------------------------------------------------------
@@ -2521,8 +2521,8 @@ const _MORK_TS = @testset "MORK" begin
 
             # create zipper pre-positioned at "prefix:" then set a second value
             z = write_zipper_at_path(m, collect(UInt8, "prefix:"))
-            wz_descend_to!(z, collect(UInt8, "more"))
-            wz_set_val!(z, 77)
+            descend_to!(z, collect(UInt8, "more"))
+            set_val!(z, 77)
             @test get_val_at(m, collect(UInt8, "prefix:data")) == 99
             @test get_val_at(m, collect(UInt8, "prefix:more")) == 77
         end
@@ -2548,7 +2548,7 @@ const _MORK_TS = @testset "MORK" begin
         # subtract_into/restrict — lines 1401-1927)
         # ==================================================================
 
-        @testset "wz_graft! — replace subtrie unconditionally" begin
+        @testset "graft! — replace subtrie unconditionally" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 1)
             set_val_at!(m, collect(UInt8, "abd"), 2)
@@ -2560,13 +2560,13 @@ const _MORK_TS = @testset "MORK" begin
             # graft src at root of m → m becomes src
             z = write_zipper(m)
             src_anr = _wz_get_focus_anr(write_zipper(src))
-            wz_graft!(z, src_anr)
+            graft!(z, src_anr)
 
             @test get_val_at(m, collect(UInt8, "abc")) == 99
             # "abd" is gone because we grafted src (which has no "abd")
         end
 
-        @testset "wz_graft_map! — graft from PathMap" begin
+        @testset "graft_map! — graft from PathMap" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "x"), 5)
 
@@ -2574,11 +2574,11 @@ const _MORK_TS = @testset "MORK" begin
             set_val_at!(src, collect(UInt8, "x"), 42)
 
             z = write_zipper(m)
-            wz_graft_map!(z, src)
+            graft_map!(z, src)
             @test get_val_at(m, collect(UInt8, "x")) == 42
         end
 
-        @testset "wz_join_into! — disjoint maps produce union" begin
+        @testset "join_into! — disjoint maps produce union" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             src = PM{V}()
@@ -2587,25 +2587,25 @@ const _MORK_TS = @testset "MORK" begin
             z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
-            st = wz_join_into!(z, src_anr)
+            st = join_into!(z, src_anr)
 
             @test st == ALG_STATUS_ELEMENT
             @test get_val_at(m, collect(UInt8, "a")) == 1
             @test get_val_at(m, collect(UInt8, "b")) == 2
         end
 
-        @testset "wz_join_into! — empty src returns Identity" begin
+        @testset "join_into! — empty src returns Identity" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 7)
 
             z = write_zipper(m)
-            st = wz_join_into!(z, ANRNone{V, GlobalAlloc}())
+            st = join_into!(z, ANRNone{V, GlobalAlloc}())
 
             @test st == ALG_STATUS_IDENTITY
             @test get_val_at(m, collect(UInt8, "a")) == 7
         end
 
-        @testset "wz_join_map_into! — identical maps → Identity" begin
+        @testset "join_map_into! — identical maps → Identity" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "k"), 3)
             # Join with a copy
@@ -2613,13 +2613,13 @@ const _MORK_TS = @testset "MORK" begin
             set_val_at!(src, collect(UInt8, "k"), 3)
 
             z = write_zipper(m)
-            st = wz_join_map_into!(z, src)
+            st = join_map_into!(z, src)
             # pjoin(identical) → AlgResIdentity; mask & SELF_IDENT > 0 → Identity
             @test st == ALG_STATUS_IDENTITY || st == ALG_STATUS_ELEMENT
             @test get_val_at(m, collect(UInt8, "k")) == 3
         end
 
-        @testset "wz_meet_into! — disjoint → None (empty result)" begin
+        @testset "meet_into! — disjoint → None (empty result)" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             src = PM{V}()
@@ -2628,12 +2628,12 @@ const _MORK_TS = @testset "MORK" begin
             z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
-            st = wz_meet_into!(z, src_anr)
+            st = meet_into!(z, src_anr)
 
             @test st == ALG_STATUS_NONE
         end
 
-        @testset "wz_meet_into! — common key survives" begin
+        @testset "meet_into! — common key survives" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 1)
             set_val_at!(m, collect(UInt8, "ac"), 2)
@@ -2643,13 +2643,13 @@ const _MORK_TS = @testset "MORK" begin
             z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
-            st = wz_meet_into!(z, src_anr)
+            st = meet_into!(z, src_anr)
 
             @test st != ALG_STATUS_NONE
             @test get_val_at(m, collect(UInt8, "ab")) !== nothing
         end
 
-        @testset "wz_subtract_into! — a - a = None" begin
+        @testset "subtract_into! — a - a = None" begin
             # Use UInt32 which has psubtract defined (saturating subtract)
             m2 = PM{UInt32}()
             set_val_at!(m2, collect(UInt8, "x"), UInt32(5))
@@ -2659,32 +2659,32 @@ const _MORK_TS = @testset "MORK" begin
             z2 = write_zipper(m2)
             z_src2 = write_zipper(src2)
             src_anr2 = _wz_get_focus_anr(z_src2)
-            st = wz_subtract_into!(z2, src_anr2)
+            st = subtract_into!(z2, src_anr2)
 
             @test st == ALG_STATUS_NONE
         end
 
-        @testset "wz_subtract_into! — a - empty = Identity" begin
+        @testset "subtract_into! — a - empty = Identity" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "x"), 5)
 
             z = write_zipper(m)
-            st = wz_subtract_into!(z, ANRNone{V, GlobalAlloc}())
+            st = subtract_into!(z, ANRNone{V, GlobalAlloc}())
 
             @test st == ALG_STATUS_IDENTITY
             @test get_val_at(m, collect(UInt8, "x")) == 5
         end
 
-        @testset "wz_restrict! — empty src → None" begin
+        @testset "restrict! — empty src → None" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 1)
 
             z = write_zipper(m)
-            st = wz_restrict!(z, ANRNone{V, GlobalAlloc}())
+            st = restrict!(z, ANRNone{V, GlobalAlloc}())
             @test st == ALG_STATUS_NONE
         end
 
-        @testset "wz_restrict! — src superset → Identity" begin
+        @testset "restrict! — src superset → Identity" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             src = PM{V}()
@@ -2694,43 +2694,43 @@ const _MORK_TS = @testset "MORK" begin
             z = write_zipper(m)
             z_src = write_zipper(src)
             src_anr = _wz_get_focus_anr(z_src)
-            st = wz_restrict!(z, src_anr)
+            st = restrict!(z, src_anr)
 
             @test st == ALG_STATUS_IDENTITY || st == ALG_STATUS_ELEMENT
             @test get_val_at(m, collect(UInt8, "a")) !== nothing
         end
 
-        @testset "wz_join_k_path_into! — drop first 2 bytes" begin
+        @testset "join_k_path_into! — drop first 2 bytes" begin
             m = PM{V}()
             set_val_at!(m, UInt8[0x01, 0x02, 0x03], V(1))
             set_val_at!(m, UInt8[0x01, 0x02, 0x04], V(2))
             z = write_zipper(m)
-            res = wz_join_k_path_into!(z, 2)
+            res = join_k_path_into!(z, 2)
             @test res == true
             # After dropping 2 bytes, only 0x03 and 0x04 remain
             n = 0
             rz = read_zipper(m)
-            while zipper_to_next_val!(rz)
+            while to_next_val!(rz)
 
                 n += 1
             end
             @test n == 2
         end
 
-        @testset "wz_join_k_path_into! — empty subtrie returns false + prunes" begin
+        @testset "join_k_path_into! — empty subtrie returns false + prunes" begin
             m = PM{V}()
             set_val_at!(m, UInt8[0xAA], V(1))
             z = write_zipper(m)
-            wz_descend_to!(z, UInt8[0xBB])   # no paths here
-            res = wz_join_k_path_into!(z, 1, true)
+            descend_to!(z, UInt8[0xBB])   # no paths here
+            res = join_k_path_into!(z, 1, true)
             @test res == false
         end
 
-        @testset "wz_restricting! — empty src returns false" begin
+        @testset "restricting! — empty src returns false" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), V(1))
             z = write_zipper(m)
-            res = wz_restricting!(z, ANRNone{V, GlobalAlloc}())
+            res = restricting!(z, ANRNone{V, GlobalAlloc}())
             @test res == false
         end
 
@@ -2738,57 +2738,57 @@ const _MORK_TS = @testset "MORK" begin
         # WriteZipper completion — prune, remove_branches, create_path, etc.
         # ==================================================================
 
-        @testset "wz_remove_branches! — removes all branches" begin
+        @testset "remove_branches! — removes all branches" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 1)
             set_val_at!(m, collect(UInt8, "ac"), 2)
             z = write_zipper(m)
-            @test wz_remove_branches!(z, false)
-            @test wz_val_count(z) == 0
+            @test remove_branches!(z, false)
+            @test val_count(z) == 0
         end
 
-        @testset "wz_remove_branches! — empty returns false" begin
+        @testset "remove_branches! — empty returns false" begin
             m = PM{V}()
             z = write_zipper(m)
-            @test !wz_remove_branches!(z, false)
+            @test !remove_branches!(z, false)
         end
 
-        @testset "wz_prune_path! removes dangling path" begin
+        @testset "prune_path! removes dangling path" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 1)
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "abc"))
-            wz_remove_val!(z)
+            descend_to!(z, collect(UInt8, "abc"))
+            remove_val!(z)
             # cursor at "abc" which is now dangling
-            wz_prune_path!(z)
+            prune_path!(z)
             @test !path_exists_at(m, collect(UInt8, "abc"))
         end
 
-        @testset "wz_create_path! creates dangling path" begin
+        @testset "create_path! creates dangling path" begin
             m = PM{V}()
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "xyz"))
-            created = wz_create_path!(z)
+            descend_to!(z, collect(UInt8, "xyz"))
+            created = create_path!(z)
             @test created
             @test path_exists_at(m, collect(UInt8, "xyz"))
-            @test !wz_is_val(z)
+            @test !is_val(z)
         end
 
-        @testset "wz_get_or_set_val! sets default when absent" begin
+        @testset "get_val_or_set_mut! sets default when absent" begin
             m = PM{V}()
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "k"))
-            v = wz_get_or_set_val!(z, 42)
+            descend_to!(z, collect(UInt8, "k"))
+            v = get_val_or_set_mut!(z, 42)
             @test v == 42
             @test get_val_at(m, collect(UInt8, "k")) == 42
         end
 
-        @testset "wz_get_or_set_val! returns existing when present" begin
+        @testset "get_val_or_set_mut! returns existing when present" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "k"), 7)
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "k"))
-            v = wz_get_or_set_val!(z, 99)
+            descend_to!(z, collect(UInt8, "k"))
+            v = get_val_or_set_mut!(z, 99)
             @test v == 7   # existing value preserved
         end
 
@@ -2796,91 +2796,91 @@ const _MORK_TS = @testset "MORK" begin
         # WriteZipper navigation (ZipperMoving trait — write_zipper.rs:976)
         # ==================================================================
 
-        @testset "wz_child_mask / wz_child_count at root" begin
+        @testset "child_mask / child_count at root" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 1)
             set_val_at!(m, collect(UInt8, "ac"), 2)
             z = write_zipper(m)
             # Root has one child: 'a' (0x61)
-            @test wz_child_count(z) == 1
-            mask = wz_child_mask(z)
+            @test child_count(z) == 1
+            mask = child_mask(z)
             @test test_bit(mask, UInt8('a'))
         end
 
-        @testset "wz_descend_first_byte! / wz_ascend_byte!" begin
+        @testset "descend_first_byte! / ascend_byte!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             z = write_zipper(m)
 
-            @test wz_descend_first_byte!(z)
-            @test last(wz_path(z)) == UInt8('a')
-            @test wz_ascend_byte!(z)
-            @test isempty(wz_path(z))
+            @test descend_first_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('a')
+            @test ascend_byte!(z)
+            @test isempty(path(z))
         end
 
-        @testset "wz_to_next_sibling_byte!" begin
+        @testset "to_next_sibling_byte!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             set_val_at!(m, collect(UInt8, "c"), 3)
             z = write_zipper(m)
 
-            @test wz_descend_first_byte!(z)
-            @test last(wz_path(z)) == UInt8('a')
-            @test wz_to_next_sibling_byte!(z)
-            @test last(wz_path(z)) == UInt8('b')
-            @test wz_to_next_sibling_byte!(z)
-            @test last(wz_path(z)) == UInt8('c')
-            @test !wz_to_next_sibling_byte!(z)   # already last
-            @test last(wz_path(z)) == UInt8('c')  # unchanged
+            @test descend_first_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('a')
+            @test to_next_sibling_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('b')
+            @test to_next_sibling_byte!(z) !== nothing
+            @test last(path(z)) == UInt8('c')
+            @test to_next_sibling_byte!(z) === nothing   # already last
+            @test last(path(z)) == UInt8('c')  # unchanged
         end
 
-        @testset "wz_reset!" begin
+        @testset "reset!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "abc"), 1)
             z = write_zipper(m)
-            wz_descend_to!(z, collect(UInt8, "abc"))
-            @test !isempty(wz_path(z))
-            wz_reset!(z)
-            @test isempty(wz_path(z))
+            descend_to!(z, collect(UInt8, "abc"))
+            @test !isempty(path(z))
+            reset!(z)
+            @test isempty(path(z))
         end
 
-        @testset "wz_val_count" begin
+        @testset "val_count" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "a"), 1)
             set_val_at!(m, collect(UInt8, "b"), 2)
             set_val_at!(m, collect(UInt8, "ba"), 3)
             z = write_zipper(m)
-            @test wz_val_count(z) == 3
+            @test val_count(z) == 3
 
             # After descending into "b", should see 2 vals
-            wz_descend_to!(z, [UInt8('b')])
-            @test wz_val_count(z) == 2
+            descend_to!(z, [UInt8('b')])
+            @test val_count(z) == 2
         end
 
-        @testset "wz_take_focus!" begin
+        @testset "take_focus!" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "ab"), 1)
             set_val_at!(m, collect(UInt8, "ac"), 2)
             z = write_zipper(m)
 
-            rc = wz_take_focus!(z, false)
+            rc = take_focus!(z, false)
             @test rc !== nothing
             # After take, subtrie at cursor is gone
-            @test wz_val_count(z) == 0
+            @test val_count(z) == 0
         end
 
-        @testset "tr_get_focus_anr" begin
+        @testset "get_focus" begin
             m = PM{V}()
             set_val_at!(m, collect(UInt8, "x"), 5)
             # Empty path → at root boundary, node_key is empty → ANRBorrowedRc
             t = trie_ref_at_path(m, UInt8[])
-            anr = tr_get_focus_anr(t)
+            anr = get_focus(t)
             @test !is_none(anr)
             # Val key "x" → get_node_at_key finds no child, returns ANRNone (mirrors upstream)
             t2 = trie_ref_at_path(m, collect(UInt8, "x"))
-            anr2 = tr_get_focus_anr(t2)
+            anr2 = get_focus(t2)
             @test is_none(anr2)
         end
 
@@ -2897,28 +2897,28 @@ const _MORK_TS = @testset "MORK" begin
 
             # Partial path "He" — exists, no val
             tr = trie_ref_at_path(m, collect(UInt8, "He"))
-            @test tr_path_exists(tr)
-            @test tr_get_val(tr) === nothing
+            @test path_exists(tr)
+            @test get_val(tr) === nothing
 
             # "Hel" — exists, no val, child node
             tr = trie_ref_at_path(m, collect(UInt8, "Hel"))
-            @test tr_path_exists(tr)
-            @test tr_get_val(tr) === nothing
+            @test path_exists(tr)
+            @test get_val(tr) === nothing
 
             # "Help" — leaf val
             tr = trie_ref_at_path(m, collect(UInt8, "Help"))
-            @test tr_path_exists(tr)
-            @test tr_get_val(tr) isa UnitVal   # val IS UnitVal (unit type)
-            @test tr_is_val(tr) == true         # UnitVal stored → is_val true
+            @test path_exists(tr)
+            @test get_val(tr) isa UnitVal   # val IS UnitVal (unit type)
+            @test is_val(tr) == true         # UnitVal stored → is_val true
 
             # "Hello" — leaf val
             tr = trie_ref_at_path(m, collect(UInt8, "Hello"))
-            @test tr_path_exists(tr)
+            @test path_exists(tr)
 
             # Non-existent path
             tr = trie_ref_at_path(m, collect(UInt8, "Hi"))
-            @test !tr_path_exists(tr)
-            @test tr_get_val(tr) === nothing
+            @test !path_exists(tr)
+            @test get_val(tr) === nothing
 
             # Very long path (> MAX_NODE_KEY_BYTES bytes) that doesn't exist
             long_path = collect(
@@ -2926,8 +2926,8 @@ const _MORK_TS = @testset "MORK" begin
                 "Hello Mr. Washington, my name is John, but sometimes people call me Jack.  I live in Springfield."
             )
             tr = trie_ref_at_path(m, long_path)
-            @test !tr_path_exists(tr)
-            @test tr_child_count(tr) == 0
+            @test !path_exists(tr)
+            @test child_count(tr) == 0
         end
 
         @testset "TrieRef — child_count / child_mask at 'H'" begin
@@ -2939,26 +2939,26 @@ const _MORK_TS = @testset "MORK" begin
             end
 
             tr0 = trie_ref_at_path(m, collect(UInt8, "H"))
-            @test tr_path_exists(tr0)
-            @test tr_child_count(tr0) == 1   # only 'e' branch
+            @test path_exists(tr0)
+            @test child_count(tr0) == 1   # only 'e' branch
 
-            tr1 = tr_trie_ref_at_path(tr0, collect(UInt8, "el"))
-            @test tr_path_exists(tr1)
-            @test tr_child_count(tr1) == 3   # 'l', 'p', 's' (Hell, Help, Helsinki)
+            tr1 = trie_ref_at_path(tr0, collect(UInt8, "el"))
+            @test path_exists(tr1)
+            @test child_count(tr1) == 3   # 'l', 'p', 's' (Hell, Help, Helsinki)
 
             # Descend to "Hello"
-            tr2 = tr_trie_ref_at_path(tr1, collect(UInt8, "lo"))
-            @test tr_path_exists(tr2)
-            @test tr_child_count(tr2) == 0
+            tr2 = trie_ref_at_path(tr1, collect(UInt8, "lo"))
+            @test path_exists(tr2)
+            @test child_count(tr2) == 0
 
             # Beyond "Hello" — invalid path
-            tr3 = tr_trie_ref_at_path(tr2, collect(UInt8, "Operator"))
-            @test !tr_path_exists(tr3)
-            @test tr_child_count(tr3) == 0
+            tr3 = trie_ref_at_path(tr2, collect(UInt8, "Operator"))
+            @test !path_exists(tr3)
+            @test child_count(tr3) == 0
 
             # Further beyond — chained invalid
-            tr4 = tr_trie_ref_at_path(tr3, collect(UInt8, ", give me number 9"))
-            @test !tr_path_exists(tr4)
+            tr4 = trie_ref_at_path(tr3, collect(UInt8, ", give me number 9"))
+            @test !path_exists(tr4)
         end
 
         @testset "TrieRef — trie_ref_test2: val_count + fork_read_zipper + make_map" begin
@@ -2971,30 +2971,30 @@ const _MORK_TS = @testset "MORK" begin
 
             # Root: 4 first-byte branches (a, b, c, r)
             tr = trie_ref_at_path(m, UInt8[])
-            @test tr_path_exists(tr)
-            @test tr_child_count(tr) == 4
+            @test path_exists(tr)
+            @test child_count(tr) == 4
 
             # Under 'a'
-            tr = tr_trie_ref_at_path(tr, [UInt8('a')])
-            @test tr_path_exists(tr)
-            @test tr_child_count(tr) == 1
+            tr = trie_ref_at_path(tr, [UInt8('a')])
+            @test path_exists(tr)
+            @test child_count(tr) == 1
 
             # Under 'r' — 9 values (roman*, rubens, ruber, rubicon, rubicundus)
             tr_r = trie_ref_at_path(m, [UInt8('r')])
-            z = tr_fork_read_zipper(tr_r)
-            @test zipper_val_count(z) == 9
+            z = fork_read_zipper(tr_r)
+            @test val_count(z) == 9
 
             # make_map snapshot
-            new_map = tr_make_map(tr_r)
+            new_map = make_map(tr_r)
             @test val_count(new_map) == 9
         end
 
         @testset "TrieRef — invalid TrieRef returns false/nothing/0" begin
             t = _tr_new_invalid(Int)
             @test !_tr_is_valid(t)
-            @test !tr_path_exists(t)
-            @test tr_get_val(t) === nothing
-            @test tr_child_count(t) == 0
+            @test !path_exists(t)
+            @test get_val(t) === nothing
+            @test child_count(t) == 0
         end
     end
 
@@ -3033,19 +3033,19 @@ const _MORK_TS = @testset "MORK" begin
             @test stp_path_status(stp, path_b) == PATH_STATUS_AVAILABLE
         end
 
-        @testset "zt_path returns registered path" begin
+        @testset "zt_path returns registered p" begin
             stp = SharedTrackerPaths()
-            path = collect(UInt8, "hello")
-            t = ZipperTracker{TrackingWrite}(stp, path)
-            @test zt_path(t) == path
+            p = collect(UInt8, "hello")
+            t = ZipperTracker{TrackingWrite}(stp, p)
+            @test zt_path(t) == p
             zt_release!(t)
         end
 
         @testset "Conflict thrown on overlapping write" begin
             stp = SharedTrackerPaths()
-            path = collect(UInt8, "x")
-            t = ZipperTracker{TrackingWrite}(stp, path)
-            @test_throws Conflict ZipperTracker{TrackingWrite}(stp, path)
+            p = collect(UInt8, "x")
+            t = ZipperTracker{TrackingWrite}(stp, p)
+            @test_throws Conflict ZipperTracker{TrackingWrite}(stp, p)
             zt_release!(t)
         end
 
@@ -3069,8 +3069,8 @@ const _MORK_TS = @testset "MORK" begin
                         (nothing, nothing))
 
                 paths = Vector{UInt8}[]
-                while dpz_to_next_val!(dpz)
-                    dpz_child_count(dpz) == 0 && push!(paths, copy(dpz_path(dpz)))
+                while to_next_val!(dpz)
+                    child_count(dpz) == 0 && push!(paths, copy(path(dpz)))
                 end
                 # "roman" has children (romane, romanus, romulus) so is_path_end=false
                 # → "roman.postfix" is NOT included (matches upstream dep_test_1 behavior)
@@ -3085,8 +3085,8 @@ const _MORK_TS = @testset "MORK" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "a"), 1)
                 dpz = DependentZipper(read_zipper(m), nothing, (p, _, _) -> (p, nothing))
-                @test dpz_factor_count(dpz) == 1
-                @test dpz_at_root(dpz)
+                @test factor_count(dpz) == 1
+                @test at_root(dpz)
             end
 
         end
@@ -3173,25 +3173,25 @@ const _MORK_TS = @testset "MORK" begin
 
             @testset "basic properties" begin
                 z = EmptyZipper()
-                @test !ez_path_exists(z)
-                @test !ez_is_val(z)
-                @test ez_child_count(z) == 0
-                @test ez_at_root(z)
-                @test isempty(ez_path(z))
+                @test !path_exists(z)
+                @test !is_val(z)
+                @test child_count(z) == 0
+                @test at_root(z)
+                @test isempty(path(z))
             end
 
             @testset "navigation works but finds nothing" begin
                 z = EmptyZipper()
-                ez_descend_to!(z, collect(UInt8, "abc"))
-                @test collect(ez_path(z)) == collect(UInt8, "abc")
-                @test !ez_path_exists(z)
-                @test ez_ascend!(z, 3)
-                @test isempty(ez_path(z))
+                descend_to!(z, collect(UInt8, "abc"))
+                @test collect(path(z)) == collect(UInt8, "abc")
+                @test !path_exists(z)
+                @test ascend!(z, 3) == 3
+                @test isempty(path(z))
             end
 
             @testset "to_next_val returns false" begin
                 z = EmptyZipper()
-                @test !ez_to_next_val!(z)
+                @test !to_next_val!(z)
             end
 
         end
@@ -3227,12 +3227,12 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(m, collect(UInt8, "b"), 2)
                 set_val_at!(m, collect(UInt8, "ba"), 3)
                 tree = act_from_zipper(m, v -> UInt64(v))
-                z = act_read_zipper(tree)
-                @test act_child_count(z) >= 1
+                z = read_zipper(tree)
+                @test child_count(z) >= 1
                 vals = UInt64[]
-                while act_to_next_val!(z)
+                while to_next_val!(z)
 
-                    push!(vals, act_val(z))
+                    push!(vals, val(z))
                 end
                 @test sort(vals) == [1, 2, 3]
             end
@@ -3241,11 +3241,11 @@ const _MORK_TS = @testset "MORK" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "hello"), 42)
                 tree = act_from_zipper(m, v -> UInt64(v))
-                path = tempname() * ".act"
-                act_save(tree, path)
-                tree2 = act_open(path)
+                p = tempname() * ".act"
+                act_save(tree, p)
+                tree2 = act_open(p)
                 @test act_get_val_at(tree2, collect(UInt8, "hello")) == 42
-                rm(path)
+                rm(p)
             end
 
         end
@@ -3332,11 +3332,11 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(m, collect(UInt8, "a"), 1)
                 set_val_at!(m, collect(UInt8, "b"), 2)
                 pz = ProductZipper(read_zipper(m))
-                @test pz_factor_count(pz) == 1
+                @test factor_count(pz) == 1
                 vals = Int[]
-                while pz_to_next_val!(pz)
+                while to_next_val!(pz)
 
-                    push!(vals, pz_val(pz))
+                    push!(vals, val(pz))
                 end
                 @test sort(vals) == [1, 2]
             end
@@ -3350,29 +3350,29 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(b, collect(UInt8, "2"), 2)
 
                 pz = ProductZipper(read_zipper(a), [read_zipper(b)])
-                @test pz_factor_count(pz) == 2
+                @test factor_count(pz) == 2
 
                 # Primary vals ("x","y") are junction vals; product yields 6 total:
                 # "x", "x1", "x2", "y", "y1", "y2"
                 paths = Vector{UInt8}[]
-                while pz_to_next_val!(pz)
-                    push!(paths, collect(pz_path(pz)))
+                while to_next_val!(pz)
+                    push!(paths, collect(path(pz)))
                 end
                 @test length(paths) == 6
                 expected = [collect(UInt8, s) for s in ["x", "x1", "x2", "y", "y1", "y2"]]
                 @test sort(paths) == sort(expected)
             end
 
-            @testset "pz_reset! returns to root" begin
+            @testset "reset! returns to root" begin
                 a = PM{Int}()
                 set_val_at!(a, collect(UInt8, "k"), 1)
                 b = PM{Int}()
                 set_val_at!(b, collect(UInt8, "v"), 2)
                 pz = ProductZipper(read_zipper(a), [read_zipper(b)])
-                pz_to_next_val!(pz)
-                @test !isempty(pz_path(pz))
-                pz_reset!(pz)
-                @test isempty(pz_path(pz))
+                to_next_val!(pz)
+                @test !isempty(path(pz))
+                reset!(pz)
+                @test isempty(path(pz))
             end
 
         end
@@ -3385,45 +3385,45 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(m, collect(UInt8, "B"), 2)
                 pz = PrefixZipper(collect(UInt8, "prefix."), read_zipper(m))
                 # At root: child is 'p' (first byte of prefix)
-                @test pz_child_count(pz) == 1
-                @test test_bit(pz_child_mask(pz), UInt8('p'))
+                @test child_count(pz) == 1
+                @test test_bit(child_mask(pz), UInt8('p'))
             end
 
             @testset "descend through prefix reaches source" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "X"), 10)
                 pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8, "pre.X"))
-                @test pz_path_exists(pz)
-                @test pz_is_val(pz)
+                descend_to!(pz, collect(UInt8, "pre.X"))
+                @test path_exists(pz)
+                @test is_val(pz)
             end
 
             @testset "off-prefix path does not exist" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "A"), 1)
                 pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8, "wrong.A"))
-                @test !pz_path_exists(pz)
+                descend_to!(pz, collect(UInt8, "wrong.A"))
+                @test !path_exists(pz)
             end
 
             @testset "ascend restores position" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "Y"), 99)
                 pz = PrefixZipper(collect(UInt8, "pre."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8, "pre.Y"))
-                @test pz_is_val(pz)
-                pz_ascend!(pz, 6)  # ascend 6 bytes back through prefix
-                @test isempty(pz_path(pz))
+                descend_to!(pz, collect(UInt8, "pre.Y"))
+                @test is_val(pz)
+                ascend!(pz, 6)  # ascend 6 bytes back through prefix
+                @test isempty(path(pz))
             end
 
             @testset "reset restores to root" begin
                 m = PM{Int}()
                 set_val_at!(m, collect(UInt8, "Z"), 5)
                 pz = PrefixZipper(collect(UInt8, "p."), read_zipper(m))
-                pz_descend_to!(pz, collect(UInt8, "p.Z"))
-                pz_reset!(pz)
-                @test isempty(pz_path(pz))
-                @test pz_child_count(pz) == 1
+                descend_to!(pz, collect(UInt8, "p.Z"))
+                reset!(pz)
+                @test isempty(path(pz))
+                @test child_count(pz) == 1
             end
 
         end
@@ -3436,9 +3436,9 @@ const _MORK_TS = @testset "MORK" begin
                 b = PM{Int}()
                 set_val_at!(b, collect(UInt8, "b"), 2)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
-                @test oz_child_count(oz) == 2
-                @test test_bit(oz_child_mask(oz), UInt8('a'))
-                @test test_bit(oz_child_mask(oz), UInt8('b'))
+                @test child_count(oz) == 2
+                @test test_bit(child_mask(oz), UInt8('a'))
+                @test test_bit(child_mask(oz), UInt8('b'))
             end
 
             @testset "A-value wins over B-value" begin
@@ -3447,9 +3447,9 @@ const _MORK_TS = @testset "MORK" begin
                 b = PM{Int}()
                 set_val_at!(b, collect(UInt8, "k"), 2)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
-                oz_descend_to!(oz, collect(UInt8, "k"))
-                @test oz_is_val(oz)
-                @test oz_val(oz) == 1   # A wins
+                descend_to!(oz, collect(UInt8, "k"))
+                @test is_val(oz)
+                @test val(oz) == 1   # A wins
             end
 
             @testset "to_next_val iterates all overlay values" begin
@@ -3460,8 +3460,8 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(b, collect(UInt8, "c"), 3)
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
                 vals = Int[]
-                while oz_to_next_val!(oz)
-                    push!(vals, oz_val(oz))
+                while to_next_val!(oz)
+                    push!(vals, val(oz))
                 end
                 @test sort(vals) == [1, 2, 3]
             end
@@ -3471,23 +3471,23 @@ const _MORK_TS = @testset "MORK" begin
                 set_val_at!(a, collect(UInt8, "abc"), 1)
                 b = PM{Int}()
                 oz = OverlayZipper(read_zipper(a), read_zipper(b))
-                oz_descend_to!(oz, collect(UInt8, "abc"))
-                @test oz_is_val(oz)
-                oz_reset!(oz)
-                @test isempty(oz_path(oz))
+                descend_to!(oz, collect(UInt8, "abc"))
+                @test is_val(oz)
+                reset!(oz)
+                @test isempty(path(oz))
             end
 
         end
 
         @testset "zt_into_reader — write → read downgrade" begin
             stp = SharedTrackerPaths()
-            path = collect(UInt8, "w")
-            tw = ZipperTracker{TrackingWrite}(stp, path)
-            @test stp_path_status(stp, path) == PATH_STATUS_UNAVAILABLE
+            p = collect(UInt8, "w")
+            tw = ZipperTracker{TrackingWrite}(stp, p)
+            @test stp_path_status(stp, p) == PATH_STATUS_UNAVAILABLE
             tr = zt_into_reader(tw)   # tw is consumed
-            @test stp_path_status(stp, path) == PATH_STATUS_AVAILABLE_FOR_READ
+            @test stp_path_status(stp, p) == PATH_STATUS_AVAILABLE_FOR_READ
             zt_release!(tr)
-            @test stp_path_status(stp, path) == PATH_STATUS_AVAILABLE
+            @test stp_path_status(stp, p) == PATH_STATUS_AVAILABLE
         end
 
     end
@@ -3501,29 +3501,29 @@ const _MORK_TS = @testset "MORK" begin
         @testset "zipper_head1: write and read back a value" begin
             m = PM{Int}()
             zh = zipper_head(m)
-            z = zh_write_zipper_at_exclusive_path(zh, [UInt8(0)])
-            wzt_set_val!(z, 0)
-            wzt_release!(z)
+            z = write_zipper_at_exclusive_path(zh, [UInt8(0)])
+            set_val!(z, 0)
+            release!(z)
             @test get_val_at(m, [UInt8(0)]) == 0
         end
 
         @testset "zipper_head2: write via zipper at root" begin
             m = PM{Int}()
             zh = zipper_head(m)
-            z = zh_write_zipper_at_exclusive_path(zh, UInt8[])
-            wzt_descend_to!(z, collect(UInt8, "test"))
-            wzt_set_val!(z, 0)
-            wzt_release!(z)
+            z = write_zipper_at_exclusive_path(zh, UInt8[])
+            descend_to!(z, collect(UInt8, "test"))
+            set_val!(z, 0)
+            release!(z)
             @test get_val_at(m, collect(UInt8, "test")) == 0
         end
 
         @testset "zipper_head3: multi-byte path creation" begin
             m = PM{Int}()
             zh = zipper_head(m)
-            z = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "test"))
-            wzt_descend_to!(z, collect(UInt8, ":2"))
-            wzt_set_val!(z, 2)
-            wzt_release!(z)
+            z = write_zipper_at_exclusive_path(zh, collect(UInt8, "test"))
+            descend_to!(z, collect(UInt8, ":2"))
+            set_val!(z, 2)
+            release!(z)
             @test get_val_at(m, collect(UInt8, "test:2")) == 2
         end
 
@@ -3531,37 +3531,37 @@ const _MORK_TS = @testset "MORK" begin
             m = PM{Int}()
             set_val_at!(m, collect(UInt8, "test:3"), 3)
             zh = zipper_head(m)
-            z = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "test"))
-            wzt_descend_to!(z, collect(UInt8, ":3"))
-            @test wzt_path_exists(z)
-            @test wzt_get_val(z) == 3
-            wzt_set_val!(z, 33)
-            wzt_release!(z)
+            z = write_zipper_at_exclusive_path(zh, collect(UInt8, "test"))
+            descend_to!(z, collect(UInt8, ":3"))
+            @test path_exists(z)
+            @test val(z) == 3
+            set_val!(z, 33)
+            release!(z)
             @test get_val_at(m, collect(UInt8, "test:3")) == 33
         end
 
         @testset "exclusive path conflict detection" begin
             m = PM{Int}()
             zh = zipper_head(m)
-            z = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
-            @test_throws Conflict zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
-            wzt_release!(z)
+            z = write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
+            @test_throws Conflict write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
+            release!(z)
             # After release, same path is available again
-            z2 = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
-            wzt_set_val!(z2, 1)
-            wzt_release!(z2)
+            z2 = write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
+            set_val!(z2, 1)
+            release!(z2)
             @test get_val_at(m, collect(UInt8, "a")) == 1
         end
 
         @testset "non-overlapping paths can coexist" begin
             m = PM{Int}()
             zh = zipper_head(m)
-            za = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
-            zb = zh_write_zipper_at_exclusive_path(zh, collect(UInt8, "b"))
-            wzt_set_val!(za, 1)
-            wzt_set_val!(zb, 2)
-            wzt_release!(za)
-            wzt_release!(zb)
+            za = write_zipper_at_exclusive_path(zh, collect(UInt8, "a"))
+            zb = write_zipper_at_exclusive_path(zh, collect(UInt8, "b"))
+            set_val!(za, 1)
+            set_val!(zb, 2)
+            release!(za)
+            release!(zb)
             @test get_val_at(m, collect(UInt8, "a")) == 1
             @test get_val_at(m, collect(UInt8, "b")) == 2
         end
@@ -4298,7 +4298,7 @@ const _MORK_TS = @testset "MORK" begin
             end
 
             # ACTZipper traversal over mmap tree
-            @test PathMaps.act_val_count(PathMaps.act_read_zipper(tree_mmap)) == 3
+            @test PathMaps.val_count(PathMaps.read_zipper(tree_mmap)) == 3
 
             rm(tmpfile; force=true)
         end
@@ -4316,14 +4316,14 @@ const _MORK_TS = @testset "MORK" begin
             @test PathMaps.get_val_at(m, b"xyz") === 3
         end
 
-        @testset "wz_remove_branches! with prune=true" begin
+        @testset "remove_branches! with prune=true" begin
             m = PM{Int}()
             PathMaps.set_val_at!(m, b"foo:a", 10)
             PathMaps.set_val_at!(m, b"foo:b", 20)
             PathMaps.set_val_at!(m, b"bar", 30)
 
             wz = PathMaps.write_zipper_at_path(m, b"foo:")
-            PathMaps.wz_remove_branches!(wz, true)
+            PathMaps.remove_branches!(wz, true)
 
             @test PathMaps.get_val_at(m, b"foo:a") === nothing
             @test PathMaps.get_val_at(m, b"foo:b") === nothing
@@ -4408,9 +4408,9 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "HeadSink — finalize joins head map into btm (regression: was MethodError)" begin
             # Regression for the COW-audit finding: sink_finalize! called
-            # wz_join_into!(wz, root) where root::TrieNodeODRc, but wz_join_into!
+            # join_into!(wz, root) where root::TrieNodeODRc, but join_into!
             # only accepts an AbstractNodeRef → MethodError. Fixed to use the
-            # map-level wz_join_map_into!(wz, s.head). Populate the collected-head
+            # map-level join_map_into!(wz, s.head). Populate the collected-head
             # map directly (skip/max are irrelevant to finalize).
             btm = new_space().btm
             e_buf = vcat(item_byte(ExprArity(UInt8(3))), _sym("head"), _sym("2"), _sym("x"))
@@ -4456,10 +4456,10 @@ const _MORK_TS = @testset "MORK" begin
                     item_byte(ExprSymbol(UInt8(length(name)))), Vector{UInt8}(name)...,
                     _sym("x"))
                 sink = ACTSink(MORK.Expr(e_buf))
-                # Construct a path that starts with the ACT prefix
+                # Construct a p that starts with the ACT prefix
                 content = _sym("abc")
-                path = vcat(e_buf[1:sink.skip], content)
-                sink_apply!(sink, Dict(), path, btm)
+                p = vcat(e_buf[1:sink.skip], content)
+                sink_apply!(sink, Dict(), p, btm)
                 @test sink_finalize!(sink, btm) == true
                 @test isfile(joinpath(tmpdir, "testfile.act"))
             finally
@@ -4467,15 +4467,15 @@ const _MORK_TS = @testset "MORK" begin
             end
         end
 
-        @testset "HashSink — does not throw on valid path" begin
+        @testset "HashSink — does not throw on valid p" begin
             btm = new_space().btm
             e_buf = vcat(item_byte(ExprArity(UInt8(4))),
                 item_byte(ExprSymbol(UInt8(4))), Vector{UInt8}("hash")...,
                 _sym("r"), _sym("c"), _sym("h"))
             sink = HashSink(MORK.Expr(e_buf))
             content = vcat(_sym("abc"), _sym("xyz"))
-            path = vcat(e_buf[1:sink.skip], content)
-            sink_apply!(sink, Dict(), path, btm)
+            p = vcat(e_buf[1:sink.skip], content)
+            sink_apply!(sink, Dict(), p, btm)
             @test_nowarn sink_finalize!(sink, btm)
         end
 

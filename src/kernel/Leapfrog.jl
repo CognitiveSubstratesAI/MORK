@@ -165,11 +165,11 @@ using ..MORK: Expr as MORKExpr
 # `PathMaps.PathMap{…}` then resolves a field on a UnionAll and fails to load. Import the type
 # plainly and take everything else by name.
 using PathMaps: ByteMask, test_bit, next_bit, PathMap, UnitVal, ReadZipperCore, GlobalAlloc,
-    read_zipper_at_path, set_val_at!, zipper_to_next_val!,
-    zipper_path, zipper_child_mask, zipper_ascend!, zipper_ascend_byte!,
-    zipper_descend_to_byte!, zipper_descend_first_byte!, zipper_descend_to!,
-    zipper_descend_first_k_path!, zipper_descend_until_max_bytes!,
-    zipper_to_next_sibling_byte!, zipper_is_val,
+    read_zipper_at_path, set_val_at!, to_next_val!,
+    path, depth, focus_byte, child_mask, ascend!, ascend_byte!,
+    descend_to_byte!, descend_first_byte!, descend_to!,
+    descend_first_k_path!, descend_until_max_bytes!,
+    to_next_sibling_byte!, is_val,
     iter        # ⇐ ByteMask's set-bit iterator; `import PathMaps` collides with the TYPE
 
 export subterm_parse_step, least_ge, is_complete, PARSE_START,
@@ -280,13 +280,13 @@ flags exactly this; the test below is not redundant.
 #      of scanning a `Vec`."
 #
 # 🔑 THE ZIPPER'S OWN PATH IS THE KEY. The cursor keeps no copy of the current subterm — it is
-# `zipper_path(z)[floor+1:end]`, and `floor` is ONE INTEGER replacing what upstream previously
+# `path(z)[floor+1:end]`, and `floor` is ONE INTEGER replacing what upstream previously
 # maintained as a byte-for-byte mirror. That is the difference between this and our
 # `_connected_join_emit!`, which copies a `Vector` and a `Dict` per intermediate tuple.
 #
 # ⚠️ EVERY PRIMITIVE THIS NEEDS WAS ALREADY IN OUR PathMap, under our own names. Checked
 # 2026-08-20 by capability, after a name search said `descend_first_k_path` was ABSENT — it is
-# `zipper_descend_first_k_path!` (Zipper.jl:1081, whose docstring literally says "Mirrors
+# `descend_first_k_path!` (Zipper.jl:1081, whose docstring literally says "Mirrors
 # `descend_first_k_path`"). Third false absence from a name search that day.
 # ═════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -312,7 +312,7 @@ const QUERY_NS = UInt8(0)
 
 One column of the enumeration: where its key starts, plus the incremental parse of that key.
 
-`floor` is the absolute length of `zipper_path(z)` at this column's start; the subterm under
+`floor` is the absolute length of `path(z)` at this column's start; the subterm under
 enumeration is the path beyond it. `owed_subterms`/`owed_payload` are the running fold of
 [`subterm_parse_step`] over that key from [`PARSE_START`], so the boundary test is O(1) rather than
 an O(len) replay per descent step — which upstream measured as making an L-byte subterm O(L^2) and
@@ -369,15 +369,15 @@ end
 
 "Build a cursor at the zipper's current focus. NOT positioned until `cursor_first!`/`cursor_seek!`."
 SubtermCursor(z::ReadZipperCore{V, A}) where {V, A} =
-    SubtermCursor{V, A}(z, Column(length(zipper_path(z))), true, Column[])
+    SubtermCursor{V, A}(z, Column(depth(z)), true, Column[])
 
-@inline cursor_key_len(c::SubtermCursor) = length(zipper_path(c.z)) - c.col.floor
+@inline cursor_key_len(c::SubtermCursor) = depth(c.z) - c.col.floor
 
 "`(NewVar count, total variable count)` of the current key — EXACT, and free."
 @inline cursor_var_counts(c::SubtermCursor) = (c.col.key_newvars, c.col.key_vars)
 
 "Whether the focus carries a stored value: the factor's fact is present at this full binding."
-@inline cursor_has_value(c::SubtermCursor) = zipper_is_val(c.z)
+@inline cursor_has_value(c::SubtermCursor) = is_val(c.z)
 
 """
     cursor_key(c) -> Union{Nothing, SubArray{UInt8}}
@@ -386,7 +386,7 @@ The current subterm bytes, or `nothing` when exhausted. A VIEW of the zipper's o
 copy, which is the entire point of the design.
 """
 @inline cursor_key(c::SubtermCursor) =
-    c.at_end ? nothing : view(zipper_path(c.z), (c.col.floor + 1):length(zipper_path(c.z)))
+    c.at_end ? nothing : view(path(c.z), (c.col.floor + 1):depth(c.z))
 
 "Whether the key spells exactly one complete subterm, read off the incremental state — O(1)."
 @inline cursor_key_complete(c::SubtermCursor) =
@@ -404,7 +404,7 @@ runs in CI rather than by something that is disabled exactly when it would matte
 """
 function cursor_check_invariants(c::SubtermCursor)::Bool
     length(c.col.parse_stack) == cursor_key_len(c) || return false
-    k = view(zipper_path(c.z), (c.col.floor + 1):length(zipper_path(c.z)))
+    k = view(path(c.z), (c.col.floor + 1):depth(c.z))
     cursor_key_complete(c) == is_complete(k)
 end
 
@@ -464,7 +464,7 @@ end
 "Ascend back to the floor (column start), clearing the key."
 function cursor_reset_to_floor!(c::SubtermCursor)
     n = cursor_key_len(c)
-    n > 0 && zipper_ascend!(c.z, n)
+    n > 0 && ascend!(c.z, n)
     col_reset!(c.col, c.col.floor)
     c.at_end = false
     nothing
@@ -482,7 +482,7 @@ dominant cost". Pairs with [`cursor_ascend_floor!`].
 """
 function cursor_descend_floor!(c::SubtermCursor)
     push!(c.floor_stack, c.col)
-    c.col = Column(length(zipper_path(c.z)))
+    c.col = Column(depth(c.z))
     c.at_end = false
     nothing
 end
@@ -524,7 +524,7 @@ end
 function cursor_descend_raw!(c::SubtermCursor, bytes::AbstractVector{UInt8})
     # The raw fragment is NOT part of the key (the floor moves past it), so the parse state is
     # untouched: an empty key still owes exactly one subterm, now measured from the deeper floor.
-    zipper_descend_to!(c.z, bytes)
+    descend_to!(c.z, bytes)
     c.col.floor += length(bytes)
     c.at_end = false
     nothing
@@ -532,7 +532,7 @@ end
 
 "Undo the most recent `cursor_descend_raw!` of `n` bytes."
 function cursor_ascend_raw!(c::SubtermCursor, n::Int)
-    zipper_ascend!(c.z, n)
+    ascend!(c.z, n)
     c.col.floor -= n
     c.at_end = false
     nothing
@@ -548,12 +548,12 @@ runs out of children before completion.
 
 ⚠️ THREE MOVES, IN THIS ORDER, AND THE ORDER IS THE OPTIMIZATION:
  1. A symbol's PAYLOAD is a run whose length the parse already knows and inside which no decision is
-    taken — take all of it in ONE `zipper_descend_first_k_path!`. Per-byte descent would pay a node
+    taken — take all of it in ONE `descend_first_k_path!`. Per-byte descent would pay a node
     lookup, a regularize and a key memcmp for every byte. The records the run owes are the
     arithmetic sequence the parse would have produced, and payload bytes are NOT tags, so no
     variable count moves.
  2. The trie is PATH-COMPRESSED, so a span with no branching IS one node key — take the whole span
-    with `zipper_descend_until_max_bytes!` and run the allocation-free byte parse over what it
+    with `descend_until_max_bytes!` and run the allocation-free byte parse over what it
     produced, ascending back if it ran past the subterm boundary.
  3. Only then, the leftmost child one byte at a time.
 """
@@ -561,7 +561,7 @@ function complete_leftmost!(c::SubtermCursor)::Bool
     while !cursor_key_complete(c)
         owed = Int(c.col.owed_payload)
         if owed > 1
-            if !zipper_descend_first_k_path!(c.z, owed)
+            if !descend_first_k_path!(c.z, owed)
                 c.at_end = true
                 return false
             end
@@ -574,25 +574,25 @@ function complete_leftmost!(c::SubtermCursor)::Bool
             c.col.owed_payload = UInt32(0)
             continue
         end
-        before = length(zipper_path(c.z))
-        if zipper_descend_until_max_bytes!(c.z, 64)
-            path = zipper_path(c.z)
-            e = length(path)
+        before = depth(c.z)
+        if descend_until_max_bytes!(c.z, 64)
+            p = path(c.z)
+            e = length(p)
             i = before
             while i < e
-                advance_parse_at!(c, path[i + 1], false)
+                advance_parse_at!(c, p[i + 1], false)
                 i += 1
                 (c.col.owed_subterms == 0 && c.col.owed_payload == 0) && break
             end
-            i < e && zipper_ascend!(c.z, e - i)
+            i < e && ascend!(c.z, e - i)
             continue
         end
-        if !zipper_descend_first_byte!(c.z)
+        b = descend_first_byte!(c.z)
+        if b === nothing
             c.at_end = true
             return false
         end
-        p = zipper_path(c.z)
-        advance_parse!(c, p[end])
+        advance_parse!(c, b)
     end
     true
 end
@@ -618,26 +618,26 @@ function backtrack_then_leftmost!(c::SubtermCursor)::Bool
             c.at_end = true
             return false
         end
-        cur = length(zipper_path(c.z))
+        cur = depth(c.z)
         target = c.col.floor + n
         if cur > target
-            path = zipper_path(c.z)
+            p = path(c.z)
             for i in cur:-1:(target + 1)
-                retreat_parse!(c, path[i])
+                retreat_parse!(c, p[i])
             end
-            zipper_ascend!(c.z, cur - target)
+            ascend!(c.z, cur - target)
         end
         # ⚠️ READ THE DEPARTING BYTE BEFORE THE ZIPPER MOVES. With the path as the only
         # representation of the key, it lives nowhere else.
-        old = zipper_path(c.z)[end]
-        if zipper_to_next_sibling_byte!(c.z)
-            b = zipper_path(c.z)[end]
+        old = focus_byte(c.z)
+        b = to_next_sibling_byte!(c.z)
+        if b !== nothing
             retreat_parse!(c, old)
             advance_parse!(c, b)
             return complete_leftmost!(c)
         end
         retreat_parse!(c, old)
-        zipper_ascend_byte!(c.z)
+        ascend_byte!(c.z)
     end
 end
 
@@ -674,11 +674,11 @@ function cursor_seek!(c::SubtermCursor, target::AbstractVector{UInt8})
             c.at_end = false
             return nothing
         end
-        mask = zipper_child_mask(c.z)
+        mask = child_mask(c.z)
         if ti <= length(target)
             t = target[ti]
             if test_bit(mask, t)
-                zipper_descend_to_byte!(c.z, t)
+                descend_to_byte!(c.z, t)
                 advance_parse!(c, t)
                 ti += 1
                 continue
@@ -687,7 +687,7 @@ function cursor_seek!(c::SubtermCursor, target::AbstractVector{UInt8})
             if b === nothing
                 backtrack_then_leftmost!(c)
             else
-                zipper_descend_to_byte!(c.z, b)
+                descend_to_byte!(c.z, b)
                 advance_parse!(c, b)
                 complete_leftmost!(c)
             end
@@ -1023,7 +1023,7 @@ end
 The trie children at the column start. Requires the cursor to be AT its floor — the caller's
 obligation, and `ground_probe` satisfies it by reading the mask before it seeks.
 """
-@inline cursor_floor_child_mask(c::SubtermCursor)::ByteMask = zipper_child_mask(c.z)
+@inline cursor_floor_child_mask(c::SubtermCursor)::ByteMask = child_mask(c.z)
 
 """
     ground_probe!(c, ground) -> (exact::Bool, mask::ByteMask)
@@ -2249,7 +2249,7 @@ Upstream needs a real reconstruction only for a RE-INDEXED factor, whose columns
 a private map; we do not re-index, so this stays a copy.
 """
 function fact_bytes(st::UnifyJoinState, f::Int)::Vector{UInt8}
-    # 🔴 `zipper_path` IS RELATIVE TO THE ZIPPER'S ROOT, NOT ABSOLUTE. The cursor was opened AT the
+    # 🔴 `path` IS RELATIVE TO THE ZIPPER'S ROOT, NOT ABSOLUTE. The cursor was opened AT the
     # factor's prefix, so its path is the COLUMN BYTES ONLY and the prefix must be prepended.
     #
     # ⚠️ THIS SHIPPED WRONG IN 8d02787 AND NO TEST COULD SEE IT. `loc` came back as
@@ -2260,14 +2260,14 @@ function fact_bytes(st::UnifyJoinState, f::Int)::Vector{UInt8}
     # assumption (`reserved byte: 0x6e` — a symbol payload read as a tag).
     # `test/integration/leapfrog_loc.jl` is the test that would have caught it: it compares the loc
     # BYTES against the stock engine, not the counts. [[feedback_assert_the_contract_not_the_representation]]
-    path = Vector{UInt8}(zipper_path(st.cursors[f].z))
+    p = Vector{UInt8}(path(st.cursors[f].z))
     ord = st.reindex_order[f]
-    isempty(ord) && return vcat(st.prefixes[f], path)   # live map: prefix ++ consumed columns
+    isempty(ord) && return vcat(st.prefixes[f], p)   # live map: prefix ++ consumed columns
     # 🔴 RE-INDEXED: the path is the PERMUTED key. `loc` must be the ORIGINAL stored fact, so undo
     # the permutation and put the prefix back. Returning the permuted bytes would hand the caller a
     # well-formed atom that is NOT in the space — a wrong answer with no error.
-    cols = ri_split_columns(path, length(ord))
-    items = ri_columns_to_items(path, cols)
+    cols = ri_split_columns(p, length(ord))
+    items = ri_columns_to_items(p, cols)
     vcat(st.prefixes[f], ri_emit_reordered(items, ri_invert_order(ord)))
 end
 
@@ -2733,7 +2733,7 @@ function reindex_regions(btm::PathMap{UnitVal}, factor::UnifyFactor)
 
     head_bytes = hb[1:(1 + Int(t.size))]        # the symbol IS tag + payload
     regions = Vector{UInt8}[vcat(factor.prefix, head_bytes)]
-    mask = zipper_child_mask(read_zipper_at_path(btm, factor.prefix))
+    mask = child_mask(read_zipper_at_path(btm, factor.prefix))
     for w in stored_wildcard_bytes(mask)
         push!(regions, vcat(factor.prefix, UInt8[w]))
     end
@@ -2747,7 +2747,7 @@ Fold every fact under `region` into `reindex`, permuted by `new_order`. `plen` i
 prefix length, so the column bytes start at `plen` of the absolute path regardless of how deep
 `region` reaches.
 
-⚠️ A FACT STORED EXACTLY AT THE REGION ROOT NEEDS FOLDING EXPLICITLY — `zipper_to_next_val!` starts
+⚠️ A FACT STORED EXACTLY AT THE REGION ROOT NEEDS FOLDING EXPLICITLY — `to_next_val!` starts
 strictly BELOW the root. Only a single-column factor can reach that, and a single-column factor is
 never inverted, but the walk stays total either way rather than relying on that argument.
 """
@@ -2759,16 +2759,16 @@ function fold_region_into_reindex!(btm::PathMap{UnitVal}, region::Vector{UInt8},
         items = ri_columns_to_items(colbytes, cols)
         set_val_at!(reindex, ri_emit_reordered(items, new_order), UNIT_VAL)
     end
-    # ⚠️ `zipper_path` IS RELATIVE to `region`, so the column bytes are
+    # ⚠️ `path` IS RELATIVE to `region`, so the column bytes are
     # `region-beyond-the-prefix` ++ `the zipper's own path`. Slicing the zipper path by `plen`
     # instead — which assumed an absolute path — cut into the middle of a symbol and threw
     # `reserved byte: 0x6e` (an ASCII payload byte read as a tag). Upstream reads `origin_path()`
     # here for exactly this reason.
     head = length(region) > plen ? region[(plen + 1):end] : UInt8[]
     rz = read_zipper_at_path(btm, region)
-    zipper_is_val(rz) && !isempty(head) && _ins(head)
-    while zipper_to_next_val!(rz)
-        _ins(vcat(head, Vector{UInt8}(zipper_path(rz))))
+    is_val(rz) && !isempty(head) && _ins(head)
+    while to_next_val!(rz)
+        _ins(vcat(head, Vector{UInt8}(path(rz))))
     end
     nothing
 end

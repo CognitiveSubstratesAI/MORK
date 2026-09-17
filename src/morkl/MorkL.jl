@@ -134,7 +134,7 @@ mutable struct Subroutine
 end
 
 function Base.copy(sr::Subroutine)
-    new_rz = read_zipper_at_path(sr.zipper_space, collect(zipper_path(sr.read_zipper)))
+    new_rz = read_zipper_at_path(sr.zipper_space, collect(path(sr.read_zipper)))
     Subroutine(deepcopy(sr.zipper_space), new_rz, deepcopy(sr.iter),
         sr.subroutine_start_counter, sr.previous_program_counter, sr.prefix_first_byte)
 end
@@ -211,22 +211,22 @@ _is_length_byte(b::UInt8)::Bool = (b & 0b11000000) == 0
 function _morkl_drop_head(space::PathMap{UnitVal})::PathMap{UnitVal}
     out = deepcopy(space)
     wz = write_zipper(out)
-    mask = wz_child_mask(wz)
+    mask = child_mask(wz)
     for b in iter(mask)
         (!_is_length_byte(b) || b == 0) && continue
-        wz_descend_to!(wz, UInt8[b])
-        wz_join_k_path_into!(wz, Int(b))   # drop_head(b)
-        wz_ascend!(wz, 1)
+        descend_to!(wz, UInt8[b])
+        join_k_path_into!(wz, Int(b))   # drop_head(b)
+        ascend!(wz, 1)
     end
-    wz_join_k_path_into!(wz, 1)            # drop_head(1) at the root
+    join_k_path_into!(wz, 1)            # drop_head(1) at the root
     out
 end
 
 function _descend_leading!(rz::ReadZipperCore, prefix_first_byte::UInt8)
-    zipper_reset!(rz)
-    zipper_descend_to!(rz, UInt8[prefix_first_byte])
+    reset!(rz)
+    descend_to!(rz, UInt8[prefix_first_byte])
     if _is_length_byte(prefix_first_byte) && prefix_first_byte > 0
-        zipper_descend_to!(rz, zeros(UInt8, Int(prefix_first_byte)))
+        descend_to!(rz, zeros(UInt8, Int(prefix_first_byte)))
     end
 end
 
@@ -332,11 +332,11 @@ end
 
 Get the memoized result for a path (returns the full sub-trie).
 """
-function interp_get_memo(interp::Interpreter, path::AbstractVector{UInt8})::PathMap{UnitVal}
+function interp_get_memo(interp::Interpreter, key::AbstractVector{UInt8})::PathMap{UnitVal}
     m = PathMap{UnitVal}()
-    rz = read_zipper_at_path(interp.memo, collect(path))
-    while zipper_to_next_val!(rz)
-        set_val_at!(m, collect(zipper_path(rz)), UNIT_VAL)
+    rz = read_zipper_at_path(interp.memo, collect(key))
+    while to_next_val!(rz)
+        set_val_at!(m, collect(path(rz)), UNIT_VAL)
     end
     m
 end
@@ -346,12 +346,12 @@ end
 
 Store a result in the memo PathMaps.
 """
-function interp_set_memo!(interp::Interpreter, path::AbstractVector{UInt8},
+function interp_set_memo!(interp::Interpreter, key::AbstractVector{UInt8},
     result::PathMap{UnitVal})
-    p = collect(path)
+    p = collect(key)
     rz = read_zipper(result)
-    while zipper_to_next_val!(rz)
-        set_val_at!(interp.memo, vcat(p, collect(zipper_path(rz))), UNIT_VAL)
+    while to_next_val!(rz)
+        set_val_at!(interp.memo, vcat(p, collect(path(rz))), UNIT_VAL)
     end
     isempty(p) || val_count(result) == 0 || set_val_at!(interp.memo, p, UNIT_VAL)
 end
@@ -483,8 +483,8 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                 src = space_reg[r0 + 1]
                 rz = read_zipper(src)
                 wz = write_zipper_at_path(out, prefix)
-                while zipper_to_next_val!(rz)
-                    p = collect(zipper_path(rz))
+                while to_next_val!(rz)
+                    p = collect(path(rz))
                     set_val_at!(out, vcat(prefix, p), UNIT_VAL)
                 end
                 space_reg[pc_ref[] + 1] = out
@@ -494,8 +494,8 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                 src = space_reg[r0 + 1]
                 rz = read_zipper_at_path(src, prefix)
                 m = PathMap{UnitVal}()
-                while zipper_to_next_val!(rz)
-                    set_val_at!(m, collect(zipper_path(rz)), UNIT_VAL)
+                while to_next_val!(rz)
+                    set_val_at!(m, collect(path(rz)), UNIT_VAL)
                 end
                 if val_count(m) == 0
                     return :malformed
@@ -507,7 +507,7 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
 
             elseif op == OP_EXTRACT_PATH_REF
                 path = if !isempty(sub_stack)
-                    collect(zipper_path(sub_stack[end].read_zipper))
+                    collect(path(sub_stack[end].read_zipper))
                 else
                     const_path()
                 end
@@ -523,8 +523,8 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                     m = PathMap{UnitVal}()
                     # Copy paths from memo at this prefix
                     rz = read_zipper_at_path(interp.memo, cp)
-                    while zipper_to_next_val!(rz)
-                        set_val_at!(m, collect(zipper_path(rz)), UNIT_VAL)
+                    while to_next_val!(rz)
+                        set_val_at!(m, collect(path(rz)), UNIT_VAL)
                     end
                     m
                 end
@@ -552,7 +552,7 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
                 src_space = space_reg[r1 + 1]
                 zspace = deepcopy(src_space)
                 rz = read_zipper(zspace)
-                mask_tuple = zipper_child_mask(rz)
+                mask_tuple = child_mask(rz)
                 mask_arr = (
                     mask_tuple.bits[1],
                     mask_tuple.bits[2],
@@ -596,7 +596,7 @@ function run_routine(interp::Interpreter, routine_with_arguments::AbstractVector
 
                     # Advance iterator
                     if _is_length_byte(sr.prefix_first_byte) && sr.prefix_first_byte > 0 &&
-                        zipper_to_next_val!(sr.read_zipper)
+                        to_next_val!(sr.read_zipper)
                         push!(
                             sub_stack,
                             Subroutine(sr.zipper_space, sr.read_zipper, sr.iter,

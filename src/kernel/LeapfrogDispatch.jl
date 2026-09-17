@@ -107,7 +107,7 @@ function warn_top_level_variable(s::Space; warn::Bool=true)::Bool
     # has no field". I hit that exact error in a throwaway probe an hour before writing this, called
     # it irrelevant to what I was measuring, and then reproduced it in shipped code.
     # [[feedback_verify_code_body_not_comments]]
-    mask = zipper_child_mask(read_zipper(s.btm))
+    mask = child_mask(read_zipper(s.btm))
     lo = item_byte(ExprVarRef(0x00))               # 0x80
     hi = item_byte(ExprNewVar())                   # 0xC0
     found = false

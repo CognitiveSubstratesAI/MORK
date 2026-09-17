@@ -12,7 +12,7 @@
 
 using MORK
 using MORK: ExprArity, ExprSymbol, item_byte, byte_item
-using PathMap: read_zipper_at_path, zipper_to_next_val!, zipper_path, act_open_mmap
+using PathMap: read_zipper_at_path, to_next_val!, path, act_open_mmap
 
 const SKEL_HEAD = codeunits("skel-br")
 
@@ -65,8 +65,8 @@ function query_skeleton(shard_trees, root_id::AbstractString)
     branches = Vector{Vector{String}}()
     for tree in shard_trees
         rz = read_zipper_at_path(tree, prefix)
-        while zipper_to_next_val!(rz)
-            fs = _parse_skel_args(collect(zipper_path(rz)))
+        while to_next_val!(rz)
+            fs = _parse_skel_args(collect(path(rz)))
             fs === nothing || push!(branches, fs)
         end
     end

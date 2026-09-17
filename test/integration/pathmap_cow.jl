@@ -12,8 +12,8 @@ using MORK, PathMaps, Test
     # Graft m1 into m2 under "prefix:"
     m2 = PathMaps.PathMap{UInt32}()
     wz2 = write_zipper(m2)
-    wz_descend_to!(wz2, b"prefix:")
-    wz_graft_map!(wz2, m1)
+    descend_to!(wz2, b"prefix:")
+    graft_map!(wz2, m1)
 
     # Verify graft is readable
     @test get_val_at(m2, b"prefix:hello") == UInt32(42)
@@ -21,16 +21,16 @@ using MORK, PathMaps, Test
 
     # Now write through m2 — must NOT corrupt m1
     wz3 = write_zipper(m2)
-    wz_descend_to!(wz3, b"prefix:hello")
-    wz_set_val!(wz3, UInt32(99))
+    descend_to!(wz3, b"prefix:hello")
+    set_val!(wz3, UInt32(99))
 
     @test get_val_at(m2, b"prefix:hello") == UInt32(99)   # m2 updated
     @test get_val_at(m1, b"hello") == UInt32(42)  # m1 unchanged
 
     # ── Scenario 2: second value in shared subtrie also independent ──
     wz4 = write_zipper(m2)
-    wz_descend_to!(wz4, b"prefix:hello_world")
-    wz_set_val!(wz4, UInt32(100))
+    descend_to!(wz4, b"prefix:hello_world")
+    set_val!(wz4, UInt32(100))
 
     @test get_val_at(m2, b"prefix:hello_world") == UInt32(100)
     @test get_val_at(m1, b"hello_world") == UInt32(7)   # m1 still unchanged
@@ -41,12 +41,12 @@ using MORK, PathMaps, Test
 
     m4 = PathMaps.PathMap{UInt32}()
     wz6 = write_zipper(m4)
-    wz_join_map_into!(wz6, m3)
+    join_map_into!(wz6, m3)
 
     # Write to m4
     wz7 = write_zipper(m4)
-    wz_descend_to!(wz7, b"foo")
-    wz_set_val!(wz7, UInt32(999))
+    descend_to!(wz7, b"foo")
+    set_val!(wz7, UInt32(999))
 
     @test get_val_at(m4, b"foo") == UInt32(999)
     @test get_val_at(m3, b"foo") == UInt32(1)   # m3 unchanged

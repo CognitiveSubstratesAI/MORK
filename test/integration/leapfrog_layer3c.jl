@@ -42,17 +42,17 @@ end
         atoms = ["(rel a)", "(rel b)"]
         (_, c) = _l3_cursor(atoms)
         floor_before = c.col.floor
-        path_before = length(PathMaps.zipper_path(c.z))
+        path_before = length(PathMaps.path(c.z))
 
         _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel a)").buf)
         @test c.col.floor == floor_before
-        @test length(PathMaps.zipper_path(c.z)) == path_before
+        @test length(PathMaps.path(c.z)) == path_before
         @test _L3.cursor_check_invariants(c)
 
         # …and a probe that MISSES must restore just as cleanly
         _L3.ground_probe!(c, MORK.sexpr_to_expr("(rel zzz)").buf)
         @test c.col.floor == floor_before
-        @test length(PathMaps.zipper_path(c.z)) == path_before
+        @test length(PathMaps.path(c.z)) == path_before
         @test _L3.cursor_check_invariants(c)
 
         # after probing, a fresh enumeration must still work — the real consequence of a bad restore

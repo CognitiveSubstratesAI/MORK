@@ -14,7 +14,7 @@ using MORK, PathMaps, Test
         set_val_at!(m, b"123:Sue:Cornelius", UInt64(3))
 
         wz = write_zipper_at_path(m, b"123:")
-        result = wz_insert_prefix!(wz, b"pet:")
+        result = insert_prefix!(wz, b"pet:")
         @test result == true
 
         @test get_val_at(m, b"123:pet:Bob:Fido") == UInt64(0)
@@ -27,7 +27,7 @@ using MORK, PathMaps, Test
         # insert_prefix on empty focus returns false
         m2 = PathMaps.PathMap{UInt64}()
         wz2 = write_zipper_at_path(m2, b"no:data:")
-        @test wz_insert_prefix!(wz2, b"prefix:") == false
+        @test insert_prefix!(wz2, b"prefix:") == false
     end
 
     # ── remove_prefix ──────────────────────────────────────────────────
@@ -39,8 +39,8 @@ using MORK, PathMaps, Test
         set_val_at!(m, b"123:Sue.Cornelius", UInt64(3))
 
         wz = write_zipper_at_path(m, b"123")
-        wz_descend_to!(wz, b":Pam")
-        result = wz_remove_prefix!(wz, 4)   # strip ":Pam" (4 bytes)
+        descend_to!(wz, b":Pam")
+        result = remove_prefix!(wz, 4)   # strip ":Pam" (4 bytes)
         @test result == true
 
         # Only Pam's subtrie remains, lifted up by 4 bytes
@@ -72,7 +72,7 @@ using MORK, PathMaps, Test
         set_val_at!(m, b"pre:beta", UInt64(20))
 
         wz = write_zipper_at_path(m, b"pre:")
-        result = wz_remove_prefix!(wz, 4)   # cannot ascend above the origin
+        result = remove_prefix!(wz, 4)   # cannot ascend above the origin
         @test result == false
 
         # The map is untouched.
@@ -93,7 +93,7 @@ end
     m = PathMaps.PathMap{UInt32}()
     set_val_at!(m, b"foo:bar", UInt32(99))
     wz = write_zipper_at_path(m, b"foo:")
-    @test wz_insert_prefix!(wz, b"ns:") == true
+    @test insert_prefix!(wz, b"ns:") == true
     # `ns:foo:bar` is only producible from a ROOT zipper; this test inserts through
     # write_zipper_at_path(m, b"foo:"), so the prefix lands INSIDE that subtree -> `foo:ns:bar`.
     # Verified byte-identical to upstream PathMap (write_zipper.rs:1841-1851): ours and upstream

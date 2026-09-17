@@ -59,11 +59,11 @@ using MORK, PathMaps, Test
         m = PathMaps.PathMap{Int}()
         sub = make_map(["x" => 42])
         wz1 = write_zipper(m)
-        wz_descend_to!(wz1, b"left:")
-        wz_graft_map!(wz1, sub)
+        descend_to!(wz1, b"left:")
+        graft_map!(wz1, sub)
         wz2 = write_zipper(m)
-        wz_descend_to!(wz2, b"right:")
-        wz_graft_map!(wz2, sub)
+        descend_to!(wz2, b"right:")
+        graft_map!(wz2, sub)
 
         total = cata_hybrid_cached(
             m,

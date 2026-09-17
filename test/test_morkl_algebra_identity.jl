@@ -35,8 +35,8 @@ end
 function _mla_paths(m::PathMaps.PathMap{PathMaps.UnitVal})
     z = PathMaps.read_zipper(m)
     out = String[]
-    while PathMaps.zipper_to_next_val!(z)
-        push!(out, String(copy(PathMaps.zipper_path(z))))
+    while PathMaps.to_next_val!(z)
+        push!(out, String(copy(PathMaps.path(z))))
     end
     sort(out)
 end

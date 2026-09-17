@@ -19,7 +19,7 @@ end
         "ot"=>1005, "ugh"=>1006, "und"=>1007])
 
     wz = write_zipper_at_path(a, b"ro")
-    wz_graft_map!(wz, b)
+    graft_map!(wz, b)
 
     # Original keys above graft point
     @test get_val_at(a, b"arrow") == Int32(0)
@@ -51,7 +51,7 @@ end
 
     # Remove branches under "roman"
     wz = write_zipper_at_path(m, b"roman")
-    wz_remove_branches!(wz, true)
+    remove_branches!(wz, true)
     @test get_val_at(m, b"arrow") == Int32(0)
     @test get_val_at(m, b"cannon") == Int32(2)
     @test get_val_at(m, b"rom'i") == Int32(11)
@@ -61,20 +61,20 @@ end
 
     # Remove branches at "ro"
     wz2 = write_zipper(m)
-    wz_descend_to!(wz2, b"ro")
-    @test wz_path_exists(wz2)
-    wz_remove_branches!(wz2, true)
-    @test !wz_path_exists(wz2)
+    descend_to!(wz2, b"ro")
+    @test path_exists(wz2)
+    remove_branches!(wz2, true)
+    @test !path_exists(wz2)
 
     # Remove branches at long key prefix (data removed correctly)
     wz3 = write_zipper(m)
-    wz_descend_to!(wz3, b"abcdefghijklmnopq")
-    @test wz_path_exists(wz3)
-    wz_remove_branches!(wz3, true)
-    @test !wz_path_exists(wz3)
+    descend_to!(wz3, b"abcdefghijklmnopq")
+    @test path_exists(wz3)
+    remove_branches!(wz3, true)
+    @test !path_exists(wz3)
     @test !path_exists_at(m, b"abcdefghijklmnopqrstuvwxyz")
     @test !path_exists_at(m, b"abcdefghijklmnopq")
     # NOTE: Rust preserves prefix_buf path bytes after prune_path_internal
     # (path buffer untouched, only nodes modified). Julia's _wz_prune_path_internal!
-    # uses wz_ascend! which modifies prefix_buf — known divergence from upstream.
+    # uses ascend! which modifies prefix_buf — known divergence from upstream.
 end

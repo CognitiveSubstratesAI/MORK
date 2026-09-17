@@ -58,12 +58,12 @@ using MORK, PathMaps, Test
         @test get_val_at(diff, b"c") == 24.0     # |30-6|
     end
 
-    # ── wz_join_policy! in-place zipper variant ───────────────────────
-    @testset "wz_join_policy!" begin
+    # ── join_policy! in-place zipper variant ───────────────────────
+    @testset "join_policy!" begin
         m_dst = make_map(["x" => 100.0, "y" => 200.0])
         m_src = make_map(["y" => 50.0, "z" => 75.0])
         wz = write_zipper(m_dst)
-        wz_join_policy!(wz, m_src, SumPolicy())
+        join_policy!(wz, m_src, SumPolicy())
         @test get_val_at(m_dst, b"x") == 100.0
         @test get_val_at(m_dst, b"y") == 250.0  # 200 + 50
         @test get_val_at(m_dst, b"z") == 75.0  # inserted

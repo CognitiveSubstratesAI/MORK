@@ -279,14 +279,14 @@ function sink_apply!(s::RemoveSink, bindings::Bindings,
 end
 
 function sink_finalize!(s::RemoveSink, btm::SinkBtm)::Bool
-    # Subtract collected paths from btm using per-path removal.
+    # Subtract collected paths from btm using per-p removal.
     changed = false
     rz = read_zipper(s.remove)
-    while zipper_to_next_val!(rz)
-        path = collect(zipper_path(rz))
-        old = get_val_at(btm, path)
+    while to_next_val!(rz)
+        p = collect(path(rz))
+        old = get_val_at(btm, p)
         if old !== nothing
-            remove_val_at!(btm, path)
+            remove_val_at!(btm, p)
             changed = true
         end
     end
@@ -308,7 +308,7 @@ Mirrors `HeadSink` in sinks.rs.
 # HeadTailSink<const head: bool>, sinks.rs): head keeps the N lexicographically
 # SMALLEST paths (Unix `head`, boundary = max kept), tail keeps the N LARGEST
 # (`tail`, boundary = min kept).
-# finalize uses wz_join_into! (one trie-level merge instead of N individual inserts).
+# finalize uses join_into! (one trie-level merge instead of N individual inserts).
 mutable struct HeadSink <: AbstractSink
     expr::MORK.Expr
     is_head::Bool           # true = head (keep N smallest); false = tail (keep N largest)
@@ -344,9 +344,9 @@ HeadSink(e::MORK.Expr) = _headtail_sink(e, true)
 TailSink(e::MORK.Expr) = _headtail_sink(e, false)
 
 function sink_apply!(s::HeadSink, bindings::Bindings,
-    path::Vector{UInt8}, btm::SinkBtm)
-    length(path) <= s.skip && return nothing
-    mpath = path[(s.skip + 1):end]
+    full_path::Vector{UInt8}, btm::SinkBtm)
+    length(full_path) <= s.skip && return nothing
+    mpath = full_path[(s.skip + 1):end]
     if s.count == s.max
         # At capacity. head: ignore mpath ≥ boundary(=max kept), else displace the
         # max. tail: ignore mpath ≤ boundary(=min kept), else displace the min.
@@ -358,28 +358,28 @@ function sink_apply!(s::HeadSink, bindings::Bindings,
         # PRUNE=TRUE, because that is what upstream's call resolves to. `sinks.rs:399` is
         #     self.extrema.remove(&self.extremum[..]);
         # and `remove` is PathMap's collection-style ALIAS, `trie_map.rs:379-381`:
-        #     pub fn remove<K>(&mut self, path: K) -> Option<V> { self.remove_val_at(path, true) }
+        #     pub fn remove<K>(&mut self, full_path: K) -> Option<V> { self.remove_val_at(full_path, true) }
         # Our `remove_val_at!` defaults `prune=false` (WriteZipper.jl — an ergonomic Julia default;
         # Rust has no default args), and we never ported the `remove` alias, so this call silently
-        # took the non-pruning path.
+        # took the non-pruning full_path.
         #
-        # Why that is a wrong ANSWER: `zipper_descend_last_path!` below walks STRUCTURE, not values
-        # — upstream documents it as "the last path reachable by descent … equivalent to
-        # descend_last_byte in a loop" (zipper.rs:633-640). An unpruned removal leaves the path in
+        # Why that is a wrong ANSWER: `descend_last_path!` below walks STRUCTURE, not values
+        # — upstream documents it as "the last full_path reachable by descent … equivalent to
+        # descend_last_byte in a loop" (zipper.rs:633-640). An unpruned removal leaves the full_path in
         # the trie with no value, so the descent RE-FINDS THE REMOVED KEY and `s.top` never advances
         # past the first eviction. Every later removal then targets a key already gone, and the set
         # grows to N-1 instead of `max`. Confirmed against the live binary: `(head 2 …)` over 5
         # inputs kept 4 here and 2 upstream.
         remove_val_at!(s.head, s.top, true)
-        # recompute the boundary from the kept set: head → last/max path,
+        # recompute the boundary from the kept set: head → last/max full_path,
         # tail → first/min value (upstream: descend_last_path vs to_next_val).
         rz = read_zipper(s.head)
         if s.is_head
-            zipper_descend_last_path!(rz)
+            descend_last_path!(rz)
         else
-            zipper_to_next_val!(rz)
+            to_next_val!(rz)
         end
-        s.top = collect(zipper_path(rz))
+        s.top = collect(path(rz))
     else
         if set_val_at!(s.head, mpath, UNIT_VAL) === nothing  # newly inserted
             s.count += 1
@@ -400,13 +400,13 @@ end
 function sink_finalize!(s::HeadSink, btm::SinkBtm)::Bool
     s.head.root === nothing && return false   # empty head — nothing to join
     wz = write_zipper(btm)
-    # wz_join_into! takes an AbstractNodeRef, not a TrieNodeODRc — passing the bare
-    # root threw MethodError. wz_join_map_into! is the map-level join API: it reads
+    # join_into! takes an AbstractNodeRef, not a TrieNodeODRc — passing the bare
+    # root threw MethodError. join_map_into! is the map-level join API: it reads
     # map.root itself. Mirrors Rust HeadSink finalize
     # `wz.join_into(&self.head.read_zipper())` (sinks.rs:426).
     #
     # ⚠️ THIS COMMENT HAS BEEN WRONG TWICE — the second correction is the one that stuck.
-    #   v1 claimed wz_join_map_into! "is COW-safe (copy()s on identity arms)". False at the time.
+    #   v1 claimed join_map_into! "is COW-safe (copy()s on identity arms)". False at the time.
     #   v2 (2026-08-01, earlier) claimed it CONSUMES `map` by design, faithfully to upstream's
     #      by-value `join_map_into(&mut self, map: PathMap<V,A>)`, and warned that `s.head` was safe
     #      here only because the sink finalizes once. Also false: the mutation was a PathMap DEFECT,
@@ -414,7 +414,7 @@ function sink_finalize!(s::HeadSink, btm::SinkBtm)::Bool
     #      upstream clones it (line_list_node.rs:2515-2532). Fixed; fuzz ratchet 31 → 30 (case 00324).
     # `s.head` now survives the join intact, so neither a second finalize nor a later read of
     # `s.head` can see a polluted map. Pinned in PathMap/test/test_join_preserves_source.jl.
-    status = wz_join_map_into!(wz, s.head)
+    status = join_map_into!(wz, s.head)
     status != ALG_STATUS_IDENTITY
 end
 
@@ -465,8 +465,8 @@ function sink_finalize!(s::CountSink, btm::SinkBtm)::Bool
     order = Vector{Vector{UInt8}}()
     root = sink_request(s)                             # upstream's `request()` write root
     rz = read_zipper(s.unique)
-    while zipper_to_next_val!(rz)
-        parsed = _redsink_parse_entry(collect(zipper_path(rz)); symbol_value=false)
+    while to_next_val!(rz)
+        parsed = _redsink_parse_entry(collect(path(rz)); symbol_value=false)
         parsed === nothing && continue
         (rbytes, source, _value) = parsed
         if !haskey(counts, rbytes)
@@ -611,8 +611,8 @@ function _redsink_finalize!(unique::PathMap{UnitVal}, btm::SinkBtm, init::T, acc
     order = GK[]                                     # EXISTENCE + deterministic order (Dict iteration is not)
     exists = Set{GK}()                               # membership test for `order`, O(1) not O(n)
     rz = read_zipper(unique)
-    while zipper_to_next_val!(rz)
-        parsed = _redsink_parse_entry(collect(zipper_path(rz)))
+    while to_next_val!(rz)
+        parsed = _redsink_parse_entry(collect(path(rz)))
         parsed === nothing && continue
         (rbytes, source, value) = parsed
         key = (rbytes, source)
@@ -1118,7 +1118,7 @@ end
 # =====================================================================
 # HashSink — content-addressed hash verification sink
 # (hash <result-tpl> <context> <hash-expr>)
-# Mirrors HashSink in sinks.rs — Julia-native: uses zipper_fork! + path
+# Mirrors HashSink in sinks.rs — Julia-native: uses fork_read_zipper + path
 # enumeration hash instead of raw-pointer subtrie hash.
 # Semantics: for each collected path, verify that the last SIZE bytes
 # equal the structural hash of the sub-trie rooted just before those bytes.
@@ -1147,11 +1147,11 @@ end
 # Compute a deterministic structural hash of all paths reachable from zipper z.
 # Julia-native equivalent of upstream fork_read_zipper().hash().
 function _zipper_subtrie_hash(z::ReadZipperCore{UnitVal, GlobalAlloc})::UInt64
-    fork = zipper_fork!(z)
-    zipper_reset!(fork)
+    fork = fork_read_zipper(z)
+    reset!(fork)
     h = UInt64(0xa9e17c4d3f8b21c5)   # fixed seed — deterministic across calls
-    while zipper_to_next_val!(fork)
-        for b in zipper_path(fork)
+    while to_next_val!(fork)
+        for b in path(fork)
 
             h = hash(b, h)
         end

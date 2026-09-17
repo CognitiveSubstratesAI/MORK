@@ -12,8 +12,8 @@ const M = MORK
 function _paths(m)
     z = PathMaps.read_zipper(m)
     out = Vector{UInt8}[]
-    while PathMaps.zipper_to_next_val!(z)
-        push!(out, collect(PathMaps.zipper_path(z)))
+    while PathMaps.to_next_val!(z)
+        push!(out, collect(PathMaps.path(z)))
     end
     sort!(out)
 end

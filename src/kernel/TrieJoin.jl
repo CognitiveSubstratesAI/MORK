@@ -78,8 +78,8 @@ function trie_argset(
 )::PathMap{UnitVal}
     m = PathMap{UnitVal}()
     rz = read_zipper_at_path(btm, collect(head_prefix))
-    while zipper_to_next_val!(rz)
-        set_val_at!(m, collect(zipper_path(rz)), UNIT_VAL)
+    while to_next_val!(rz)
+        set_val_at!(m, collect(path(rz)), UNIT_VAL)
     end
     m
 end
@@ -148,8 +148,8 @@ function _trie_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     candidate = 0
     rz = read_zipper_at_path(common, UInt8[])
     try
-        while zipper_to_next_val!(rz)
-            v = collect(zipper_path(rz))                 # the shared-variable binding (arg encoding)
+        while to_next_val!(rz)
+            v = collect(path(rz))                 # the shared-variable binding (arg encoding)
             combined = UInt8[]
             for hp in hps
                 append!(combined, hp)
@@ -263,8 +263,8 @@ end
 function _bin_keymap(btm::PathMap{UnitVal}, hp::Vector{UInt8}, keypos::Int)
     m = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
     rz = read_zipper_at_path(btm, hp)
-    while zipper_to_next_val!(rz)
-        args = collect(zipper_path(rz))
+    while to_next_val!(rz)
+        args = collect(path(rz))
         key = _arg_at(args, keypos)        # join-key arg at `keypos` (any arity/position)
         push!(get!(m, key, Vector{Vector{UInt8}}()), vcat(hp, args))
     end
@@ -286,7 +286,7 @@ function _binary_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             haskey(m2, key) || continue
             l2 = m2[key]
             for f1 in l1, f2 in l2
-                # value-gate (atoms come from zipper_to_next_val! so are real — defensive parity)
+                # value-gate (atoms come from to_next_val! so are real — defensive parity)
                 (get_val_at(btm, f1) === nothing || get_val_at(btm, f2) === nothing) &&
                     continue
                 empty!(pairs_scratch)
@@ -476,8 +476,8 @@ function _relation_has_var_atom(
     btm::PathMap{UnitVal}, head_prefix::AbstractVector{UInt8}
 )::Bool
     rz = read_zipper_at_path(btm, collect(head_prefix))
-    while zipper_to_next_val!(rz)
-        _expr_has_var(collect(zipper_path(rz))) && return true
+    while to_next_val!(rz)
+        _expr_has_var(collect(path(rz))) && return true
     end
     false
 end
@@ -533,8 +533,8 @@ function _nested_keymap(
     m = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
     rz = read_zipper_at_path(btm, leading_prefix)
     sound = true
-    while zipper_to_next_val!(rz)
-        full = vcat(leading_prefix, collect(zipper_path(rz)))
+    while to_next_val!(rz)
+        full = vcat(leading_prefix, collect(path(rz)))
         key = _navigate_path(full, varpath)
         key === nothing && continue
         key === :hov && (sound=false; break)          # var hit while descending → higher-order, bail
@@ -647,8 +647,8 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     f1 = Vector{Vector{UInt8}}()
     for fi in 1:k
         rz = read_zipper_at_path(btm, hps[fi])
-        while zipper_to_next_val!(rz)
-            args = collect(zipper_path(rz))
+        while to_next_val!(rz)
+            args = collect(path(rz))
             a1 = _arg_at(args, 1)
             full = vcat(hps[fi], args)
             if fi == 1
@@ -660,7 +660,7 @@ function _chain_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
     end
     stack = Vector{Vector{UInt8}}(undef, k)
     candidate = Ref(0)
-    # atoms are sourced from zipper_to_next_val! → always real stored values, so no value-gate.
+    # atoms are sourced from to_next_val! → always real stored values, so no value-gate.
     function rec(depth::Int, joinkey::Vector{UInt8})::Bool
         if depth > k
             empty!(pairs_scratch)
@@ -858,9 +858,9 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
         lst = Tuple{Vector{UInt8}, BindSlab}[]
         rz = read_zipper_at_path(btm, lps[fi])
         _n_scanned = 0
-        while zipper_to_next_val!(rz)
+        while to_next_val!(rz)
             _n_scanned += 1
-            full = vcat(lps[fi], collect(zipper_path(rz)))
+            full = vcat(lps[fi], collect(path(rz)))
             vv = _atom_varvals(full, occ[fi], nv)
             vv === nothing && continue            # structural non-match → not in this relation
             vv === :hov && return (false, 0)      # higher-order key → bail
@@ -875,7 +875,7 @@ function _connected_join_emit!(btm::PathMap{UnitVal}, sources::Vector{ExprEnv},
             shallow = _outer_head_prefix(lps[fi])
             if shallow !== nothing && length(shallow) < length(lps[fi])
                 rz2 = read_zipper_at_path(btm, shallow)
-                if zipper_to_next_val!(rz2)
+                if to_next_val!(rz2)
                     return (false, 0)
                 end
             end
@@ -1040,15 +1040,15 @@ end
 function _chain_compose(btm::PathMap{UnitVal}, hps::Vector{Vector{UInt8}})
     reach = Dict{Vector{UInt8}, Set{Vector{UInt8}}}()
     rz = read_zipper_at_path(btm, hps[1])                          # factor 1 → (x0, x1)
-    while zipper_to_next_val!(rz)
-        a1, a2 = _split2(collect(zipper_path(rz)))
+    while to_next_val!(rz)
+        a1, a2 = _split2(collect(path(rz)))
         push!(get!(reach, a1, Set{Vector{UInt8}}()), a2)
     end
     for i in 2:length(hps)                                         # compose factor i (dedup each hop)
         si = Dict{Vector{UInt8}, Vector{Vector{UInt8}}}()
         rzi = read_zipper_at_path(btm, hps[i])
-        while zipper_to_next_val!(rzi)
-            a1, a2 = _split2(collect(zipper_path(rzi)))
+        while to_next_val!(rzi)
+            a1, a2 = _split2(collect(path(rzi)))
             push!(get!(si, a1, Vector{Vector{UInt8}}()), a2)
         end
         nr = Dict{Vector{UInt8}, Set{Vector{UInt8}}}()

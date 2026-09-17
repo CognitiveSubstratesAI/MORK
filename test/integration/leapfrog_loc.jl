@@ -7,7 +7,7 @@
 #     stock    [0x03, 0xc4 'edge', 0xc2 'n1', 0xc2 'n2']     ← the stored atom
 #     leapfrog [      0xc4 'edge', 0xc2 'n1', 0xc2 'n2']     ← what `fact_bytes` returned
 #
-# `zipper_path` is RELATIVE to the zipper's root, and the cursor is opened AT the factor's prefix,
+# `path` is RELATIVE to the zipper's root, and the cursor is opened AT the factor's prefix,
 # so the prefix has to be prepended. A truncated `loc` changes NO ANSWER COUNT, so:
 #   · 603 generated differential shapes  — blind to it
 #   · 330 generated wiring bodies        — blind to it

@@ -20,7 +20,7 @@ using MORK
         s = new_space()
         space_add_all_sexpr!(s, "(isa robin bird) (likes alice pizza) (edge a b)")
         rz = MORK.read_zipper_at_path(s.btm, UInt8[])
-        MORK.zipper_to_next_val!(rz)
+        MORK.to_next_val!(rz)
 
         # Warm up JIT (first call may include compilation overhead)
         for _ in 1:3

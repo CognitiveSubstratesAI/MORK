@@ -306,13 +306,13 @@ function space_dump_all_sexpr(s::Space, io::IO)::Int
     warn_top_level_variable(s)
     rz = read_zipper(s.btm)
     i = 0
-    while zipper_to_next_val!(rz)
-        path = collect(zipper_path(rz))
+    while to_next_val!(rz)
+        p = collect(path(rz))
         # upstream dump_all_sexpr uses serialize2 (space.rs:903) with VARNAMES, so variables print
         # as `\$a`/`\$b` and a binder shares its name with every back-reference to it. Ours printed
         # `\$`/`_N` (plain `serialize`) until 2026-07-31 — verified against the release binary:
         # `(twice \$y \$y)` dumps as `(twice \$a \$a)` upstream and printed `(twice \$ _1)` here.
-        println(io, expr_serialize2(path))
+        println(io, expr_serialize2(p))
         i += 1
     end
     i
@@ -344,9 +344,9 @@ end
 function _st_write!(t::SpaceTranscriber, bytes::AbstractVector{UInt8})
     tok = fe_tokenizer(t.parser, bytes)
     path = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(tok))))], tok)
-    wz_descend_to!(t.wz, path)
-    wz_set_val!(t.wz, UNIT_VAL)
-    wz_ascend!(t.wz, length(path))
+    descend_to!(t.wz, path)
+    set_val!(t.wz, UNIT_VAL)
+    ascend!(t.wz, length(path))
     t.count += 1
 end
 
@@ -366,29 +366,29 @@ function jt_write_number!(t::SpaceTranscriber, neg::Bool, m::UInt64, e::Int16)
 end
 
 function jt_descend_index!(t::SpaceTranscriber, i::Int, first::Bool)
-    first && wz_descend_to!(t.wz, UInt8[item_byte(ExprArity(UInt8(2)))])
+    first && descend_to!(t.wz, UInt8[item_byte(ExprArity(UInt8(2)))])
     tok = fe_tokenizer(t.parser, Vector{UInt8}(string(i)))
     path = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(tok))))], tok)
-    wz_descend_to!(t.wz, path)
+    descend_to!(t.wz, path)
 end
 
 function jt_ascend_index!(t::SpaceTranscriber, i::Int, last::Bool)
     tok = fe_tokenizer(t.parser, Vector{UInt8}(string(i)))
-    wz_ascend!(t.wz, length(tok) + 1)
-    last && wz_ascend!(t.wz, 1)
+    ascend!(t.wz, length(tok) + 1)
+    last && ascend!(t.wz, 1)
 end
 
 function jt_descend_key!(t::SpaceTranscriber, k::String, first::Bool)
-    first && wz_descend_to!(t.wz, UInt8[item_byte(ExprArity(UInt8(2)))])
+    first && descend_to!(t.wz, UInt8[item_byte(ExprArity(UInt8(2)))])
     tok = fe_tokenizer(t.parser, Vector{UInt8}(k))
     path = vcat(UInt8[item_byte(ExprSymbol(UInt8(length(tok))))], tok)
-    wz_descend_to!(t.wz, path)
+    descend_to!(t.wz, path)
 end
 
 function jt_ascend_key!(t::SpaceTranscriber, k::String, last::Bool)
     tok = fe_tokenizer(t.parser, Vector{UInt8}(k))
-    wz_ascend!(t.wz, length(tok) + 1)
-    last && wz_ascend!(t.wz, 1)
+    ascend!(t.wz, length(tok) + 1)
+    last && ascend!(t.wz, 1)
 end
 
 # =====================================================================
@@ -612,17 +612,17 @@ function space_load_jsonl!(s::Space, src)::Tuple{Int, Int}
         UInt8[item_byte(ExprArity(UInt8(3))), item_byte(ExprSymbol(UInt8(length(tok))))],
         tok
     )
-    wz_descend_to!(wz, prefix)
+    descend_to!(wz, prefix)
     lines = 0
     count = 0
     for line in split(String(copy(bv)), '\n')
         isempty(line) && continue                      # `str::lines()` yields no trailing empty line
-        wz_descend_to!(wz, collect(reinterpret(UInt8, [hton(UInt64(lines))])))
+        descend_to!(wz, collect(reinterpret(UInt8, [hton(UInt64(lines))])))
         st = SpaceTranscriber(wz)
         json_parse!(JSONParser(Vector{UInt8}(line)), st)
         count += st.count
         lines += 1
-        wz_ascend!(wz, 8)
+        ascend!(wz, 8)
     end
     (lines, count)
 end
@@ -827,7 +827,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
 
     primary = popfirst!(factors)
     prz = ProductZipperG(primary, factors)
-    prefix_len = pzg_root_prefix_len(prz)
+    prefix_len = length(root_prefix_path(prz))
 
     # Per-complete-match processing, shared by the naive enumerator AND the coreferential DFS. Returns
     # false ⇒ early-terminate the query. Factored out of the old inline `while` so the SOURCE path can
@@ -837,8 +837,8 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
     # (boxed) so both drivers share the count. The old naive filters (focus_factor / child_count) are
     # preserved verbatim so coref and naive produce identical results — coref just prunes the traversal.
     process_match = function (loc)
-        combined = collect(pzg_origin_path(loc))
-        fps = pzg_factor_paths(loc)
+        combined = collect(origin_path(loc))
+        fps = path_indices(loc)
         boundaries = vcat(0, [fp + prefix_len for fp in fps], length(combined))
 
         empty!(pairs_scratch)
@@ -855,7 +855,7 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         end
         all_sliced || return true
 
-        pzg_child_count(loc) != 0 && (empty!(bindings_scratch); return true)
+        child_count(loc) != 0 && (empty!(bindings_scratch); return true)
 
         # SP-1 fix (audit 2026-06-04): was `try …unify… catch; nothing end`, which
         # swallowed EVERY exception as a benign no-match. `_expr_unify_inplace!` returns
@@ -915,8 +915,8 @@ function space_query_multi_i(btm::PathMap{UnitVal}, pat_expr::MORK.Expr,
         schedule(_t)
         fetch(_t)
     else
-        while pzg_to_next_val!(prz)
-            pzg_focus_factor(prz) != pzg_factor_count(prz) - 1 && continue
+        while to_next_val!(prz)
+            focus_factor(prz) != factor_count(prz) - 1 && continue
             process_match(prz) || break
         end
     end
@@ -1202,7 +1202,7 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
                     cstack,
                     crefs,
                     function (loc)
-                        process_combined(collect(pz_path(loc)), loc.factor_paths) ||
+                        process_combined(collect(path(loc)), loc.factor_paths) ||
                             throw(BreakQuery())
                         nothing
                     end
@@ -1220,9 +1220,9 @@ function _space_query_multi_inner!(btm::PathMap{UnitVal},
     else
         # Naive ProductZipper enumeration (the `#[cfg(feature="no_search")]` path).
         try
-            while pz_to_next_val!(prz)
-                pz_focus_factor(prz) != pz_factor_count(prz) - 1 && continue
-                process_combined(collect(pz_path(prz)), prz.factor_paths) ||
+            while to_next_val!(prz)
+                focus_factor(prz) != factor_count(prz) - 1 && continue
+                process_combined(collect(path(prz)), prz.factor_paths) ||
                     throw(BreakQuery())
             end
         catch e
@@ -1262,11 +1262,11 @@ space_query_multi(s::Space, pat::MORK.Expr, f::Function) =
 # These dispatch on both ReadZipperCore (single-source) and ProductZipper
 # (multi-source), allowing one DFS implementation for both paths.
 
-@inline _coref_child_mask(loc::ReadZipperCore) = zipper_child_mask(loc)
-@inline _coref_child_mask(loc::ProductZipper) = pz_child_mask(loc)
+@inline _coref_child_mask(loc::ReadZipperCore) = child_mask(loc)
+@inline _coref_child_mask(loc::ProductZipper) = child_mask(loc)
 
-@inline _coref_path(loc::ReadZipperCore) = zipper_path(loc)
-@inline _coref_path(loc::ProductZipper) = pz_path(loc)
+@inline _coref_path(loc::ReadZipperCore) = path(loc)
+@inline _coref_path(loc::ProductZipper) = path(loc)
 
 # Zero-alloc length of _coref_path — mirrors upstream `loc.path().len()` (space.rs:129). Avoids
 # building a SubArray via _coref_path just to take its length. (prefix_buf.len - origin_path_len =
@@ -1291,29 +1291,28 @@ space_query_multi(s::Space, pat::MORK.Expr, f::Function) =
 const _COREF_NEWVAR_EXPR = MORK.Expr(UInt8[item_byte(ExprNewVar())])
 
 @inline _coref_descend_byte!(loc::ReadZipperCore, b::UInt8) =
-    zipper_descend_to_byte!(loc, b)
-@inline _coref_descend_byte!(loc::ProductZipper, b::UInt8) = pz_descend_to_byte!(loc, b)
+    descend_to_byte!(loc, b)
+@inline _coref_descend_byte!(loc::ProductZipper, b::UInt8) = descend_to_byte!(loc, b)
 
-@inline _coref_ascend_byte!(loc::ReadZipperCore) = zipper_ascend_byte!(loc)
-@inline _coref_ascend_byte!(loc::ProductZipper) = pz_ascend_byte!(loc)
+@inline _coref_ascend_byte!(loc::ReadZipperCore) = ascend_byte!(loc)
+@inline _coref_ascend_byte!(loc::ProductZipper) = ascend_byte!(loc)
 
-@inline _coref_ascend!(loc::ReadZipperCore, n::Int) = zipper_ascend!(loc, n)
-@inline _coref_ascend!(loc::ProductZipper, n::Int) = pz_ascend!(loc, n)
+@inline _coref_ascend!(loc::ReadZipperCore, n::Int) = ascend!(loc, n)
+@inline _coref_ascend!(loc::ProductZipper, n::Int) = ascend!(loc, n)
 
 @inline function _coref_descend_to_existing_byte!(loc::ReadZipperCore, b::UInt8)
-    zipper_descend_to_existing_byte!(loc, b)
+    descend_to_existing_byte!(loc, b)
 end
 @inline function _coref_descend_to_existing_byte!(loc::ProductZipper, b::UInt8)
-    pz_descend_to_existing_byte!(loc, b)
+    descend_to_existing_byte!(loc, b)
 end
 
 @inline function _coref_descend_to_check!(loc::ReadZipperCore, bytes)
     # ⚠️ CONTRACT NORMALISATION. The three underlying primitives disagree about what they leave
     # descended when the check FAILS:
-    #   * `pz_descend_to_check!`  (ProductZipper.jl:345-348) and `pzg_descend_to_check!` RESTORE —
-    #     they ascend back whatever they descended.
-    #   * `zipper_descend_to_check!` (ReadZipperCore) does NOT: `_descend_to_internal!`
-    #     (Zipper.jl:440-442) `append!`s ALL of `k` to the prefix buffer and never undoes it.
+    #   * upstream 0.4.0's `descend_to_check!` (zipper.rs:210-213) NEVER restores — it is
+    #     `descend_to` + `path_exists`, for every zipper type. Our ProductZipper/ProductZipperG used to
+    #     restore; the 0.4.0 port made them match upstream, so all three need the same normalisation.
     # The coref DFS's SymbolSize branch compensates for the RESTORING contract — on failure it
     # ascends ONE byte (the symbol tag) rather than `size + 1`. Under the non-restoring primitive that
     # UNDER-ascends by `size`, leaving the cursor that many bytes too deep and corrupting every
@@ -1324,26 +1323,28 @@ end
     # at the dispatch layer where the polymorphism already lives, removes the landmine without
     # touching the verified-faithful DFS or PathMap's shared primitive (whose only caller is this
     # function). Found by the space.rs cross-check, 2026-07-26.
-    ok = zipper_descend_to_check!(loc, bytes)
-    ok || zipper_ascend!(loc, length(bytes))
+    ok = descend_to_check!(loc, bytes)
+    ok || ascend!(loc, length(bytes))
     ok
 end
 @inline function _coref_descend_to_check!(loc::ProductZipper, bytes)
-    pz_descend_to_check!(loc, bytes)
+    ok = descend_to_check!(loc, bytes)     # 0.4.0: no longer restores (see the note above)
+    ok || ascend!(loc, length(bytes))
+    ok
 end
 
 @inline function _coref_descend_first_k_path!(loc::ReadZipperCore, k::Int)
-    zipper_descend_first_k_path!(loc, k)
+    descend_first_k_path!(loc, k)
 end
 @inline function _coref_descend_first_k_path!(loc::ProductZipper, k::Int)
-    pz_descend_first_k_path!(loc, k)
+    descend_first_k_path!(loc, k)
 end
 
 @inline function _coref_to_next_k_path!(loc::ReadZipperCore, k::Int)
-    zipper_to_next_k_path!(loc, k)
+    to_next_k_path!(loc, k)
 end
 @inline function _coref_to_next_k_path!(loc::ProductZipper, k::Int)
-    pz_to_next_k_path!(loc, k)
+    to_next_k_path!(loc, k)
 end
 
 # ── ProductZipperG (source-aware) — the coref-source-join port (2026-07-23) ──────────────────────
@@ -1352,27 +1353,30 @@ end
 # (space_query_multi_i), giving it the same coreferential PRUNING the non-source path has and killing
 # the naive cross-product explosion (ip_sudoku). Upstream does exactly this: query_multi_i builds a
 # ProductZipperG and calls coreferential_transition over it (space.rs:1150, 1227).
-@inline _coref_child_mask(loc::ProductZipperG) = pzg_child_mask(loc)
-@inline _coref_path(loc::ProductZipperG) = pzg_path(loc)
-@inline _coref_path_length(loc::ProductZipperG) = length(pzg_path(loc))
+@inline _coref_child_mask(loc::ProductZipperG) = child_mask(loc)
+@inline _coref_path(loc::ProductZipperG) = path(loc)
+@inline _coref_path_length(loc::ProductZipperG) = length(path(loc))
 # Zero-copy bound-VarRef alias: ProductZipperG holds the FULL combined path in its PRIMARY factor
 # zipper (descended per byte, mirroring the secondaries), so delegate the buffer chain there.
 @inline _coref_path_buf(loc::ProductZipperG) = _coref_path_buf(loc.primary)
-@inline _coref_descend_byte!(loc::ProductZipperG, b::UInt8) = pzg_descend_to_byte!(loc, b)
-@inline _coref_ascend_byte!(loc::ProductZipperG) = pzg_ascend_byte!(loc)
-@inline _coref_ascend!(loc::ProductZipperG, n::Int) = pzg_ascend!(loc, n)
+@inline _coref_descend_byte!(loc::ProductZipperG, b::UInt8) = descend_to_byte!(loc, b)
+@inline _coref_ascend_byte!(loc::ProductZipperG) = ascend_byte!(loc)
+@inline _coref_ascend!(loc::ProductZipperG, n::Int) = ascend!(loc, n)
 @inline _coref_descend_to_existing_byte!(loc::ProductZipperG, b::UInt8) =
-    pzg_descend_to_existing_byte!(loc, b)
-@inline _coref_descend_to_check!(loc::ProductZipperG, bytes) =
-    pzg_descend_to_check!(loc, bytes)
+    descend_to_existing_byte!(loc, b)
+@inline function _coref_descend_to_check!(loc::ProductZipperG, bytes)
+    ok = descend_to_check!(loc, bytes)     # 0.4.0: no longer restores (see the note above)
+    ok || ascend!(loc, length(bytes))
+    ok
+end
 @inline _coref_descend_first_k_path!(loc::ProductZipperG, k::Int) =
-    pzg_descend_first_k_path!(loc, k)
-@inline _coref_to_next_k_path!(loc::ProductZipperG, k::Int) = pzg_to_next_k_path!(loc, k)
+    descend_first_k_path!(loc, k)
+@inline _coref_to_next_k_path!(loc::ProductZipperG, k::Int) = to_next_k_path!(loc, k)
 
 # A DependentZipper (the `!=` source) can BE ProductZipperG's primary; its path bottoms out in a
-# ReadZipperCore (dpz_path = rz_path(primary)), so the path-buffer chain terminates there.
+# ReadZipperCore (path = path(primary)), so the path-buffer chain terminates there.
 @inline _coref_path_buf(loc::DependentZipper) = _coref_path_buf(loc.primary)
-@inline _coref_path_length(loc::DependentZipper) = length(dpz_path(loc))
+@inline _coref_path_length(loc::DependentZipper) = length(path(loc))
 
 # A PrefixZipper (ACT / prefix-scoped source, and the wrapper ip_sudoku's factors actually use:
 # PrefixZipper{DependentZipper{ReadZipper}}) keeps its OWN full absolute-path buffer `pz.path`
@@ -1561,7 +1565,7 @@ function _coreferential_transition!(loc,   # ReadZipperCore (single) or ProductZ
                 _coreferential_transition!(loc, stack, references, f)
                 _coref_ascend!(loc, size + 1)
             else
-                # check FAILED → pz_descend_to_check! restored its own partial descent,
+                # check FAILED → descend_to_check! restored its own partial descent,
                 # so only the 1 sym byte remains descended. Ascending size+1 here would
                 # OVER-ascend by `size`, corrupting the caller's k-path cursor (drops
                 # coreference matches in 3+ factor joins). Undo only the 1 byte.
@@ -2440,7 +2444,7 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
     retry = false
     retry_cnt = _METTA_CALCULUS_MAX_RETRIES
     # Reused scratch buffer — wires the Rust buffer: Vec<u8> reset-to-prefix pattern.
-    # Eliminates collect(zipper_path) + vcat(_EXEC_PREFIX, rel_path) each iteration.
+    # Eliminates collect(path) + vcat(_EXEC_PREFIX, rel_path) each iteration.
     path_buf = UInt8[]
 
     # 🔴 DO-WHILE, NOT TEST-FIRST — this is `while { BODY; done < steps } { done += 1 }`
@@ -2451,7 +2455,7 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
     # increment below, which is where the ordering actually lives.
     while true
         rz = read_zipper_at_path(s.btm, _EXEC_PREFIX)
-        found = zipper_to_next_val!(rz)
+        found = to_next_val!(rz)
 
         if !found
             if retry && retry_cnt > 0
@@ -2469,7 +2473,7 @@ function space_metta_calculus!(s::Space, steps::Int=typemax(Int))::Int
 
         empty!(path_buf)
         append!(path_buf, _EXEC_PREFIX)
-        append!(path_buf, zipper_path(rz))   # view → bytes copied in; no collect, no vcat
+        append!(path_buf, path(rz))   # view → bytes copied in; no collect, no vcat
         remove_val_at!(s.btm, path_buf)
 
         rt = MORK.Expr(copy(path_buf))      # independent copy for space_interpret!
@@ -2583,22 +2587,22 @@ function space_token_bfs(
     s::Space, token::Vector{UInt8}, pattern::MORK.Expr
 )::Vector{Tuple{Vector{UInt8}, MORK.Expr, Int}}
     rz = read_zipper_at_path(s.btm, token)
-    zipper_descend_until!(rz)
+    descend_until!(rz)
     res = Tuple{Vector{UInt8}, MORK.Expr, Int}[]
-    cm = zipper_child_mask(rz)
+    cm = child_mask(rz)
     # General case: visit all subtries below the branch.
     for b in cm
-        zipper_descend_to_byte!(rz, b)
+        descend_to_byte!(rz, b)
         # Get representative expression for this byte position:
         # - If already at a value (single-byte key is a leaf value), use current position.
         # - Otherwise advance rzc to the first value in the subtrie via to_next_val!.
-        # NOTE: iter_token_for_path starts AFTER the current key, so zipper_to_next_val!
+        # NOTE: iter_token_for_path starts AFTER the current key, so to_next_val!
         # on a value position would skip it and return the wrong expression.
-        origin = if zipper_is_val(rz)
+        origin = if is_val(rz)
             copy(rz.prefix_buf)
         else
             rzc = deepcopy(rz)
-            zipper_to_next_val!(rzc) || (zipper_ascend_byte!(rz); continue)
+            to_next_val!(rzc) || (ascend_byte!(rz); continue)
             copy(rzc.prefix_buf)
         end
         e = MORK.Expr(origin)
@@ -2615,29 +2619,29 @@ function space_token_bfs(
             # Walk: descend_until + count children of the resulting node, then
             # ascend back to where we were so the outer loop's next iteration
             # sees the same state.
-            path_len_before = length(zipper_path(rz))
-            zipper_descend_until!(rz)
-            cur_path_total = rz.origin_path_len + length(zipper_path(rz))
+            path_len_before = length(path(rz))
+            descend_until!(rz)
+            cur_path_total = rz.origin_path_len + length(path(rz))
             child_count = if expr_path_len > cur_path_total
                 # The matched expr extends beyond where descend_until landed —
                 # there's a true branching node below us; count its children.
-                sum(1 for _ in zipper_child_mask(rz); init=0)
+                sum(1 for _ in child_mask(rz); init=0)
             else
                 # descend_until reached the end of the matched expr — there's
                 # exactly one concrete atom below.
                 1
             end
-            zipper_ascend!(rz, length(zipper_path(rz)) - path_len_before)
+            ascend!(rz, length(path(rz)) - path_len_before)
             push!(
                 res,
                 (
-                    copy(rz.prefix_buf[1:(rz.origin_path_len + length(zipper_path(rz)))]),
+                    copy(rz.prefix_buf[1:(rz.origin_path_len + length(path(rz)))]),
                     e,
                     child_count
                 )
             )
         end
-        zipper_ascend_byte!(rz)
+        ascend_byte!(rz)
     end
     # Port of upstream MORK b95e2f7: special case for a single concrete atom.
     # When the general loop produces no results AND the focus token is non-empty,
@@ -2646,9 +2650,9 @@ function space_token_bfs(
     # branching node).  Fork the zipper, advance to that value, check
     # unification, and emit with an EMPTY token — no further exploration from
     # this point is fruitful.  child_count = 0 (matches upstream).
-    if isempty(res) && length(zipper_path(rz)) > 0
+    if isempty(res) && length(path(rz)) > 0
         rzc = deepcopy(rz)
-        if zipper_to_next_val!(rzc)
+        if to_next_val!(rzc)
             e = MORK.Expr(copy(rzc.prefix_buf))
             pairs = Tuple{ExprEnv, ExprEnv}[
                 (ExprEnv(UInt8(0), UInt8(0), UInt32(0), e),
@@ -2817,12 +2821,12 @@ function space_backup_tree(s::Space, path::AbstractString)
     act_save(act_from_zipper(s.btm, _ -> UInt64(0)), path)
 end
 
-function space_restore_tree!(s::Space, path::AbstractString)
+function space_restore_tree!(s::Space, file::AbstractString)
     # Upstream Space::restore_tree = open_mmap + insert each path. Mirrors backup_tree's ACT format.
-    tree = act_open_mmap(path)
-    rz = ACTZipper(tree)
-    while zipper_to_next_val!(rz)
-        set_val_at!(s.btm, collect(zipper_path(rz)), UNIT_VAL)
+    tree = act_open_mmap(file)
+    rz = read_zipper(tree)
+    while to_next_val!(rz)
+        set_val_at!(s.btm, collect(path(rz)), UNIT_VAL)
     end
 end
 
@@ -2995,7 +2999,7 @@ function _space_metta_calculus_inner!(s::Space, prefix_bytes::Vector{UInt8},
 
     while done < max_steps
         rz = read_zipper_at_path(s.btm, prefix_bytes)
-        found = zipper_to_next_val!(rz)
+        found = to_next_val!(rz)
         if !found
             if retry && retry_cnt > 0
                 retry_cnt -= 1
@@ -3007,7 +3011,7 @@ function _space_metta_calculus_inner!(s::Space, prefix_bytes::Vector{UInt8},
 
         empty!(path_buf)
         append!(path_buf, prefix_bytes)
-        append!(path_buf, zipper_path(rz))
+        append!(path_buf, path(rz))
         remove_val_at!(s.btm, path_buf)
 
         # Exec expr omits the space_prefix region bytes (must begin with the
@@ -3126,8 +3130,8 @@ function space_acquire_transform_permissions(s::Space,
     for pat in patterns
         prefix = _const_prefix(pat)
         rz = read_zipper_at_path(s.btm, prefix)
-        while zipper_to_next_val!(rz)
-            p = vcat(prefix, collect(zipper_path(rz)))
+        while to_next_val!(rz)
+            p = vcat(prefix, collect(path(rz)))
             set_val_at!(read_map, p, UNIT_VAL)
         end
     end

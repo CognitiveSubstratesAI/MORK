@@ -11,7 +11,7 @@
 # into expression decoding (the bug the anchored PathMap ProductZipper fixed).
 
 using MORK, Test
-using PathMaps: UNIT_VAL, set_val_at!, read_zipper_at_path, zipper_to_next_val!, zipper_path
+using PathMaps: UNIT_VAL, set_val_at!, read_zipper_at_path, to_next_val!, path
 using MORK: new_space, sexpr_to_expr, expr_serialize,
     space_query_multi_at, space_metta_calculus_in_prefix!
 
@@ -24,8 +24,8 @@ _addp(btm, prefix, sexpr) =
 function _dump_prefix(btm, prefix)
     out = String[]
     rz = read_zipper_at_path(btm, Vector{UInt8}(prefix))
-    while zipper_to_next_val!(rz)
-        push!(out, expr_serialize(collect(zipper_path(rz))))
+    while to_next_val!(rz)
+        push!(out, expr_serialize(collect(path(rz))))
     end
     sort!(out)
 end

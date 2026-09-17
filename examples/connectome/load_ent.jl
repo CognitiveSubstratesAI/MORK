@@ -21,7 +21,7 @@
 
 using MORK
 using MORK: ExprArity, ExprSymbol, item_byte, byte_item
-using PathMap: read_zipper_at_path, zipper_to_next_val!, zipper_path, set_val_at!,
+using PathMap: read_zipper_at_path, to_next_val!, path, set_val_at!,
     act_from_zipper, act_save, act_open_mmap
 
 const NEURON_HEAD = codeunits("neuron")
@@ -100,8 +100,8 @@ derived by scanning S_ent instead of reading /tmp/seed_<modality>.txt.
 function query_seeds(btm, modality::AbstractString)::Vector{String}
     seeds = String[]
     rz = read_zipper_at_path(btm, NEURON_PREFIX)
-    while zipper_to_next_val!(rz)
-        fs = _parse_syms(collect(zipper_path(rz)), N_NEURON_ARGS)
+    while to_next_val!(rz)
+        fs = _parse_syms(collect(path(rz)), N_NEURON_ARGS)
         fs === nothing && continue
         # fs = [id, flow, super_class, class, sub_class, side]
         (fs[2] == "afferent" && fs[4] == modality) && push!(seeds, fs[1])
@@ -113,8 +113,8 @@ end
 function modality_histogram(btm)
     h = Dict{Tuple{String, String}, Int}()
     rz = read_zipper_at_path(btm, NEURON_PREFIX)
-    while zipper_to_next_val!(rz)
-        fs = _parse_syms(collect(zipper_path(rz)), N_NEURON_ARGS)
+    while to_next_val!(rz)
+        fs = _parse_syms(collect(path(rz)), N_NEURON_ARGS)
         fs === nothing && continue
         k = (fs[2], fs[4])
         h[k] = get(h, k, 0) + 1

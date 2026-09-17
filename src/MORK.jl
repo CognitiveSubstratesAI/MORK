@@ -123,7 +123,8 @@ include("expr/DyckZipper.jl")
 # the trace and re-pushes the root frame — without that, a reset zipper keeps the stack from wherever
 # it had walked to, and the trace-based traversal would resume mid-expression. Thirteen kernel call
 # sites reset zippers, so the two halves have to move together.
-import PathMaps: ez_reset!
+# PathMap's EmptyZipper lost its `ez_*` names in the 0.4.0 zipper-API port (it uses the generic
+# `reset!` now), so this is MORK's own function for ExprZipper rather than a method on PathMaps'.
 function ez_reset!(z::ExprZipper)
     z.loc = 1
     z.trace = nothing     # dropped, not rebuilt — it re-materialises at the root on next use

@@ -12,7 +12,7 @@
 
 using MORK
 using MORK: ExprArity, ExprSymbol, item_byte, byte_item
-using PathMap: read_zipper_at_path, zipper_to_next_val!, zipper_path
+using PathMap: read_zipper_at_path, to_next_val!, path
 
 const _CDIR = @__DIR__
 include(joinpath(_CDIR, "manifest.jl"))
@@ -75,8 +75,8 @@ end
 function compute_tin(btm)
     tin = Dict{String, Int}()
     rz = read_zipper_at_path(btm, SYN_PREFIX)
-    while zipper_to_next_val!(rz)
-        pc = _parse_pre_post_cnt(collect(zipper_path(rz)))
+    while to_next_val!(rz)
+        pc = _parse_pre_post_cnt(collect(path(rz)))
         pc === nothing && continue
         _, post, cnt = pc
         tin[post] = get(tin, post, 0) + cnt
@@ -88,8 +88,8 @@ end
 function _apply_frontier!(rin::Dict{String, Int}, btm, frontier::Vector{String})
     for r in frontier
         rz = read_zipper_at_path(btm, syn_pre_prefix(r))
-        while zipper_to_next_val!(rz)
-            pc = _parse_post_cnt(collect(zipper_path(rz)))
+        while to_next_val!(rz)
+            pc = _parse_post_cnt(collect(path(rz)))
             pc === nothing && continue
             post, cnt = pc
             rin[post] = get(rin, post, 0) + cnt
@@ -127,8 +127,8 @@ function build_adjacency(btm)
     out = Dict{String, Vector{Tuple{String, Int}}}()
     tin = Dict{String, Int}()
     rz = read_zipper_at_path(btm, SYN_PREFIX)
-    while zipper_to_next_val!(rz)
-        pc = _parse_pre_post_cnt(collect(zipper_path(rz)))
+    while to_next_val!(rz)
+        pc = _parse_pre_post_cnt(collect(path(rz)))
         pc === nothing && continue
         pre, post, cnt = pc
         push!(get!(out, pre, Tuple{String, Int}[]), (post, cnt))
