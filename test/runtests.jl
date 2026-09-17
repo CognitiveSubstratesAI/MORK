@@ -784,9 +784,10 @@ const _MORK_TS = @testset "MORK" begin
         @testset "TrieNode — constants" begin
             # Port of trie_node.rs: MAX_NODE_KEY_BYTES / NODE_ITER_INVALID / NODE_ITER_FINISHED
             @test MAX_NODE_KEY_BYTES == 48
-            @test NODE_ITER_INVALID == typemax(UInt128)
-            @test NODE_ITER_FINISHED == typemax(UInt128) - UInt128(1)
-            @test NODE_ITER_INVALID > NODE_ITER_FINISHED
+            # 0.4.0 layout (trie_node.rs:408-469): u64 tokens, INVALID = bit 63, FINISHED = MAX-1
+            @test NODE_ITER_INVALID == UInt64(1) << 63
+            @test NODE_ITER_FINISHED == typemax(UInt64) - 1
+            @test NODE_ITER_INVALID < TOKEN_LAST < NODE_ITER_FINISHED < TOKEN_AFTER_LAST
 
             # Node tag constants match upstream
             @test EMPTY_NODE_TAG == 0
@@ -868,9 +869,10 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "EmptyNode — iteration" begin
             e = EmptyNode{Int, GlobalAlloc}()
-            @test new_iter_token(e) == UInt128(0)
-            @test iter_token_for_path(e, UInt8[1, 2]) == UInt128(0)
-            tok, path, child, val = next_items(e, UInt128(0))
+            @test new_iter_token(e) == UInt64(0)
+            @test iter_token_for_path(e, UInt8[]) == UInt64(0)
+            @test iter_token_for_path(e, UInt8[1, 2]) == TOKEN_AFTER_LAST   # empty_node.rs:66-73 (4917097)
+            tok, path, child, val = next_items(e, UInt64(0), false)
             @test tok == NODE_ITER_FINISHED
             @test path == UInt8[]
             @test child === nothing
@@ -1080,7 +1082,7 @@ const _MORK_TS = @testset "MORK" begin
 
         @testset "LineListNode — iteration empty" begin
             n = LineListNode{Int, GlobalAlloc}(GlobalAlloc())
-            tok, path, child, val = next_items(n, new_iter_token(n))
+            tok, path, child, val = next_items(n, new_iter_token(n), false)
             @test tok == NODE_ITER_FINISHED
         end
 
@@ -1088,12 +1090,12 @@ const _MORK_TS = @testset "MORK" begin
             n = LineListNode{Int, GlobalAlloc}(GlobalAlloc())
             key = collect(UInt8, "hi")
             node_set_val!(n, key, 77)
-            tok, path, child, val = next_items(n, UInt128(0))
-            @test tok == UInt128(1)
+            tok, path, child, val = next_items(n, UInt64(0), false)
+            @test tok == TOKEN_LAST   # the node's last path (line_list_node.rs:2098-2102)
             @test path == key
             @test val == 77
             @test child === nothing
-            tok2, _, _, _ = next_items(n, tok)
+            tok2, _, _, _ = next_items(n, tok, false)
             @test tok2 == NODE_ITER_FINISHED
         end
 
@@ -1101,11 +1103,13 @@ const _MORK_TS = @testset "MORK" begin
             n = LineListNode{Int, GlobalAlloc}(GlobalAlloc())
             node_set_val!(n, collect(UInt8, "a"), 1)
             node_set_val!(n, collect(UInt8, "b"), 2)
-            tok, path, child, val = next_items(n, UInt128(0))
+            tok, path, child, val = next_items(n, UInt64(0), false)
             @test path == collect(UInt8, "a") && val == 1
-            tok2, path2, _, val2 = next_items(n, tok)
+            @test tok == UInt64(1)            # key_end_0 (canonical token of "a")
+            tok2, path2, _, val2 = next_items(n, tok, false)
             @test path2 == collect(UInt8, "b") && val2 == 2
-            tok3, _, _, _ = next_items(n, tok2)
+            @test tok2 == TOKEN_LAST
+            tok3, _, _, _ = next_items(n, tok2, false)
             @test tok3 == NODE_ITER_FINISHED
         end
 
@@ -1727,17 +1731,17 @@ const _MORK_TS = @testset "MORK" begin
             n = DenseByteNode{Int, GlobalAlloc}(alloc)
             # Empty node
             tok = new_iter_token(n)
-            @test tok == UInt128(0)
-            (next_tok, path, child, val) = next_items(n, tok)
+            @test tok == UInt64(0)
+            (next_tok, path, child, val) = next_items(n, tok, false)
             @test next_tok == NODE_ITER_FINISHED
 
             # Single val
             node_set_val!(n, UInt8['a'], 1)
             tok = new_iter_token(n)
-            (next_tok2, path2, child2, val2) = next_items(n, tok)
+            (next_tok2, path2, child2, val2) = next_items(n, tok, false)
             @test val2 == 1
             @test path2 == UInt8['a']
-            (done_tok, _, _, _) = next_items(n, next_tok2)
+            (done_tok, _, _, _) = next_items(n, next_tok2, false)
             @test done_tok == NODE_ITER_FINISHED
         end
 
