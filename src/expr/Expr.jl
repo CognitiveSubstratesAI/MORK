@@ -4,7 +4,7 @@ Expr.jl — port of `mork/expr/src/lib.rs` core expression types.
 MORK uses a flat byte encoding for expressions ("Rule of 64"):
   NewVar    : 0b1100_0000 (0xC0)
   SymbolSize: 0b1100_SSSS (0xC1..0xFF) — S = 1..63 bytes follow
-  VarRef    : 0b1000_IIII (0x80..0xBF) — I = 0..63 back-reference
+  VarRef    : 0b1000_IIII (0x80..0xBF) — I = 0..63, a de Bruijn LEVEL (see below)
   Arity     : 0b0000_AAAA (0x00..0x3F) — A = 0..63 children follow
 
 Julia translation:
@@ -26,11 +26,26 @@ Mirrors `Tag` in mork/expr/src/lib.rs.
 """
 abstract type ExprTag end
 
+# 🔴 `VarRef.idx` IS A DE BRUIJN **LEVEL**, NOT AN INDEX — both words appeared here until 2026-09-17,
+# and "back-reference" reads like an index. A level is ABSOLUTE: it counts NewVar binders from the LEFT
+# of the WHOLE expression, never from the nearest binder. Upstream's wiki states it
+# (`Data-in-MORK.md`: "relative to the total number of introduced bindings TO THE LEFT … De Bruijn
+# LEVELS (not to be confused with De Bruijn INDICES)") and the verified evidence is recorded in
+# `Core/src/standard/AtomExprBridge.jl:118-141`:
+#
+#     (f $x $y $x $y) -> [5] <f> $ $ &0 &1        (g $a $b $b $a) -> [5] <g> $ $ &1 &0
+#
+# ⚠️ THE CONSEQUENCE, and why the wrong word is expensive: a subterm's `VarRef(k)` depends on how many
+# binders appeared to its left in the whole expression, so ENCODING CHILDREN INDEPENDENTLY AND
+# CONCATENATING IS WRONG. That is what `ee_args!` (ExprAlg.jl:422) threads and what
+# `_expr_rebase_varrefs` (kernel/Sinks.jl) repairs when a sub-expression is re-scoped. The kernel has
+# always been correct here; only these two header lines said otherwise.
+
 struct ExprNewVar <: ExprTag end
 struct ExprVarRef <: ExprTag
 
     idx::UInt8
-end   # 0-based back-reference
+end   # 0-based de Bruijn LEVEL — see the note above `ExprTag`; NOT an index
 struct ExprSymbol <: ExprTag
 
     size::UInt8

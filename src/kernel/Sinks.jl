@@ -1254,7 +1254,7 @@ A quoted `(x x)` inside a `pure` formula came out as two UNRELATED variables whe
 
 It is a SCOPE MISMATCH, not a corruption: nothing rewrites the bytes, they are read in the wrong
 frame. `ee_args!` threads the de Bruijn base across the `(pure <tpl> <pat> <call>)` operands
-(`env.v + new_var_count`, ExprAlg.jl:368), so the CALL's `VarRef`s are relative to however many
+(`env.v + new_var_count`, ExprAlg.jl:422), so the CALL's `VarRef`s are relative to however many
 binders precede it. Measured on the issue's own program the operands carry `v = 0, 0, 1, 1` — base 1
 for the call. `PureSink` then evaluated that call as a BARE SLICE, where the same bytes mean
 something else: the first `NewVar` is now binder 0, so a `VarRef(1)` written against base 1 points
@@ -1409,7 +1409,7 @@ function sink_apply!(s::PureSink, bindings::AbstractDict, path::Vector{UInt8}, b
         # ── upstream #135: give the call its OWN variable scope before evaluating it ──
         # `scope_eval!` reads the call as a standalone expression, so its `VarRef`s must be counted
         # against the binders INSIDE it. `formula_ee.v` is that base and `ee_args!` already computed
-        # it (ExprAlg.jl:368) — this restores what the sink used to throw away. Full reasoning, and
+        # it (ExprAlg.jl:422) — this restores what the sink used to throw away. Full reasoning, and
         # the `hash_expr` content-addressing consequence, on `_expr_rebase_varrefs`.
         #
         # base 0 is the overwhelmingly common case (no binder precedes the call), and the re-base
