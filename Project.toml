@@ -15,7 +15,7 @@ PathMaps = {path = "../PathMap"}
 
 [compat]
 Base64 = "1.11"
-PathMaps = "0.3"
+PathMaps = "0.4"
 PrecompileTools = "1.3.3"
 PropCheck = "0.10.1"
 Zlib_jll = "1.3.1"
