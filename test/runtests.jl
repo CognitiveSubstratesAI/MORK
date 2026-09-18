@@ -4883,6 +4883,11 @@ const _MORK_TS = @testset "MORK" begin
     # straight to the write side and was measured to fix 11 probes and break 16.
     include("unit_sink_request.jl")
 
+    # `expr_serialize2` round-trips variable STRUCTURE; `expr_serialize` does not (and is a faithful
+    # port — upstream's dump paths use serialize2). Tag-level, because a string comparison cannot see
+    # the difference: `_1` re-parses as a SYMBOL and prints back identically.
+    include("unit_serialize_roundtrip.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
