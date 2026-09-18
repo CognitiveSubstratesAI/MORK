@@ -4888,6 +4888,11 @@ const _MORK_TS = @testset "MORK" begin
     # the difference: `_1` re-parses as a SYMBOL and prints back identically.
     include("unit_serialize_roundtrip.jl")
 
+    # The VarRef SCOPE invariant — every VarRef(k) has k < binders-to-its-left. Landed BEFORE
+    # BLOCKER 2 step 4 changes `Var`, so that a red afterwards is signal rather than ambiguity.
+    # `expr_has_unbound` already implemented it; this pins the behaviour and proves it fires.
+    include("unit_varref_scope_verifier.jl")
+
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
 
