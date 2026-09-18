@@ -288,6 +288,34 @@ point ([`expr_unifiable`]) through it — so the deprecation flags the API, not 
 """
 function expr_unify_method(x::MORK.Expr, other::MORK.Expr,
     oz::ExprZipper)::Union{Nothing, UnificationFailure}
+    r = expr_unify_cycle_safe(x, other, oz)
+    r isa UnificationFailure ? r : nothing
+end
+
+"""
+    expr_unify_cycle_safe(x, other, oz) → Bindings | UnificationFailure
+
+[`expr_unify_method`]'s solve, KEEPING THE BINDINGS instead of discarding them. Same guarantee:
+unify, apply, and only then enforce the occurs check, so the result is CYCLE SAFE.
+
+🔴 THIS, NOT [`expr_unify`], IS WHAT A NEW CONSUMER WANTS. `expr_unify` is the *function* upstream
+says "does not do full occurs check"; the check is post-apply and lives here. The two differ by a
+SAFETY property, and the weaker one has the shorter name and is the one that appears in surrounding
+code — which is exactly how it gets picked by mistake. MEASURED cost of picking wrong (USink,
+2026-08-03): fixing only the variable scoping gained 3 conformance probes and REGRESSED
+`g7_u_occurs`; the cycle-safe apply closed both.
+
+`expr_unify_method` exists to answer "do these unify?" and throws the bindings away, so every caller
+that needed them re-ran the solve or reached for `expr_unify` and silently lost the occurs check.
+Added 2026-09-18 for Core's `core_match` (docs/specs/term_model_boundary.md seam 1).
+
+⚠️ `x`'s variables are source 0 and `other`'s are source 1 — the stack is built here so a caller
+cannot get that wrong. Building BOTH operands at base 0 makes `\$x` and `\$y` the SAME variable and
+manufactures a spurious conflict; that was USink's *other* defect, and it MASKED the first one.
+"""
+function expr_unify_cycle_safe(x::MORK.Expr, other::MORK.Expr,
+    oz::ExprZipper = ExprZipper(MORK.Expr(zeros(UInt8, 256)), 1)
+)::Union{Bindings, UnificationFailure}
     stack = [(ExprEnv(0, x), ExprEnv(1, other))]
     bindings = expr_unify(stack)
     bindings isa UnificationFailure && return bindings
@@ -300,7 +328,34 @@ function expr_unify_method(x::MORK.Expr, other::MORK.Expr,
         # ordered, not arbitrary. A Julia Dict has no order, so take the minimum explicitly.
         return UnificationFailure(Val(:occurs), minimum(keys(cycled)), ExprEnv(1, other))
     end
-    nothing
+    bindings
+end
+
+"""
+    expr_deref(b::Bindings, t::ExprEnv) → ExprEnv
+
+Follow `t`'s binding chain to its resolved cursor. The public form of the `_deref` closure inside
+`_expr_unify_core!`.
+
+🔴 EXPORTED SO THAT NO CONSUMER WRITES ITS OWN, AND THE REASON IS NOT "four lines of duplication".
+A hand-written deref loop duplicates AN ASSUMPTION ABOUT THE SOLVED FORM'S SHAPE, and upstream says
+that shape VARIES — path compression, and which end of a var-var equation survived. Upstream's rule
+is that *"downstream observes bindings ONLY BY DEREFERENCE … anything that compared binding maps
+STRUCTURALLY would be relying on an accident"*. A private copy of this loop is how a consumer starts
+relying on that accident, and it stays INVISIBLE until path compression happens to differ.
+
+⚠️ NO CYCLE GUARD, deliberately — faithful to `_deref`, which has none because bindings are acyclic
+before the checked insert. Call it on bindings from [`expr_unify_cycle_safe`], not on a map from a
+raw [`expr_unify`] that may contain a cycle the post-apply check would have rejected.
+"""
+function expr_deref(b::Bindings, t::ExprEnv)::ExprEnv
+    while true
+        vo = ee_var_opt(t)
+        vo === nothing && return t
+        bound = get(b, vo, nothing)
+        bound === nothing && return t
+        t = bound
+    end
 end
 
 """
@@ -1960,6 +2015,10 @@ export expr_substitute, expr_transform_data, expr_transformed
 export expr_traverseh_truncated, FoldTruncated, ee_v_incr_traversal
 export expr_leaves, expr_expressions, expr_symbols, expr_difference
 export expr_unify_method, expr_unifiable
+# seam 1 (docs/specs/term_model_boundary.md): the CYCLE-SAFE solve that KEEPS its bindings, and the
+# public deref — exported together, because a consumer that has the first and not the second writes
+# its own deref loop and thereby duplicates an assumption about the solved form's shape.
+export expr_unify_cycle_safe, expr_deref
 export expr_anti_unify,
     AntiUnificationFailure, AntiUnifyFailureKind, AU_TOO_MANY_VARS, AU_MAX_DEPTH
 export expr_traverseh, ee_args!

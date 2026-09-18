@@ -4892,6 +4892,7 @@ const _MORK_TS = @testset "MORK" begin
     # BLOCKER 2 step 4 changes `Var`, so that a red afterwards is signal rather than ambiguity.
     # `expr_has_unbound` already implemented it; this pins the behaviour and proves it fires.
     include("unit_varref_scope_verifier.jl")
+    include("unit_unify_cycle_safe.jl")
 
     # ── Allocation regression gates (Unit A + B) ──────────────────────────────
     include("alloc_budget.jl")
