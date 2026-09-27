@@ -33,9 +33,18 @@ using MORK, Test
                 push!(out, "Sym(" * String(e.buf[(i + 1):(i + Int(t.size))]) * ")")
                 i += 1 + Int(t.size)
             else
-                push!(out, t isa ExprNewVar ? "NewVar" :
-                           t isa ExprVarRef ? "VarRef$(Int(t.idx))" :
-                           t isa ExprArity  ? "Arity$(Int(t.arity))" : "?")
+                push!(
+                    out,
+                    if t isa ExprNewVar
+                        "NewVar"
+                    elseif t isa ExprVarRef
+                        "VarRef$(Int(t.idx))"
+                    elseif t isa ExprArity
+                        "Arity$(Int(t.arity))"
+                    else
+                        "?"
+                    end
+                )
                 i += 1
             end
         end
@@ -49,7 +58,7 @@ using MORK, Test
         "(p \$x \$y \$x)",            # 🔴 NewVar NewVar VarRef(0) — the merge case
         "(= (f \$x) \$x)",            # a rule, the shape the migration stores
         "(q \$a \$b \$c \$a \$c)",    # three binders, two back-references
-        "(nest (in \$x) (out \$x))",  # co-reference ACROSS sibling subterms
+        "(nest (in \$x) (out \$x))"  # co-reference ACROSS sibling subterms
     ]
 
     @testset "serialize2 is structure-preserving" begin

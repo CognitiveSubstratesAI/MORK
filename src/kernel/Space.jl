@@ -95,10 +95,10 @@ function reset_engine_counters!()
 end
 
 "Snapshot the engine counters, in upstream's `--timing` reporting order."
-engine_counters() = (unifications = ENGINE_COUNTERS.unifications,
-                     writes = ENGINE_COUNTERS.writes,
-                     transitions = ENGINE_COUNTERS.transitions,
-                     max_unify = MAX_UNIFY_ITER_HIGH_WATER[])
+engine_counters() = (unifications=ENGINE_COUNTERS.unifications,
+    writes=ENGINE_COUNTERS.writes,
+    transitions=ENGINE_COUNTERS.transitions,
+    max_unify=MAX_UNIFY_ITER_HIGH_WATER[])
 
 # =====================================================================
 # Fix 3: task-local ReadZipperCore pool — eliminates per-query heap alloc

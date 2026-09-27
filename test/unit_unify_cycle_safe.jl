@@ -25,8 +25,10 @@ const M = MORK
     @testset "agrees with expr_unify_method on the yes/no verdict" begin
         # same solve underneath, so any disagreement here is a refactor bug, not a semantic one
         for (xs, ys) in [(raw"[2] f $", raw"[2] f a"), (raw"[2] $ $", raw"[2] a b"),
-                         (raw"[2] f a", raw"[2] f b"), (raw"[2] f a", raw"[3] f a b")]
-            meth = M.expr_unify_method(_f(xs), _f(ys), M.ExprZipper(M.Expr(zeros(UInt8, 128)), 1))
+            (raw"[2] f a", raw"[2] f b"), (raw"[2] f a", raw"[3] f a b")]
+            meth = M.expr_unify_method(
+                _f(xs), _f(ys), M.ExprZipper(M.Expr(zeros(UInt8, 128)), 1)
+            )
             safe = M.expr_unify_cycle_safe(_f(xs), _f(ys))
             @test (meth === nothing) == !(safe isa M.UnificationFailure)
         end
@@ -50,7 +52,8 @@ const M = MORK
         @test M.expr_unifiable(x, y) == false
         # CONTROL, so the assertion above is not just "everything fails": a near-identical
         # NON-cyclic shape must be ACCEPTED.
-        @test M.expr_unify_cycle_safe(_f(raw"[3] f $ _1"), _f(raw"[3] f a a")) isa M.Bindings
+        @test M.expr_unify_cycle_safe(_f(raw"[3] f $ _1"), _f(raw"[3] f a a")) isa
+            M.Bindings
 
         # ⚠️ WHAT THIS TESTSET DELIBERATELY DOES *NOT* CLAIM, because it was MEASURED and is FALSE
         # for our port. The expected demonstration was "raw `expr_unify` accepts where the cycle-safe
@@ -68,7 +71,7 @@ const M = MORK
         # `g7_u_occurs` (CODEMAP row 197).
         # [[feedback_unexplained_behaviour_is_not_a_contract]]
         for (xs, ys) in [(raw"$", raw"[2] f $"), (raw"[2] $ $", raw"[2] $ [2] f _1"),
-                         (raw"[2] $ _1", raw"[2] [2] f $ $"), (raw"[2] f $", raw"[2] f a")]
+            (raw"[2] $ _1", raw"[2] [2] f $ $"), (raw"[2] f $", raw"[2] f a")]
             a, b = _f(xs), _f(ys)
             rawok = M.expr_unify([(M.ExprEnv(0, a), M.ExprEnv(1, b))]) isa M.Bindings
             safeok = M.expr_unify_cycle_safe(a, b) isa M.Bindings
@@ -83,7 +86,8 @@ const M = MORK
             d = M.expr_deref(r, v)
             @test d isa M.ExprEnv
             # a resolved cursor is no longer a variable — that is what "resolved" means
-            @test M.ee_var_opt(d) === nothing || get(r, M.ee_var_opt(d), nothing) === nothing
+            @test M.ee_var_opt(d) === nothing ||
+                get(r, M.ee_var_opt(d), nothing) === nothing
         end
         # NEGATIVE CONTROL: on an EMPTY map nothing can resolve, so deref must return its input
         empty_b = M.Bindings()

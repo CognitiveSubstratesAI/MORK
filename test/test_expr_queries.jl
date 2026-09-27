@@ -645,17 +645,17 @@ _e(s) = M.sexpr_to_expr(s)
         end
         for (xs, ys, ts, why) in [
             (raw"[3] $ [3] h _1 $ [2] f _2",
-             raw"[3] [2] f $ [3] h $ [2] f a _2",
-             raw"[3] [2] f [2] f a [3] h [2] f [2] f a [2] f a [2] f [2] f a",
-             "nested + shared vars"),
+                raw"[3] [2] f $ [3] h $ [2] f a _2",
+                raw"[3] [2] f [2] f a [3] h [2] f [2] f a [2] f a [2] f [2] f a",
+                "nested + shared vars"),
             (raw"[4] $ $ _1 _2", raw"[4] $ $ _2 _1", raw"[4] $ _1 _1 _1",
-             "VAR-VAR COLLAPSE 2->1"),
+                "VAR-VAR COLLAPSE 2->1"),
             (raw"[8] $ $ $ $ _3 _2 _3 _4", raw"[8] $ $ $ $ _4 _1 _2 _3",
-             raw"[8] $ _1 _1 _1 _1 _1 _1 _1", "8-ary TRANSITIVE collapse"),
+                raw"[8] $ _1 _1 _1 _1 _1 _1 _1", "8-ary TRANSITIVE collapse"),
             (raw"[2] $ [2] axiom [3] = [3] T $ [4] a _2 $ $ _2",
-             raw"[2] [2] flip [3] = $ $ [2] axiom [3] = _2 _1",
-             raw"[2] [2] flip [3] = $ [3] T _1 [4] a _1 $ $ [2] axiom [3] = [3] T _1 [4] a _1 _2 _3 _1",
-             "flip/axiom rewrite"),
+                raw"[2] [2] flip [3] = $ $ [2] axiom [3] = _2 _1",
+                raw"[2] [2] flip [3] = $ [3] T _1 [4] a _1 $ $ [2] axiom [3] = [3] T _1 [4] a _1 _2 _3 _1",
+                "flip/axiom rewrite")
         ]
             oz = _u(xs, ys)
             @test oz !== nothing                      # upstream asserts is_ok()

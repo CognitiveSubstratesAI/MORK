@@ -1051,7 +1051,8 @@ end
 # Back-compat: every pre-existing 4-positional call means "unstamped", which is the safe default and
 # matches upstream's `ExprEnv::new` (`ground_skip: 0`). Keeping this method is what lets the field be
 # added without touching the ~50 construction sites across expr/, kernel/ and the suites.
-ExprEnv(n::UInt8, v::UInt8, offset::UInt32, base::Expr) = ExprEnv(n, v, UInt16(0), offset, base)
+ExprEnv(n::UInt8, v::UInt8, offset::UInt32, base::Expr) =
+    ExprEnv(n, v, UInt16(0), offset, base)
 
 ExprEnv(n::Integer, base::Expr) = ExprEnv(UInt8(n), UInt8(0), UInt32(0), base)
 ExprEnv(n::Integer, base::Vector{UInt8}) = ExprEnv(n, Expr(base))

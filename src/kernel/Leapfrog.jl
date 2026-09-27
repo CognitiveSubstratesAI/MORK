@@ -1218,7 +1218,9 @@ exceptions, so this is a `try/finally`.
 # closure at its call site and a non-escaping closure is STACK data. Same algorithm, and the
 # abstraction is free there and is not here. This is a LANGUAGE-COST divergence, not a port defect —
 # which is why matching upstream's structure line for line reproduces its answers and not its speed.
-function with_bound_bytes!(c::SubtermCursor, bytes::AbstractVector{UInt8}, cont::F) where {F}
+function with_bound_bytes!(
+    c::SubtermCursor, bytes::AbstractVector{UInt8}, cont::F
+) where {F}
     cursor_descend_raw!(c, bytes)
     try
         cont()

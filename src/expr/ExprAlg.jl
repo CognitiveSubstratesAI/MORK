@@ -314,7 +314,7 @@ cannot get that wrong. Building BOTH operands at base 0 makes `\$x` and `\$y` th
 manufactures a spurious conflict; that was USink's *other* defect, and it MASKED the first one.
 """
 function expr_unify_cycle_safe(x::MORK.Expr, other::MORK.Expr,
-    oz::ExprZipper = ExprZipper(MORK.Expr(zeros(UInt8, 256)), 1)
+    oz::ExprZipper=ExprZipper(MORK.Expr(zeros(UInt8, 256)), 1)
 )::Union{Bindings, UnificationFailure}
     stack = [(ExprEnv(0, x), ExprEnv(1, other))]
     bindings = expr_unify(stack)
@@ -446,8 +446,11 @@ function ee_args!(ee::ExprEnv, dest::Vector{ExprEnv})
             # children. Inheriting costs nothing and is the only stamp this child can get.
             # The cast is safe by invariant, as upstream's unguarded one is: the parent is stamped
             # only when its whole span fits UInt16, and this child's span is strictly smaller.
-            stamp = ee.ground_skip != UInt16(0) ?
-                UInt16((Int(ee.offset) + Int(ee.ground_skip)) - Int(env.offset)) : UInt16(0)
+            stamp = if ee.ground_skip != UInt16(0)
+                UInt16((Int(ee.offset) + Int(ee.ground_skip)) - Int(env.offset))
+            else
+                UInt16(0)
+            end
             push!(dest, ExprEnv(ee.n, env.v, stamp, env.offset, ee.base))
             break
         end
@@ -750,158 +753,158 @@ function _expr_unify_core!(stack::Vector{Tuple{ExprEnv, ExprEnv}},
     # raised inside a spawned query task and surfaced only as a TaskFailedException.
     try
 
-    # deref: follow chain of bindings
-    function _deref(t::ExprEnv)::ExprEnv
-        while true
-            vo = ee_var_opt(t)
-            vo === nothing && return t
-            bound = get(bindings, vo, nothing)
-            bound === nothing && return t
-            t = bound
-        end
-    end
-
-    # occurs check: does var xvar appear in the fully-RESOLVED form of e (deref'd via bindings)?
-    #
-    # DEREF-AWARE (fix 2026-07-25, ADR-057 BFC over-generation). Upstream's `occurs` macro
-    # (expr/src/lib.rs) is NOT deref-aware — it short-circuits on `x.0 != e.n` and only scans e's
-    # OWN-namespace var indices. Upstream nonetheless catches cross-namespace cycles because its
-    # `match2`-based pair generation binds in an ORDER where the offending var is eventually
-    # unified in its own namespace (e.g. binds `W := (> $s $p)` first, then meets `$s` against
-    # W's binding and tries `$s := (> $s $p)` — same namespace → occurs fires). OUR pair generation
-    # (recursive `ee_args!` child-pairing) binds in a DIFFERENT order (`$s := W` first, then
-    # `W := (> $s $p)` — cross-namespace → the old short-circuit MISSED the cycle), so the
-    # order-dependent occurs check was unsound for us. The BFC `exec(3 3)` firing exploited exactly
-    # this: it accepted `W := (> _2 _1)` (a data var bound to a term containing itself), producing
-    # a malformed proof upstream rejects (verified: upstream returns `Occurs((0,1),…)` at the same
-    # firing). Making the check deref-aware catches the cycle regardless of binding order — the
-    # standard correct occurs check, order-independent, so it matches upstream's OUTCOME without
-    # depending on replicating its exact pair-generation order. A depth guard treats an
-    # already-cyclic chain as "occurs" (safety; bindings are acyclic before the checked insert).
-    function _occurs_check(xvar::ExprVar, e::ExprEnv, depth::Int=0)::Bool
-        # ⚠️ TOP-LEVEL ONLY. Upstream's unit is one `occurs` MACRO INVOCATION (a single `traverseh!`
-        # fold), NOT a node visit. Ours recurses, so counting every entry measures a different
-        # quantity and is NOT comparable to cfa8abf's 1,423,278 — a first draft of this counter did
-        # exactly that and produced a ratio in the wrong unit. `depth == 0` is the invocation.
-        depth == 0 && (OCCURS_CALLS[] += 1)
-        depth > MAX_UNIFY_ITER && return true
-        ev = ee_var_opt(e)
-        if ev !== nothing
-            ev == xvar && return true
-            bound = get(bindings, ev, nothing)
-            bound === nothing && return false
-            return _occurs_check(xvar, bound, depth + 1)
-        end
-        tag = byte_item(e.base.buf[Int(e.offset) + 1])
-        if tag isa ExprArity
-            children = ExprEnv[]
-            ee_args!(e, children)
-            for c in children
-                _occurs_check(xvar, c, depth + 1) && return true
+        # deref: follow chain of bindings
+        function _deref(t::ExprEnv)::ExprEnv
+            while true
+                vo = ee_var_opt(t)
+                vo === nothing && return t
+                bound = get(bindings, vo, nothing)
+                bound === nothing && return t
+                t = bound
             end
         end
-        return false
-    end
 
-    # is_unbound: follow variable chain, true if ultimately unbound
-    function _is_unbound(v::ExprVar)::Bool
-        vv = v
-        while true
-            bound = get(bindings, vv, nothing)
-            bound === nothing && return true
-            vo = ee_var_opt(bound)
-            vo === nothing && return false
-            vv = vo
-        end
-    end
-
-    while !isempty(stack)
-        iters > MAX_UNIFY_ITER && return UnificationFailure(Val(:max_iter), iters)
-        iters += 1
-
-        xpop, ypop = pop!(stack)
-        dt1 = _deref(xpop)
-        dt2 = _deref(ypop)
-
-        vx = ee_var_opt(dt1)
-        vy = ee_var_opt(dt2)
-
-        if vx === nothing && vy === nothing
-            # Both ground — must match structurally
-            # Push pairs of children
-            b1 = dt1.base.buf[Int(dt1.offset) + 1]
-            b2 = dt2.base.buf[Int(dt2.offset) + 1]
-            tag1, tag2 = byte_item(b1), byte_item(b2)
-            if typeof(tag1) != typeof(tag2)
-                return UnificationFailure(Val(:difference), dt1, dt2)
+        # occurs check: does var xvar appear in the fully-RESOLVED form of e (deref'd via bindings)?
+        #
+        # DEREF-AWARE (fix 2026-07-25, ADR-057 BFC over-generation). Upstream's `occurs` macro
+        # (expr/src/lib.rs) is NOT deref-aware — it short-circuits on `x.0 != e.n` and only scans e's
+        # OWN-namespace var indices. Upstream nonetheless catches cross-namespace cycles because its
+        # `match2`-based pair generation binds in an ORDER where the offending var is eventually
+        # unified in its own namespace (e.g. binds `W := (> $s $p)` first, then meets `$s` against
+        # W's binding and tries `$s := (> $s $p)` — same namespace → occurs fires). OUR pair generation
+        # (recursive `ee_args!` child-pairing) binds in a DIFFERENT order (`$s := W` first, then
+        # `W := (> $s $p)` — cross-namespace → the old short-circuit MISSED the cycle), so the
+        # order-dependent occurs check was unsound for us. The BFC `exec(3 3)` firing exploited exactly
+        # this: it accepted `W := (> _2 _1)` (a data var bound to a term containing itself), producing
+        # a malformed proof upstream rejects (verified: upstream returns `Occurs((0,1),…)` at the same
+        # firing). Making the check deref-aware catches the cycle regardless of binding order — the
+        # standard correct occurs check, order-independent, so it matches upstream's OUTCOME without
+        # depending on replicating its exact pair-generation order. A depth guard treats an
+        # already-cyclic chain as "occurs" (safety; bindings are acyclic before the checked insert).
+        function _occurs_check(xvar::ExprVar, e::ExprEnv, depth::Int=0)::Bool
+            # ⚠️ TOP-LEVEL ONLY. Upstream's unit is one `occurs` MACRO INVOCATION (a single `traverseh!`
+            # fold), NOT a node visit. Ours recurses, so counting every entry measures a different
+            # quantity and is NOT comparable to cfa8abf's 1,423,278 — a first draft of this counter did
+            # exactly that and produced a ratio in the wrong unit. `depth == 0` is the invocation.
+            depth == 0 && (OCCURS_CALLS[] += 1)
+            depth > MAX_UNIFY_ITER && return true
+            ev = ee_var_opt(e)
+            if ev !== nothing
+                ev == xvar && return true
+                bound = get(bindings, ev, nothing)
+                bound === nothing && return false
+                return _occurs_check(xvar, bound, depth + 1)
             end
-            if tag1 isa ExprSymbol
-                tag2 = tag2::ExprSymbol
-                s1 = Int(tag1.size)
-                s2 = Int(tag2.size)
-                if s1 != s2
+            tag = byte_item(e.base.buf[Int(e.offset) + 1])
+            if tag isa ExprArity
+                children = ExprEnv[]
+                ee_args!(e, children)
+                for c in children
+                    _occurs_check(xvar, c, depth + 1) && return true
+                end
+            end
+            return false
+        end
 
+        # is_unbound: follow variable chain, true if ultimately unbound
+        function _is_unbound(v::ExprVar)::Bool
+            vv = v
+            while true
+                bound = get(bindings, vv, nothing)
+                bound === nothing && return true
+                vo = ee_var_opt(bound)
+                vo === nothing && return false
+                vv = vo
+            end
+        end
+
+        while !isempty(stack)
+            iters > MAX_UNIFY_ITER && return UnificationFailure(Val(:max_iter), iters)
+            iters += 1
+
+            xpop, ypop = pop!(stack)
+            dt1 = _deref(xpop)
+            dt2 = _deref(ypop)
+
+            vx = ee_var_opt(dt1)
+            vy = ee_var_opt(dt2)
+
+            if vx === nothing && vy === nothing
+                # Both ground — must match structurally
+                # Push pairs of children
+                b1 = dt1.base.buf[Int(dt1.offset) + 1]
+                b2 = dt2.base.buf[Int(dt2.offset) + 1]
+                tag1, tag2 = byte_item(b1), byte_item(b2)
+                if typeof(tag1) != typeof(tag2)
                     return UnificationFailure(Val(:difference), dt1, dt2)
                 end
-                o1 = Int(dt1.offset)
-                o2 = Int(dt2.offset)
-                if dt1.base.buf[(o1 + 2):(o1 + 1 + s1)] !=
-                    dt2.base.buf[(o2 + 2):(o2 + 1 + s2)]
-                    return UnificationFailure(Val(:difference), dt1, dt2)
-                end
-            elseif tag1 isa ExprArity
-                tag2 = tag2::ExprArity
-                if tag1.arity != tag2.arity
-                    return UnificationFailure(Val(:difference), dt1, dt2)
-                end
-                # push child pairs with deduplication (mirrors Rust encountered set)
-                children1 = ExprEnv[]
-                ee_args!(dt1, children1)
-                children2 = ExprEnv[]
-                ee_args!(dt2, children2)
-                for i in length(children1):-1:1
-                    c1 = children1[i]
-                    c2 = children2[i]
-                    v1 = ee_var_opt(c1)
-                    v2 = ee_var_opt(c2)
-                    # Always push unbound-variable pairs (mirrors Rust special case)
-                    if v1 !== nothing && v2 !== nothing && _is_unbound(v1) &&
-                        _is_unbound(v2)
-                        push!(stack, (c1, c2))
-                    else
-                        # Deduplicate: skip pair already in encountered
-                        key = (UInt64(objectid(c1.base.buf)), UInt64(c1.offset),
-                            UInt64(c1.n), UInt64(c1.v),
-                            UInt64(objectid(c2.base.buf)), UInt64(c2.offset),
-                            UInt64(c2.n), UInt64(c2.v))
-                        if UNIFY_DEDUP_DIAGNOSTIC[]
-                            push!(encountered_nobase,
-                                (key[2], key[3], key[4], key[6], key[7], key[8]))
-                        end
-                        if key ∉ encountered
-                            push!(encountered, key)
+                if tag1 isa ExprSymbol
+                    tag2 = tag2::ExprSymbol
+                    s1 = Int(tag1.size)
+                    s2 = Int(tag2.size)
+                    if s1 != s2
+
+                        return UnificationFailure(Val(:difference), dt1, dt2)
+                    end
+                    o1 = Int(dt1.offset)
+                    o2 = Int(dt2.offset)
+                    if dt1.base.buf[(o1 + 2):(o1 + 1 + s1)] !=
+                        dt2.base.buf[(o2 + 2):(o2 + 1 + s2)]
+                        return UnificationFailure(Val(:difference), dt1, dt2)
+                    end
+                elseif tag1 isa ExprArity
+                    tag2 = tag2::ExprArity
+                    if tag1.arity != tag2.arity
+                        return UnificationFailure(Val(:difference), dt1, dt2)
+                    end
+                    # push child pairs with deduplication (mirrors Rust encountered set)
+                    children1 = ExprEnv[]
+                    ee_args!(dt1, children1)
+                    children2 = ExprEnv[]
+                    ee_args!(dt2, children2)
+                    for i in length(children1):-1:1
+                        c1 = children1[i]
+                        c2 = children2[i]
+                        v1 = ee_var_opt(c1)
+                        v2 = ee_var_opt(c2)
+                        # Always push unbound-variable pairs (mirrors Rust special case)
+                        if v1 !== nothing && v2 !== nothing && _is_unbound(v1) &&
+                            _is_unbound(v2)
                             push!(stack, (c1, c2))
                         else
-                            dedup_hits += 1
+                            # Deduplicate: skip pair already in encountered
+                            key = (UInt64(objectid(c1.base.buf)), UInt64(c1.offset),
+                                UInt64(c1.n), UInt64(c1.v),
+                                UInt64(objectid(c2.base.buf)), UInt64(c2.offset),
+                                UInt64(c2.n), UInt64(c2.v))
+                            if UNIFY_DEDUP_DIAGNOSTIC[]
+                                push!(encountered_nobase,
+                                    (key[2], key[3], key[4], key[6], key[7], key[8]))
+                            end
+                            if key ∉ encountered
+                                push!(encountered, key)
+                                push!(stack, (c1, c2))
+                            else
+                                dedup_hits += 1
+                            end
                         end
                     end
                 end
+                # NewVar/VarRef pairs handled below; symbol/arity matched above
+            elseif vx !== nothing
+                vx == vy && continue   # same var — skip
+                _occurs_check(vx, dt2) && return UnificationFailure(Val(:occurs), vx, dt2)
+                bindings[vx] = dt2
+                push!(trail, vx)   # trailed: unwinding is removal
+            else  # vy !== nothing
+                vy == vx && continue
+                _occurs_check(vy, dt1) && return UnificationFailure(Val(:occurs), vy, dt1)
+                bindings[vy] = dt1
+                push!(trail, vy)   # trailed: unwinding is removal
             end
-            # NewVar/VarRef pairs handled below; symbol/arity matched above
-        elseif vx !== nothing
-            vx == vy && continue   # same var — skip
-            _occurs_check(vx, dt2) && return UnificationFailure(Val(:occurs), vx, dt2)
-            bindings[vx] = dt2
-            push!(trail, vx)   # trailed: unwinding is removal
-        else  # vy !== nothing
-            vy == vx && continue
-            _occurs_check(vy, dt1) && return UnificationFailure(Val(:occurs), vy, dt1)
-            bindings[vy] = dt1
-            push!(trail, vy)   # trailed: unwinding is removal
         end
-    end
 
-    bindings   # success: return the filled Dict
+        bindings   # success: return the filled Dict
     finally
         if iters > MAX_UNIFY_ITER_HIGH_WATER[]
             MAX_UNIFY_ITER_HIGH_WATER[] = iters
