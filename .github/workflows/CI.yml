@@ -35,8 +35,21 @@ jobs:
     #
     # ⚠️ AND THIS FIXES A PRE-EXISTING BREAKAGE, not one introduced with the pure-op gate:
     # `upstream_conformance.jl` has been fail-closed since before it, with no opt-out set here.
+    # 🔴 TESTS MUST RUN MULTI-THREADED, OR THE CONCURRENCY TESTS SKIP AND THE SUITE ERRORS.
+    # `Pkg.test` spawns a test worker; without this the worker is SINGLE-THREADED, every
+    # `Threads.nthreads() < 2` test `@test_skip`s, and `assert_no_inert_testsets` then FAILS the
+    # run — correctly: "these ran and asserted NOTHING, so the green result overstates coverage by
+    # exactly their scope". MEASURED 2026-09-28, the failure this fixes.
+    # It reached CI only now because an undeclared `Random`/`Printf` aborted the run BEFORE the
+    # guard; fixing the deps revealed a SECOND, pre-existing defect underneath.
+    # WHY THE ENV VAR AND NOT A `julia_args`: Pkg passes it straight through. Julia 1.13.1
+    # `Pkg/src/Operations.jl:2727` — "if set, prefer JULIA_NUM_THREADS because this is passed to
+    # the test worker via --threads" — and the test path calls `run_test_subprocess(…;
+    # with_threads = true)` (:3072). It must be NON-EMPTY or `get_threads_spec` throws.
+    # 4 matches the local runner's default (`JULIA_TEST_THREADS:-4`), so CI and local contend alike.
     env:
       MORK_ALLOW_MISSING_ORACLE: '1'
+      JULIA_NUM_THREADS: '4'
     strategy:
       fail-fast: false
       matrix:
