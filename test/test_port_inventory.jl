@@ -168,11 +168,55 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
     #   30 — 2026-08-21, same alias-resolution change as PIN_FNS above (was 38, measured 34).
     PIN_TYS = 30
 
-    @test c.fns_missing <= PIN_FNS
-    @test c.tys_missing <= PIN_TYS
-    if c.fns_missing < PIN_FNS || c.tys_missing < PIN_TYS
-        @info "port coverage IMPROVED — lower the pins in this file" fns = c.fns_missing tys =
-            c.tys_missing
+    # ── RAW PINS: the name-diff BEFORE alias resolution. ──────────────────────────────────────────
+    # 🔴 THESE EXIST BECAUSE THE ALIAS TABLE LIVES OUTSIDE THIS REPOSITORY AND CI CANNOT SEE IT.
+    # `tools/port_inventory.jl:486` reads `normpath(joinpath(HERE, "..", "workflows",
+    # "PORT_NAME_MAP.tsv"))` — a WORKSPACE path, one level ABOVE this repo. CI checks out MORK (and
+    # clones PathMap as a sibling); there is no `workflows/` there, and `alias_map()` degrades
+    # SILENTLY: `isfile(_ALIAS_TSV) || return m` hands back an EMPTY table and nothing says so.
+    # PIN_FNS/PIN_TYS are alias-RESOLVED numbers — this file's own history records the 78 as
+    # "98 -> 89 (measurement) -> 78 (alias resolution)" — so with an empty table the ratchet compares
+    # a resolved PIN against a RAW COUNT. Two incommensurable numbers.
+    #
+    # MEASURED 2026-09-28, and the numbers match to the digit, which is what identifies the cause:
+    #     local, table present (50 rows, 15 resolving):  raw fns=88 tys=34  ->  resolved fns=77 tys=30
+    #     CI,    table absent:                               fns=88 tys=34  reported as the failure
+    # CI was not finding 10 more gaps; it was reporting the SAME measurement with the aliases unread.
+    #
+    # ⚠️ THE ALIAS TABLE IS NOT VENDORED HERE ON PURPOSE. `PORT_NAME_MAP.tsv` is a WORKSPACE-level
+    # index covering MORK *and* PathMap renames, and CLAUDE.md names that path; copying it into one
+    # package would create a second source of truth that drifts silently — the same disease in a new
+    # place. The workspace repo is PRIVATE, so CI cannot clone it either without putting a secret
+    # into a PUBLIC repo's workflow. So: assert what each environment can actually compute, and make
+    # the degradation LOUD rather than silent.
+    PIN_FNS_RAW = 88
+    PIN_TYS_RAW = 34
+
+    # ALWAYS assertable — no alias table needed, so this is the gate CI really runs.
+    @test c.fns_missing_raw <= PIN_FNS_RAW
+    @test c.tys_missing_raw <= PIN_TYS_RAW
+
+    _aliases_present = isfile(_ALIAS_TSV)
+    if _aliases_present
+        # Full strength: the resolved pins are only meaningful when the table was actually read.
+        @test c.fns_missing <= PIN_FNS
+        @test c.tys_missing <= PIN_TYS
+        if c.fns_missing < PIN_FNS || c.tys_missing < PIN_TYS
+            @info "port coverage IMPROVED — lower the pins in this file" fns = c.fns_missing tys =
+                c.tys_missing
+        end
+    else
+        # 🔴 LOUD, and NOT a skip: the raw pins above still ran, so this testset never goes inert
+        # (`assert_no_inert_testsets` would fail the suite if it did, and rightly).
+        @warn """
+        ALIAS TABLE ABSENT — the resolved pins are NOT being checked in this environment.
+        Expected at: $(_ALIAS_TSV)
+        `alias_map()` returned an EMPTY table, so `fns_missing`/`tys_missing` are RAW name-diffs and
+        are not comparable to PIN_FNS/PIN_TYS, which are alias-resolved. The raw pins above were
+        asserted instead. This is EXPECTED in CI (the workspace repo is private and not checked
+        out); it is NOT expected on a dev tree — if you see this locally, your workspace checkout is
+        missing `workflows/PORT_NAME_MAP.tsv` and every alias row is going unread.""" alias_rows =
+            length(alias_map()) raw_fns = c.fns_missing_raw raw_tys = c.tys_missing_raw
     end
     @test c.fns_missing >= 0
 
