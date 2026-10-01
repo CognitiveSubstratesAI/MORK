@@ -215,8 +215,9 @@ include(joinpath(@__DIR__, "..", "tools", "port_inventory.jl"))
         are not comparable to PIN_FNS/PIN_TYS, which are alias-resolved. The raw pins above were
         asserted instead. This is EXPECTED in CI (the workspace repo is private and not checked
         out); it is NOT expected on a dev tree — if you see this locally, your workspace checkout is
-        missing `workflows/PORT_NAME_MAP.tsv` and every alias row is going unread.""" alias_rows =
-            length(alias_map()) raw_fns = c.fns_missing_raw raw_tys = c.tys_missing_raw
+        missing `workflows/PORT_NAME_MAP.tsv` and every alias row is going unread.""" alias_rows = length(
+            alias_map()
+        ) raw_fns = c.fns_missing_raw raw_tys = c.tys_missing_raw
     end
     @test c.fns_missing >= 0
 
