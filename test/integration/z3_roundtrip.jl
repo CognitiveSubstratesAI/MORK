@@ -7,6 +7,11 @@ using MORK, Test
 @testset "z3 sink/source round-trip (SMT-guarded rewrite)" begin
     if !z3_available()
         @info "z3 binary not on PATH — skipping Z3 integration test (optional external dep)"
+        # Asserts the SKIP'S PRECONDITION — z3 really is absent — so the testset is not inert.
+        # Without an assertion `assert_no_inert_testsets` fails the whole suite; with it, the run
+        # records WHY the round-trip did not execute. Not coverage of the sink/source: that is the
+        # `else` branch, and it still requires z3.
+        @test !z3_available()
         @test_skip true
     else
         z3_reset!()

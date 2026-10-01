@@ -34,6 +34,16 @@ const _ALLOW_MISSING = get(ENV, "MORK_ALLOW_MISSING_ORACLE", "") == "1"
 function _oracle_missing(what::AbstractString, fix::AbstractString)
     if _ALLOW_MISSING
         @warn "ORACLE INPUT MISSING — differential coverage REDUCED (MORK_ALLOW_MISSING_ORACLE=1)" what fix
+        # 🔴 ASSERT THE OPT-OUT, OR THIS TESTSET IS INERT AND THE SUITE DIES.
+        # `@test_skip` alone leaves ZERO assertions, and `assert_no_inert_testsets` then fails the
+        # whole run — correctly: "these ran and asserted NOTHING". MEASURED in CI 2026-09-28, where
+        # MORK_ALLOW_MISSING_ORACLE=1 is set deliberately (no Rust toolchain) and this file, the
+        # pure-op differential and the z3 round-trip all went inert at once.
+        # THIS IS NOT COVERAGE, AND MUST NOT BE READ AS ANY. It asserts only that the reduced
+        # coverage was OPTED INTO — the env var really is set — which is the repo's own rule that an
+        # UNSET variable must never buy silence, while a SET one is a recorded decision. The oracle
+        # assertions themselves are still gone; the @warn above is what says so.
+        @test _ALLOW_MISSING
         @test_skip what
     else
         @error "ORACLE INPUT MISSING — this is a FAILURE, not a skip. Without it the port has NO \

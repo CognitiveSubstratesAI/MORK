@@ -38,6 +38,9 @@ const _PO_ALLOW_MISSING =
     if !have && _PO_ALLOW_MISSING
         @warn "PURE-OP ORACLE MISSING — differential coverage REDUCED " *
             "(MORK_ALLOW_MISSING_ORACLE=1)" dir = _PO_DIR
+        # Asserts the OPT-OUT, not the ops — without it this testset has zero assertions and
+        # `assert_no_inert_testsets` fails the run. See upstream_conformance.jl for the full note.
+        @test _PO_ALLOW_MISSING
         @test_skip "pure-op probe corpus"
     elseif !have
         @error "PURE-OP ORACLE MISSING — this is a FAILURE, not a skip. Without the corpus this \
